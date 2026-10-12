@@ -479,6 +479,29 @@ export function reduceInstall(state: InstallView, event: InstallEvent): InstallV
 }
 
 
+/**
+ * Which order the shelf is in (design 2026-10-12-shelf-orders). `stars` is
+ * the default AND the tie-break of both date orders, so the two date orders
+ * are stable re-sorts of it rather than orders with comparators of their own.
+ */
+const SHELF_ORDER_KEYS = {
+  stars: 'sortStars',
+  added: 'sortAdded',
+  updated: 'sortUpdated',
+} as const
+
+/** The order vocabulary as a type, derived from the map above so the client
+ * never repeats the three literals. */
+export type ShelfOrder = keyof typeof SHELF_ORDER_KEYS
+
+/** The three orders in display order (map insertion order). */
+export const SHELF_ORDERS = Object.keys(SHELF_ORDER_KEYS) as ShelfOrder[]
+
+/** The locale key naming one order (the toggle's buttons). */
+export function shelfOrderLocaleKey(order: ShelfOrder): ShopLocaleKey {
+  return SHELF_ORDER_KEYS[order]
+}
+
 const CATEGORY_KEYS = {
   tool: 'categoryTool',
   provider: 'categoryProvider',
@@ -646,6 +669,87 @@ export function sortByStars(entries: CatalogEntry[], stars: Record<string, numbe
     if (byStars !== 0) return byStars
     return NAME_COLLATOR.compare(a.name, b.name)
   })
+}
+
+/** The day form the registry writes into `added` (`emit.ts` E9 enforces it
+ * on every build on its side; a catalog is untrusted input on this side). */
+const DAY_FORM = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * The ES date-time form WITH an explicit zone. The zone is required, and not
+ * for tidiness: a date-time string with no zone is parsed as LOCAL time, so
+ * accepting one would make the shelf's order depend on the machine.
+ */
+const INSTANT_FORM = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})$/
+
+/**
+ * One date string as milliseconds, or undefined when it cannot be trusted.
+ *
+ * The form is checked BEFORE `Date.parse`, and that order is load-bearing:
+ * V8 answers a real instant for `2026-02-31T00:00:00Z` (3 March) and for
+ * `October 12` (a 2001 date), so `Date.parse` alone is not a validity test.
+ */
+function parseForm(value: unknown, form: RegExp): number | undefined {
+  if (typeof value !== 'string' || !form.test(value)) return undefined
+  const ms = Date.parse(value)
+  return Number.isNaN(ms) ? undefined : ms
+}
+
+/** `shelfTime` with the catalog's build time already parsed, for the n calls
+ * `orderShelf` makes in one pass. */
+function timeOf(entry: CatalogEntry, order: ShelfOrder, built: number | undefined): number | undefined {
+  if (order === 'stars') return undefined
+  const ms = order === 'added'
+    ? parseForm(entry.added, DAY_FORM)
+    : parseForm(entry.publishedAt, INSTANT_FORM)
+  if (ms === undefined || built === undefined || ms > built) return undefined
+  return ms
+}
+
+/**
+ * The entry's sort key under a date order, or undefined when it has no usable
+ * date (design §3): absent, off-form, unparseable, or later than the catalog's
+ * own `builtAt`. Milliseconds since the epoch. `'stars'` carries no date, so
+ * this answers undefined for it.
+ */
+export function shelfTime(entry: CatalogEntry, order: ShelfOrder, builtAt: string): number | undefined {
+  return timeOf(entry, order, parseForm(builtAt, INSTANT_FORM))
+}
+
+/**
+ * A UTC calendar day for display: "2026-10-12". Derived from the instant the
+ * sort ranked by, so a card's label and its position cannot disagree. UTC and
+ * never a local getter: a reader in UTC+8 must see the same days the catalog
+ * was built in, the calendar the stats row already prints.
+ */
+export function utcDay(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10)
+}
+
+/**
+ * The shelf in `order` (design 2026-10-12-shelf-orders §2, §5). `'stars'`
+ * returns the array it was handed, so the default path allocates nothing and
+ * does not invalidate the memos downstream of it.
+ *
+ * Each key is computed ONCE per entry rather than inside the comparator, and
+ * the sort is stable (ES2019), so entries sharing a date keep the star order
+ * they arrived in — which is how the tie-break is defined without a second
+ * comparator that could drift from `sortByStars`.
+ */
+export function orderShelf(
+  starOrdered: readonly CatalogEntry[],
+  order: ShelfOrder,
+  builtAt: string,
+): readonly CatalogEntry[] {
+  if (order === 'stars') return starOrdered
+  const built = parseForm(builtAt, INSTANT_FORM)
+  const keyed = starOrdered.map(entry => ({ entry, time: timeOf(entry, order, built) }))
+  keyed.sort((a, b) => {
+    if (a.time === undefined) return b.time === undefined ? 0 : 1
+    if (b.time === undefined) return -1
+    return b.time - a.time
+  })
+  return keyed.map(item => item.entry)
 }
 
 /** 999 → "999"; 1000 → "1k"; 1234 → "1.2k"; 1500 → "1.5k"; 99999 → "100k". */

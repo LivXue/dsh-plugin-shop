@@ -5,7 +5,7 @@ import {
   authorOf, blockerBadgeKey, blockersOf, harnessVerdictOf, hasGithubHome, heldBy, isCustomLicense, isShopLike, missingPeersOf,
   nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall,
   installPhaseKey, reduceInstall, type InstallView,
-  reviewHashPin, sortByStars, starsOf, tierKey,
+  reviewHashPin, shelfOrderLocaleKey, shelfTime, SHELF_ORDERS, sortByStars, starsOf, tierKey, utcDay, orderShelf,
   RESTART_STABLE_MS, RESTART_WAIT_MS, restartMonitorVerdict, answeredByAnotherProcess, settledByRestart,
 } from '../../src/client/present.ts'
 import { en, zh } from '../../src/client/locales.ts'
@@ -544,6 +544,193 @@ describe('sortByStars cost (G-5)', () => {
     const a = { ...entry, name: 'Beta' }
     const b = { ...entry, name: 'alpha' }
     expect(sortByStars([a, b], {}).map(candidate => candidate.name)).toEqual(['alpha', 'Beta'])
+  })
+})
+
+describe('shelfTime', () => {
+  const BUILT_AT = '2026-10-12T09:33:35.944Z'
+  const at = (over: Partial<CatalogEntry>): CatalogEntry => ({ ...entry, ...over })
+
+  it('reads `added` under one date order and `publishedAt` under the other', () => {
+    const both = at({ added: '2026-10-11', publishedAt: '2026-10-12T06:44:10Z' })
+    expect(shelfTime(both, 'added', BUILT_AT)).toBe(Date.parse('2026-10-11T00:00:00Z'))
+    expect(shelfTime(both, 'updated', BUILT_AT)).toBe(Date.parse('2026-10-12T06:44:10Z'))
+  })
+
+  it('has no date under the star order, which is not a date', () => {
+    expect(shelfTime(at({ added: '2026-10-11' }), 'stars', BUILT_AT)).toBeUndefined()
+  })
+
+  it('refuses a date later than the catalog build, which a commit author can write', () => {
+    // A github entry's `publishedAt` is its head commit's AUTHOR date
+    // (github-client.ts), which `git` lets anyone set — to 2099 if they like.
+    expect(shelfTime(at({ publishedAt: '2099-01-01T00:00:00Z' }), 'updated', BUILT_AT)).toBeUndefined()
+  })
+
+  it('takes a publishedAt exactly at the build and refuses one millisecond later', () => {
+    expect(shelfTime(at({ publishedAt: BUILT_AT }), 'updated', BUILT_AT)).toBe(Date.parse(BUILT_AT))
+    expect(shelfTime(at({ publishedAt: '2026-10-12T09:33:35.945Z' }), 'updated', BUILT_AT)).toBeUndefined()
+  })
+
+  it('refuses an absent, off-form or unparseable date', () => {
+    expect(shelfTime(at({ added: undefined }), 'added', BUILT_AT)).toBeUndefined()
+    expect(shelfTime(at({ publishedAt: null }), 'updated', BUILT_AT)).toBeUndefined()
+    // A date-time with no zone is LOCAL time, so it is refused rather than
+    // guessed at: the shelf order must not depend on the machine.
+    expect(shelfTime(at({ publishedAt: '2026-10-12T06:44:10' }), 'updated', BUILT_AT)).toBeUndefined()
+    // `Date.parse` alone accepts this one — it answers a 2001 date.
+    expect(shelfTime(at({ added: 'October 12' }), 'added', BUILT_AT)).toBeUndefined()
+    expect(shelfTime(at({ publishedAt: '2026-13-45T99:99:99Z' }), 'updated', BUILT_AT)).toBeUndefined()
+    expect(shelfTime(at({ added: '2026-10-12T00:00:00Z' }), 'added', BUILT_AT)).toBeUndefined()
+  })
+
+  it('takes a rolled-over day as the day it parses to (design §3)', () => {
+    // `2026-02-31` is 3 March. The design accepts the roll-over rather than
+    // validating the calendar: the label is derived from the same instant the
+    // sort ranked by, so the two agree whatever the engine answers.
+    expect(shelfTime(at({ added: '2026-02-31' }), 'added', BUILT_AT))
+      .toBe(Date.parse('2026-02-31T00:00:00Z'))
+  })
+
+  it('treats every date as unknown when the build time is not a date-time', () => {
+    expect(shelfTime(at({ added: '2026-10-11' }), 'added', '')).toBeUndefined()
+    expect(shelfTime(at({ added: '2026-10-11' }), 'added', '2026-10-12')).toBeUndefined()
+    expect(shelfTime(at({ added: '2026-10-11' }), 'added', 'whenever')).toBeUndefined()
+  })
+})
+
+describe('utcDay', () => {
+  it('answers the UTC calendar day of the instant', () => {
+    expect(utcDay(Date.parse('2026-10-12T06:44:10.460Z'))).toBe('2026-10-12')
+    expect(utcDay(Date.parse('2026-10-12T23:59:59Z'))).toBe('2026-10-12')
+  })
+
+  it('answers the UTC day of an offset instant, not the day it was written as', () => {
+    // 06:44 at +08:00 is 22:44 the PREVIOUS day in UTC.
+    expect(utcDay(Date.parse('2026-10-12T06:44:10+08:00'))).toBe('2026-10-11')
+  })
+
+  it('answers the UTC day under a non-UTC machine zone', () => {
+    const original = process.env.TZ
+    try {
+      process.env.TZ = 'Asia/Shanghai'
+      // The guard first: it proves the zone change took effect, so the
+      // assertion below is not passing merely because the runner is UTC.
+      expect(new Date(Date.parse('2026-10-11T22:44:10Z')).getDate()).toBe(12)
+      expect(utcDay(Date.parse('2026-10-11T22:44:10Z'))).toBe('2026-10-11')
+    } finally {
+      if (original === undefined) delete process.env.TZ
+      else process.env.TZ = original
+    }
+  })
+})
+
+describe('orderShelf', () => {
+  const BUILT_AT = '2026-10-12T09:33:35.944Z'
+  // The star order is deliberately the REVERSE of the name order, so a
+  // name tie-break cannot pass these by accident.
+  const starOrdered: CatalogEntry[] = [
+    { ...entry, name: 'dsh-zulu', added: '2026-10-12', publishedAt: '2026-10-12T08:00:00Z' },
+    { ...entry, name: 'dsh-mike', added: '2026-10-11', publishedAt: '2026-10-12T09:00:00Z' },
+    { ...entry, name: 'dsh-alpha', added: '2026-10-11', publishedAt: '2026-10-10T00:00:00Z' },
+    { ...entry, name: 'dsh-nodate', added: undefined, publishedAt: null },
+  ]
+  const names = (list: readonly CatalogEntry[]): string[] => list.map(item => item.name)
+
+  it('answers the array it was handed under the star order', () => {
+    // Identity, not equality: the default path must allocate nothing, or the
+    // memos downstream of it recompute on every catalog refresh.
+    expect(orderShelf(starOrdered, 'stars', BUILT_AT)).toBe(starOrdered)
+  })
+
+  it('sorts newest listed first, keeping the star order inside one day', () => {
+    // zulu leads on 10-12; the 10-11 block keeps the input order (mike before
+    // alpha), which is the star order and NOT the name order.
+    expect(names(orderShelf(starOrdered, 'added', BUILT_AT)))
+      .toEqual(['dsh-zulu', 'dsh-mike', 'dsh-alpha', 'dsh-nodate'])
+  })
+
+  it('sorts most recently published first', () => {
+    expect(names(orderShelf(starOrdered, 'updated', BUILT_AT)))
+      .toEqual(['dsh-mike', 'dsh-zulu', 'dsh-alpha', 'dsh-nodate'])
+  })
+
+  it('puts a future-dated entry with the undated ones, not at the top', () => {
+    const future = { ...entry, name: 'dsh-future', added: '2026-10-12', publishedAt: '2099-01-01T00:00:00Z' }
+    expect(names(orderShelf([...starOrdered, future], 'updated', BUILT_AT)))
+      .toEqual(['dsh-mike', 'dsh-zulu', 'dsh-alpha', 'dsh-nodate', 'dsh-future'])
+  })
+
+  it('never writes to the array it was handed', () => {
+    // A frozen input turns an in-place sort into a TypeError.
+    const frozen = Object.freeze([...starOrdered])
+    expect(names(orderShelf(frozen, 'added', BUILT_AT)))
+      .toEqual(['dsh-zulu', 'dsh-mike', 'dsh-alpha', 'dsh-nodate'])
+  })
+
+  it('holds its three promises over a generated catalog', () => {
+    // Deterministic by construction: no `Math.random` anywhere in this repo's
+    // tests. The generator mixes dated, undated, future-dated and tied
+    // entries so the properties are exercised on all four classes.
+    const made: CatalogEntry[] = Array.from({ length: 400 }, (_, i) => ({
+      ...entry,
+      name: `dsh-gen-${String(i).padStart(3, '0')}`,
+      added: i % 7 === 0 ? undefined : `2026-10-${String((i * 13) % 29 + 1).padStart(2, '0')}`,
+      publishedAt: i % 11 === 0 ? null : `2026-10-${String((i * 7) % 12 + 1).padStart(2, '0')}T0${i % 10}:00:00Z`,
+    }))
+    const inputIndex = new Map(made.map((item, i) => [item, i]))
+    // `noUncheckedIndexedAccess`: a guarded read, never an assertion.
+    const positionOf = (item: CatalogEntry): number => inputIndex.get(item) ?? -1
+    for (const order of ['added', 'updated'] as const) {
+      const ordered = orderShelf(made, order, BUILT_AT)
+      expect(ordered).toHaveLength(made.length)
+      const timeOf = (item: CatalogEntry): number | undefined => shelfTime(item, order, BUILT_AT)
+      for (let i = 1; i < ordered.length; i += 1) {
+        const previous = ordered[i - 1]
+        const current = ordered[i]
+        if (previous === undefined || current === undefined) continue
+        const before = timeOf(previous)
+        const after = timeOf(current)
+        // 1. a dated entry never follows an undated one
+        expect(before === undefined && after !== undefined).toBe(false)
+        if (before === undefined || after === undefined) continue
+        // 2. dated entries never ascend
+        expect(before).toBeGreaterThanOrEqual(after)
+        // 3. equal keys keep the input's relative order
+        if (before === after) expect(positionOf(previous)).toBeLessThan(positionOf(current))
+      }
+    }
+  })
+})
+
+describe('orderShelf cost (design 2026-10-12 §5)', () => {
+  it('re-sorts 9,400 entries under both date orders inside the keystroke budget', () => {
+    // Cell-adjacent to the existing G-5 case: same size, same method (CPU
+    // time, five runs, no wall clock), same 60 ms cap. That case already
+    // brushes the cap on the Windows CI runner, so a LARGER fixture here
+    // would invent a new margin rather than inherit the existing one.
+    const entries: CatalogEntry[] = Array.from({ length: 9400 }, (_, i) => ({
+      ...entry,
+      name: `dsh-plugin-${(i * 7919) % 9400}`,
+      added: `2026-08-${String((i % 28) + 1).padStart(2, '0')}`,
+      publishedAt: `2026-09-${String((i % 28) + 1).padStart(2, '0')}T0${i % 10}:00:00Z`,
+    }))
+    const builtAt = '2026-10-12T09:33:35.944Z'
+    const runs = 5
+    for (const order of ['added', 'updated'] as const) {
+      const started = process.cpuUsage()
+      for (let run = 0; run < runs; run += 1) orderShelf(entries, order, builtAt)
+      const used = process.cpuUsage(started)
+      const perRun = (used.user + used.system) / 1000 / runs
+      expect(perRun, order).toBeLessThan(60)
+    }
+  })
+})
+
+describe('shelfOrderLocaleKey', () => {
+  it('names every order exactly once, in display order', () => {
+    expect(SHELF_ORDERS).toEqual(['stars', 'added', 'updated'])
+    expect(SHELF_ORDERS.map(shelfOrderLocaleKey)).toEqual(['sortStars', 'sortAdded', 'sortUpdated'])
   })
 })
 

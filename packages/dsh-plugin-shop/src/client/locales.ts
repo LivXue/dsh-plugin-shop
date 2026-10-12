@@ -22,6 +22,14 @@ export const zh = {
   all: '全部',
   catalog: '插件目录',
   catalogStats: '{count} 个插件 · 构建于 {date}',
+  /** The shelf's order control, and the date each card carries under the two
+   * date orders (design 2026-10-12-shelf-orders §4). */
+  sortLabel: '排序',
+  sortStars: '星标',
+  sortAdded: '最新上架',
+  sortUpdated: '最近更新',
+  listedOn: '上架 {date}',
+  updatedOn: '更新 {date}',
   stars: '{count} 星',
   categoryTool: '工具',
   categoryProvider: '模型服务',
@@ -196,6 +204,14 @@ export const en = {
   all: 'All',
   catalog: 'Plugin catalog',
   catalogStats: '{count} packages · built {date}',
+  /** The shelf's order control, and the date each card carries under the two
+   * date orders (design 2026-10-12-shelf-orders §4). */
+  sortLabel: 'Sort',
+  sortStars: 'Stars',
+  sortAdded: 'Newest',
+  sortUpdated: 'Recently updated',
+  listedOn: 'Listed {date}',
+  updatedOn: 'Updated {date}',
   stars: '{count} stars',
   categoryTool: 'Tool',
   categoryProvider: 'Provider',
