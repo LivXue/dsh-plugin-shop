@@ -276,16 +276,67 @@ export function rejectionCodeKey(code: InstallRejectionCode): ShopLocaleKey {
   }
 }
 
-/** The version a card displays: full for npm, the short commit for github. */
-export function displayVersion(entry: { source: 'npm' | 'github'; version: string }): string {
-  return entry.source === 'github' ? entry.version.slice(0, 7) : entry.version
+/** What a shelf version string is (market borrowings §11): a version npm
+ * serves, or the spec a profile manifest holds for one; the commit a github
+ * entry is pinned to; or the tag of the release a rescued github entry
+ * installs from. */
+export type VersionKind = 'npm' | 'commit' | 'release'
+
+export interface VersionLabel {
+  kind: VersionKind
+  /** What the shelf prints: `v1.2.3`, `4da5ae8`, `v0.29.10`. */
+  text: string
+  /** What the accessible name and the tooltip print after the kind's word:
+   * the same string without the `v` the shelf adds to an npm version. */
+  value: string
+}
+
+/** A commit pin as the registry writes one: forty lowercase hex. */
+const COMMIT_PIN = /^[0-9a-f]{40}$/
+
+/**
+ * How a version string reads on the shelf, decided by its source and its
+ * shape alone (market borrowings §11).
+ *
+ * Shape, never the entry's `tarball`, because an installed row carries only
+ * the pin the shop recorded at install — the catalog `version` of that moment
+ * — and no `tarball`. The registry pins a commit as forty lowercase hex and a
+ * release by its tag, so the two shapes do not cross; `present.test.ts`
+ * checks that against the committed live catalog.
+ *
+ * - An npm version takes the `v` the shelf has always shown, and only before
+ *   a digit: an installed row reports the manifest's spec, and a range there
+ *   (`^1.2.3`) is not a version to prefix.
+ * - A commit is cut to the seven characters git abbreviates to, with no `v`:
+ *   it is not a version number.
+ * - A release tag prints exactly as tagged, never cut and never prefixed:
+ *   cutting `v0.29.10` to seven characters printed `v0.29.1`, another
+ *   version, and the `v` this function no longer adds doubled the tag's own.
+ */
+export function versionLabel(source: 'npm' | 'github', version: string): VersionLabel {
+  if (source === 'npm') return { kind: 'npm', text: /^\d/.test(version) ? `v${version}` : version, value: version }
+  if (COMMIT_PIN.test(version)) {
+    const short = version.slice(0, 7)
+    return { kind: 'commit', text: short, value: short }
+  }
+  return { kind: 'release', text: version, value: version }
+}
+
+/** The copy that names a version's kind, for the accessible name and the
+ * tooltip; its `{version}` takes {@link VersionLabel.value}. */
+export function versionLabelKey(kind: VersionKind): ShopLocaleKey {
+  switch (kind) {
+    case 'npm': return 'npmVersionLabel'
+    case 'commit': return 'commitVersionLabel'
+    case 'release': return 'releaseVersionLabel'
+  }
 }
 
 /** The hash pin a stale line names for a repo or release-rescued entry — the
  * reviewed commit, or the reviewed release tarball sha256 (market borrowings
- * §3.1). Shortened to 7 chars like the card's own version; '' only for a
- * hand-built fixture carrying no pin. The npm form is a version and keeps the
- * version line's `v` prefix instead. */
+ * §3.1). Shortened to 7 chars like a commit on the card; '' only for a
+ * hand-built fixture carrying no pin. The npm form is a version, which
+ * {@link versionLabel} prints instead. */
 export function reviewHashPin(review: NonNullable<CatalogEntry['review']>): string {
   return (review.reviewedCommit ?? review.reviewedSha256 ?? '').slice(0, 7)
 }

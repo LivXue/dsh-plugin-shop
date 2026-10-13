@@ -720,9 +720,20 @@
   font-size: 12px;
   letter-spacing: 0.02em;
   color: var(--dsw-alias-label-secondary);
+  /* A release tag prints as tagged, never cut to seven characters (market
+   * borrowings §11), and a tag can run to any length. The cap keeps every
+   * tag of up to fourteen characters whole, prerelease suffix included
+   * (`v0.1.0-alpha.0`): fourteen glyphs plus the letter-spacing above come to
+   * about 14.5ch, so the cap is 15ch, not 14. A longer tag ends in an ellipsis,
+   * and the tooltip carries the whole of it. */
+  max-width: 15ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* The octocat marking a github-sourced entry, beside its short commit. */
+/* The octocat marking a source the reader can read on GitHub, beside the
+ * card's version. */
 .sourceBadge {
   display: inline-flex;
   align-items: center;

@@ -106,6 +106,18 @@ describe('class references', () => {
     expect(group, 'no .sortGroup rule').not.toBe('')
     expect(group).toMatch(/margin-left:\s*auto/)
   })
+
+  it('ends a long release tag in an ellipsis instead of widening the badge row', () => {
+    // A release tag is shown uncut (market borrowings §11), and a tag can run
+    // to any length. jsdom lays nothing out, so the declarations are the only
+    // place a test can see the cap.
+    const rule = rules.get('.cardVersion') ?? ''
+    expect(rule, 'no .cardVersion rule').not.toBe('')
+    expect(rule).toMatch(/max-width:\s*\d+ch/)
+    expect(rule).toMatch(/overflow:\s*hidden/)
+    expect(rule).toMatch(/text-overflow:\s*ellipsis/)
+    expect(rule).toMatch(/white-space:\s*nowrap/)
+  })
 })
 
 describe('summary clamp', () => {

@@ -1668,18 +1668,20 @@ describe('ShopTab', () => {
     // Release-rescued entries review the release tarball sha256 (never the
     // mutable tag), so the stale line must name the content-addressed pin,
     // not "reviewed vundefined"; the current side is the tag, displayed like
-    // the card's own version.
+    // the card's own version. The tag is longer than seven characters, so a
+    // line that cut it like a commit would print `v0.29.1`, another version
+    // (market borrowings §11).
     const { injected } = bench(snapshot({
       source: 'github',
       repo: 'you/hello-plugin',
-      version: 'v1.2.0',
+      version: 'v0.29.10',
       tier: 'verified-stale',
       review: { reviewedSha256: 'a'.repeat(64), reviewer: 'someone', reviewCommit: 'abc123', notes: 'reviewed against the release tarball' },
     }))
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText('dsh-hello-plugin'))
-    expect(screen.getByText('reviewed aaaaaaa / current v1.2.0 unreviewed')).toBeTruthy()
+    expect(screen.getByText('reviewed aaaaaaa / current v0.29.10 unreviewed')).toBeTruthy()
   })
 
   it('details a repo-entry verified-stale review by its commit pin', async () => {
@@ -3271,7 +3273,12 @@ describe('ShopTab github entries', () => {
     const { injected } = bench(snapshot({ source: 'github', repo: 'someone/dsh-hello-plugin', version: commit }))
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-card-version]')?.textContent).toBe(`v${commit.slice(0, 7)}`)
+    // A commit is shown without the `v` this test used to expect: `veeeeeee`
+    // read as a version number it is not. Which of the three things a shelf
+    // version can be is now said by the accessible name (market borrowings §11).
+    const version = container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-card-version]')
+    expect(version?.textContent).toBe(commit.slice(0, 7))
+    expect(version?.getAttribute('aria-label')).toBe(en.commitVersionLabel.replace('{version}', commit.slice(0, 7)))
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [class*="_sourceBadge"]')?.getAttribute('aria-label')).toBe(en.githubSource)
   })
 
@@ -3292,6 +3299,60 @@ describe('ShopTab github entries', () => {
     await waitFor(() => expect(screen.getByText(en.acknowledgementBody)).toBeTruthy())
     fireEvent.click(screen.getByText(en.confirm))
     await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: commit, acknowledged: true, source: 'github', repo: 'someone/dsh-hello-plugin', subdir: undefined }))
+  })
+})
+
+describe('ShopTab version labels (market borrowings §11)', () => {
+  const repo = 'someone/dsh-hello-plugin'
+  const tarball = { url: `https://github.com/${repo}/releases/download/v0.29.10/dsh-hello-plugin-0.29.10.tgz`, sha256: 'a'.repeat(64) }
+  const cardVersion = (container: HTMLElement): Element | null =>
+    container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-card-version]')
+
+  it('names an npm version for what it is, keeping its v', async () => {
+    const { injected } = bench(snapshot())
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(cardVersion(container)?.textContent).toBe('v1.2.0')
+    expect(cardVersion(container)?.getAttribute('aria-label')).toBe(en.npmVersionLabel.replace('{version}', '1.2.0'))
+  })
+
+  it("shows a release-rescued entry's tag whole, and names it a release", async () => {
+    // `dsh-model-fix` was the live case: tagged v0.29.10, shown `vv0.29.1` —
+    // a `v` glued onto a tag that already had one, then cut to seven
+    // characters into a version that does exist and is not this one.
+    const { injected } = bench(snapshot({ source: 'github', repo, version: 'v0.29.10', tarball }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const name = en.releaseVersionLabel.replace('{version}', 'v0.29.10')
+    expect(cardVersion(container)?.textContent).toBe('v0.29.10')
+    expect(cardVersion(container)?.getAttribute('aria-label')).toBe(name)
+    expect(cardVersion(container)?.getAttribute('title')).toBe(name)
+  })
+
+  it('shows both commits of an outdated github row short and without a v', async () => {
+    const older = 'a'.repeat(40)
+    const newer = 'b'.repeat(40)
+    const { injected } = bench(
+      snapshot({ source: 'github', repo, version: newer }),
+      [{ name: 'dsh-hello-plugin', installed: older, latest: newer, outdated: true, enabled: true, source: 'github', repo }],
+    )
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
+    // The latest side used to print the whole forty-character commit after a
+    // `v`, and the installed side a `v` before seven of its characters.
+    expect(screen.getByText('installed aaaaaaa')).toBeTruthy()
+    expect(screen.getByText('latest bbbbbbb')).toBeTruthy()
+  })
+
+  it('shows both tags of an outdated release row as tagged', async () => {
+    const { injected } = bench(
+      snapshot({ source: 'github', repo, version: 'v0.29.10', tarball }),
+      [{ name: 'dsh-hello-plugin', installed: 'v0.29.9', latest: 'v0.29.10', outdated: true, enabled: true, source: 'github', repo }],
+    )
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
+    expect(screen.getByText('installed v0.29.9')).toBeTruthy()
+    expect(screen.getByText('latest v0.29.10')).toBeTruthy()
   })
 })
 

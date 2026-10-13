@@ -7,7 +7,7 @@
 import { Component, memo, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, settledByRestart, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, utcDay } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, settledByRestart, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, utcDay, versionLabel, versionLabelKey } from './present.ts'
 import { readRestartMonitor, requestRestart, subscribeRestartMonitor, type RestartMonitorState } from './restart-monitor.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstallFlows, type UninstallFlow, type UseUninstallFlows } from './useUninstall.ts'
@@ -168,6 +168,8 @@ const EntryCard = memo(function EntryCard({ entry, stars, order, shelfDay, insta
   // bug — see `CatalogEntry.unpackedSize`. Undefined only where the registry
   // could not measure honestly, and the label is not rendered then.
   const size = formatSize(entry.installSize)
+  const version = versionLabel(entry.source, entry.version)
+  const versionName = t(versionLabelKey(version.kind), { version: version.value })
   const category = entry.catalog?.category ?? 'other'
   const installTarget: InstallArgs = {
     name: entry.name,
@@ -212,7 +214,10 @@ const EntryCard = memo(function EntryCard({ entry, stars, order, shelfDay, insta
               </svg>
             </span>
           )}
-          <span className={css.cardVersion} data-card-version>v{displayVersion(entry)}</span>
+          {/* The printed version cannot say whether it is an npm version, a
+            * commit or a release tag, so the accessible name and the tooltip
+            * do (market borrowings §11), in the size label's idiom. */}
+          <span className={css.cardVersion} data-card-version role="img" aria-label={versionName} title={versionName}>{version.text}</span>
           {/* Only a tier that says something is badged. Every one of the live
             * catalog's 4915 entries is `community`, so that label was on
             * every card and carried no information. `verified` and
@@ -308,8 +313,8 @@ const EntryCard = memo(function EntryCard({ entry, stars, order, shelfDay, insta
             {entry.tier === 'verified-stale' && entry.review !== undefined && (
               <p className={css.reviewedLine}>
                 {entry.review.reviewedVersion !== undefined
-                  ? t('reviewedVersionLine', { reviewed: entry.review.reviewedVersion, current: entry.version })
-                  : t('reviewedPinLine', { pin: reviewHashPin(entry.review), current: displayVersion(entry) })}
+                  ? t('reviewedVersionLine', { reviewed: versionLabel('npm', entry.review.reviewedVersion).text, current: version.text })
+                  : t('reviewedPinLine', { pin: reviewHashPin(entry.review), current: version.text })}
               </p>
             )}
           </section>
@@ -1127,8 +1132,8 @@ function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, rest
       <div className={css.outdatedInfo}>
         <span className={css.name}>{row.name}</span>
         <span className={css.outdatedVersions}>
-          <span>{t('installedVersion', { version: row.source === 'github' ? row.installed.slice(0, 7) : row.installed })}</span>
-          <span>{t('latestVersion', { version: row.latest })}</span>
+          <span>{t('installedVersion', { version: versionLabel(row.source, row.installed).text })}</span>
+          <span>{t('latestVersion', { version: versionLabel(row.source, row.latest).text })}</span>
         </span>
       </div>
       <div className={css.outdatedActions}>
