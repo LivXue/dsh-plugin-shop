@@ -71,6 +71,36 @@
 
 `metadata` 和信任等级是两回事：一条推导式列表照样可以被标为 `verified`，因为审核看的是插件代码，不是文案。
 
+## 已上架，却装不上或加载不了
+
+上架只说明构建读过你的 manifest，没有发现会被拒绝的地方。构建从不安装、也从不运行你的插件，所以已上架的插件仍可能在读者的机器上失败。下面按情况写出 dsh 0.2.0-rc.2（2026-10-13 时 `@deepseek-ai/dsh` 在 npm 上的 `latest`）会怎么做——依据是它的源码——以及你能改什么。
+
+**harness peer 的范围没有覆盖读者的 dsh。** dsh 会把 `peerDependencies` 里每一个名为 `@deepseek-ai/dsh` 或 `@deepseek-ai/dsh-*` 的条目（标了 optional 的也算）与它正在运行的版本比对；范围不含当前版本时，安装会被拒绝：dsh 能从 registry 读到你的 manifest 时，在 pnpm 运行之前就拒绝；否则在 pnpm 之后拒绝，并恢复 profile 的 `package.json` 和 lockfile。读者升级 dsh 之前就装好的插件仍留在 profile 里，但启动时会被跳过。读者可以用 `dsh plugin allow-version` 为某一个确切版本接受风险；商店何时在点击之前就做这项检查并给出这条命令，见下文 `dshPeers` 一段。预发布版本的算法与下文 `dsh.compatibility` 一段相同，而 `0.x` 版本上的 caret 范围止于下一个次版本：`^0.1.0-rc.6` 不接受 `0.2.0-0` 及以后的任何版本，所以会拒绝 dsh 0.2.0-rc.2。和 `dsh.compatibility` 不同，dsh 解析不了的范围会被拒绝，而不是不予判断。只有 `workspace:^`、`workspace:~`、`workspace:*` 这三种写法按正在运行的版本算，所以 `npm publish` 原样发布出去的 `workspace:^0.1.0` 会被任何版本的 dsh 拒绝。请声明你实际运行过的 dsh 版本范围，并用会改写 `workspace:` 范围的 `pnpm publish` 发布。
+
+**patch 插入的包也按同样的规则检查。** pnpm 之后，dsh 还会读取你的 `dsh.bundle.patch` 插入的每一个包，检查它的 harness peer；其中任何一个被拒绝，整次安装都会被拒绝。商店在点击之前只判断你自己的 manifest，所以这类拒绝要到 pnpm 运行之后才会出现。请只插入 harness peer 覆盖你所声明 dsh 版本的包。
+
+**`dsh.bundle.patch` 必须是一个文件路径或一组文件路径，而且列出的每个文件都要在安装下来的内容里。** 没有 `patch`、写成其他值（`true`、数字、对象、含非字符串的列表），或者列出的文件不存在，dsh 都读不了你的包：安装时以 `Cannot validate installed package` 拒绝，任何豁免都清除不了；已经装好的包则在启动时被跳过，并打印一行 `skipping profile bundle` 写明原因。
+
+**目录从不打开 npm 的 tarball。** npm 包只凭 registry 的元数据上架，所以发布时漏掉的文件只有读者安装时才会暴露：缺少 patch 文件会像上一条那样被拒绝；patch 插入的模块不在包里，则在 dsh 启动它时失败。发布前运行 `npm pack --dry-run`，确认它列出的文件里有 `dsh.bundle.patch` 列出的每个文件，以及 patch 插入的每个模块经 `exports`（或 `main`）解析到的文件。GitHub 上架的条目已经在上架时按这一点检查（见上文的 `requires-build`）。
+
+**激活时出错记在你的条目名下；没有处理的错误会让 dsh 退出。** dsh 激活你的条目时，它抛出的错误或拒绝的 promise 都记在这个条目名下：dsh 照常启动 profile 里的其余部分（等你所提供服务的插件除外），并打印 `warning: N entries did not activate`，写出你的条目 id、包名和错误。除此之外，任何时刻出现的未处理的 promise 拒绝或未捕获的异常——无论在启动期间还是启动很久以后，比如回调里抛出的错误、没有监听者的 `error` 事件、没有任何地方处理的被拒绝的 promise——都会结束整个进程：dsh 打印 `dsh: fatal load failure` 或 `dsh: fatal uncaught exception` 和错误内容，并以状态码 1 退出。另外，dsh 必需的条目没有激活时，它会启动失败并打印 `startup failed: N required plugins did not activate`——必需条目是一组固定的内置 id，例如 `connection` 和 `webserver`——而必需条目一直在等某个服务也算在内：`connection` 要等 `credentials` 服务，所以凭据提供方失败会让 dsh 起不来；提供了某个必需条目所等服务的插件失败时也一样。激活返回之后，你的代码可能引发的每一个错误都要自己处理。
+
+**在 pnpm 11 下，需要构建脚本的安装会失败。** dsh 用读者手上的那个 pnpm 安装。pnpm 11 除非 profile 允许，不运行任何包的构建脚本；默认（`strictDepBuilds`）还会让被拦下的脚本中止安装，报 `ERR_PNPM_IGNORED_BUILDS` 并写出包名，dsh 把它归为 `build-blocked`。这既包括你自己的 `preinstall`、`install`、`postinstall`，也包括每个依赖的。读者得先允许这些脚本——pnpm 的提示指向在 profile 目录里运行的 `pnpm approve-builds`——再重新安装。请发布构建好的代码，不要在安装时构建。
+
+**目录列出的版本在下一次构建之前都要能装。** 目录每天重读一次你的包，商店安装的正是目录列出的那个版本，所以撤下（unpublish）这个版本后，商店会向 npm 要一个它已经没有的版本。请改为弃用（deprecate）它，或者发布修好的新版本。
+
+**一个 profile 里每个名字只能有一个包。** profile 每个名字只记一个依赖，所以沿用原包 `name` 的 fork 永远不能和原包装在一起：`dsh plugin add` 会替换掉两者中已装的那个；商店则拒绝安装，指出占着这个名字的包，直到读者把它卸载。fork 请换一个自己的 `name`。
+
+**按读者的方式试装你的插件。** 在一个临时的 dsh home 里，用商店使用的规格添加插件，再启动 dsh，看它打印了什么：
+
+```sh
+export DSH_HOME="$(mktemp -d)"
+dsh plugin --profile web add <spec>
+dsh --profile web --no-open --port 0
+```
+
+然后打开它打印的地址。`--port 0` 会取一个空闲端口：用默认端口的话，你已经在运行的 dsh 会让这一个起不来，因为 `webserver` 是必需条目。`<spec>` 对 npm 包是 `name@version`，对 GitHub 上架的条目是 `github:owner/repo#<commit>`（子包再在后面加 `&path:<dir>`），对从 release tarball 安装的条目是那个 release 资源的 URL。在你声明支持的每个 dsh 版本上各试一次，再在 `@deepseek-ai/dsh` 在 npm 上的 `latest` 上试一次。
+
 ## 发布的数据文件
 
 每次构建都会把目录发布为一个内容寻址的数据文件 `plugins.<sha256>.json`，文件名由文件自身的哈希决定。除了已上架的 `plugins` 数组，它还带一个 `denied` 数组：每个被列入黑名单的包，以及作者可读的封禁原因。Host 在 `shop/installStart` 收到被列入黑名单的包的安装请求时，会查询这个 `denied` 列表来拦截。不属于封禁的拒绝——比如缺少 bundle、`dsh.catalog` 校验失败、包名与已有插件过于相似——只会出现在构建报告里，不会进入发布的数据文件。

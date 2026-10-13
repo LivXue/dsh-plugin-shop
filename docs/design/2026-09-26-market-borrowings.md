@@ -3,8 +3,9 @@
 Status: **batch 1 decided and implemented (2026-09-26): §1–§4**, one commit
 per section on `fix/borrowings-batch-1`. **C7 decided and implemented
 2026-09-27: §7.** **Batch 2, A2 and A3, decided 2026-10-07 and built on
-`feat/borrowings-batch-2`: §8–§10.** **C8 decided 2026-10-13 and built on
-`feat/version-labels-and-load-guide`: §11.** A second review of three
+`feat/borrowings-batch-2`: §8–§10.** **C8 and C12 decided 2026-10-13 and
+built on `feat/version-labels-and-load-guide`: §11, and the author section
+in `docs/schema.md`.** A second review of three
 dsh plugin markets — [dsh-market/dsh-market](https://github.com/dsh-market/dsh-market)
 (reviewed once before, `2026-08-31-market-borrowings.md`),
 [bradeGithub/DSH-Plugins-Marketplace](https://github.com/bradeGithub/DSH-Plugins-Marketplace)
@@ -348,7 +349,7 @@ competitors again. None of these is decided unless its row says so.
 | C9 | debounce the search box | client |
 | C10 | a GitHub install stranded when an npm package shadows the name | host |
 | C11 | a prefilled failure-report link | client |
-| C12 | an author-doc section on "listed, but it will not load" | docs |
+| C12 | an author-doc section on "listed, but it will not load": **decided and implemented 2026-10-13, `docs/schema.md`** | docs |
 | C13 | a mutation-test gate for the pure core | tests |
 | C14 | a left-rail panel entry (`panellist.id` must equal `main.key`) | client |
 | C15 | static per-plugin pages | catalog |
