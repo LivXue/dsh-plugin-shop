@@ -114,7 +114,7 @@ export const zh = {
   emptyIncompatibleFiltered: '匹配的插件都标为不兼容，已被「隐藏不兼容」筛掉。',
   license: '许可',
   customLicense: '自定义许可',
-  reviewedVersionLine: '已审核 v{reviewed} / 当前 v{current} 未审核',
+  reviewedVersionLine: '已审核 {reviewed} / 当前 {current} 未审核',
   reviewedPinLine: '已审核 {pin} / 当前 {current} 未审核',
   deniedCode: '已拒绝',
   notInCatalogCode: '不在目录中',
@@ -128,6 +128,13 @@ export const zh = {
   nameTakenDetail: '已安装同名的另一个插件（{holder}）。\n两个同名插件声明相同的加载项 id，无法共存；安装它会替换掉已装的那个。',
   npmSource: 'npm 包',
   githubSource: '源码在 GitHub',
+  /** The accessible name and the tooltip of a card's version, which say which
+   * of three things the printed string is (market borrowings §11): the string
+   * alone cannot tell a release tag from a version number, and a short commit
+   * printed with a `v` read as one. */
+  npmVersionLabel: 'npm 版本 {version}',
+  commitVersionLabel: 'GitHub 提交 {version}',
+  releaseVersionLabel: 'GitHub 发布 {version}',
   /** The badge and the explanation for an installed github entry no catalog
    * row claims (C10 MVP). The mechanism synthesizes a row for ANY github spec
    * with no catalog row — shadowed by a same-named npm package, an unlisted
@@ -137,8 +144,10 @@ export const zh = {
   shadowedBadge: '目录未列出此包',
   shadowedDetail: '此包已安装，但当前的插件目录没有它（可能是被同名 npm 包遮蔽、作者已下架、或目录尚未收录）；它照常运行。',
   updatableSection: '可更新',
-  installedVersion: '已安装 v{version}',
-  latestVersion: '最新 v{version}',
+  /** `{version}` is the shelf's own version text (`versionLabel`), which
+   * carries the `v` an npm version takes and no other kind does. */
+  installedVersion: '已安装 {version}',
+  latestVersion: '最新 {version}',
   update: '更新',
   installed: '已安装',
   uninstall: '卸载',
@@ -272,7 +281,7 @@ export const en = {
   emptyIncompatibleFiltered: 'Every matching plugin is marked incompatible, and the incompatible filter is leaving them out.',
   license: 'License',
   customLicense: 'Custom license',
-  reviewedVersionLine: 'reviewed v{reviewed} / current v{current} unreviewed',
+  reviewedVersionLine: 'reviewed {reviewed} / current {current} unreviewed',
   reviewedPinLine: 'reviewed {pin} / current {current} unreviewed',
   deniedCode: 'Denied',
   notInCatalogCode: 'Not in the catalog',
@@ -286,11 +295,14 @@ export const en = {
   nameTakenDetail: 'A different plugin of this name is installed ({holder}).\nTwo plugins of one name declare the same loader entry id and cannot both load; installing this one would replace it.',
   npmSource: 'npm package',
   githubSource: 'source on GitHub',
+  npmVersionLabel: 'npm version {version}',
+  commitVersionLabel: 'GitHub commit {version}',
+  releaseVersionLabel: 'GitHub release {version}',
   shadowedBadge: 'Not in the current catalog',
   shadowedDetail: 'This package is installed but the current catalog does not list it (it may be shadowed by a same-named npm package, removed by the author, or never listed); it runs as before.',
   updatableSection: 'Updatable',
-  installedVersion: 'installed v{version}',
-  latestVersion: 'latest v{version}',
+  installedVersion: 'installed {version}',
+  latestVersion: 'latest {version}',
   update: 'Update',
   installed: 'Installed',
   uninstall: 'Uninstall',

@@ -1,12 +1,14 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
-  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, activationNoticeKey, categoryKey, displayVersion, entryKey, formatSize, formatStars,
+  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, activationNoticeKey, categoryKey, entryKey, formatSize, formatStars,
   uninstallActivationNoticeKey,
   authorOf, blockerBadgeKey, blockersOf, harnessVerdictOf, hasGithubHome, heldBy, isCustomLicense, isShopLike, missingPeersOf,
   nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall,
   installPhaseKey, reduceInstall, type InstallView,
   reviewHashPin, shelfOrderLocaleKey, shelfTime, SHELF_ORDERS, sortByStars, starsOf, tierKey, utcDay, orderShelf,
   RESTART_STABLE_MS, RESTART_WAIT_MS, restartMonitorVerdict, answeredByAnotherProcess, settledByRestart,
+  versionLabel, versionLabelKey,
 } from '../../src/client/present.ts'
 import { en, zh } from '../../src/client/locales.ts'
 import type { CatalogEntry, HarnessVerdict, ShopVersionResult } from '../../src/host/index.ts'
@@ -834,10 +836,57 @@ describe('formatSize', () => {
   })
 })
 
-describe('displayVersion', () => {
-  it('shows npm versions in full and github commits short', () => {
-    expect(displayVersion({ source: 'npm', version: '1.2.3' })).toBe('1.2.3')
-    expect(displayVersion({ source: 'github', version: 'd'.repeat(40) })).toBe('ddddddd')
+describe('versionLabel', () => {
+  const commit = `4da5ae8${'c'.repeat(33)}`
+
+  it.each([
+    ['npm', '1.2.3', 'npm', 'v1.2.3', '1.2.3'],
+    ['npm', '0.4.0-rc.2', 'npm', 'v0.4.0-rc.2', '0.4.0-rc.2'],
+    // An installed npm row carries the manifest's spec, and pnpm may have
+    // written a range there: `v^1.2.3` reads as a version it is not, so only a
+    // string that starts with a digit is given the `v`.
+    ['npm', '^1.2.3', 'npm', '^1.2.3', '^1.2.3'],
+    ['github', commit, 'commit', '4da5ae8', '4da5ae8'],
+    // A release tag is shown as its author tagged it: never cut to seven
+    // characters (`v0.29.10` is not `v0.29.1`), never given a second `v`.
+    ['github', 'v0.29.10', 'release', 'v0.29.10', 'v0.29.10'],
+    ['github', 'release-0.2.2', 'release', 'release-0.2.2', 'release-0.2.2'],
+    ['github', '0.1.0', 'release', '0.1.0', '0.1.0'],
+    // Forty characters alone is not a commit: the registry pins forty
+    // LOWERCASE hex, and anything else is a tag, short hex included.
+    ['github', 'D'.repeat(40), 'release', 'D'.repeat(40), 'D'.repeat(40)],
+    ['github', 'abc1234', 'release', 'abc1234', 'abc1234'],
+  ] as const)('%s %s is a %s, shown as %s', (source, version, kind, text, value) => {
+    expect(versionLabel(source, version)).toEqual({ kind, text, value })
+  })
+
+  it('tells the two github pins apart on the live catalog by shape alone', () => {
+    // The rule reads the version string and nothing else, because an
+    // installed row carries only the pin the shop recorded, never the entry's
+    // `tarball`. That is sound only while the two shapes never cross, so the
+    // committed live catalog is the evidence: every commit pin is forty
+    // lowercase hex, and no release tag is.
+    const fixture = new URL('../fixtures/plugins-live.json', import.meta.url)
+    const plugins = (JSON.parse(readFileSync(fixture, 'utf8')) as { plugins: CatalogEntry[] }).plugins
+    const github = plugins.filter(candidate => candidate.source === 'github')
+    expect(github.filter(candidate => candidate.tarball === undefined).length, 'no commit-pinned entry').toBeGreaterThan(0)
+    expect(github.filter(candidate => candidate.tarball !== undefined).length, 'no release-rescued entry').toBeGreaterThan(0)
+    const misread = github.filter(candidate => {
+      const label = versionLabel('github', candidate.version)
+      return candidate.tarball === undefined
+        ? label.kind !== 'commit'
+        : label.kind !== 'release' || label.text !== candidate.version
+    })
+    expect(misread.map(candidate => `${candidate.name} ${candidate.version}`)).toEqual([])
+  })
+
+  it('names each kind with copy of its own, in both dictionaries', () => {
+    const keys = (['npm', 'commit', 'release'] as const).map(versionLabelKey)
+    expect(new Set(keys).size).toBe(3)
+    for (const key of keys) {
+      expect(en[key]).toContain('{version}')
+      expect(zh[key]).toContain('{version}')
+    }
   })
 })
 
