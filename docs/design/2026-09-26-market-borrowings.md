@@ -3,7 +3,8 @@
 Status: **batch 1 decided and implemented (2026-09-26): §1–§4**, one commit
 per section on `fix/borrowings-batch-1`. **C7 decided and implemented
 2026-09-27: §7.** **Batch 2, A2 and A3, decided 2026-10-07 and built on
-`feat/borrowings-batch-2`: §8–§10.** A second review of three
+`feat/borrowings-batch-2`: §8–§10.** **C8 decided 2026-10-13 and built on
+`feat/version-labels-and-load-guide`: §11.** A second review of three
 dsh plugin markets — [dsh-market/dsh-market](https://github.com/dsh-market/dsh-market)
 (reviewed once before, `2026-08-31-market-borrowings.md`),
 [bradeGithub/DSH-Plugins-Marketplace](https://github.com/bradeGithub/DSH-Plugins-Marketplace)
@@ -343,7 +344,7 @@ competitors again. None of these is decided unless its row says so.
 | C5 | archived GitHub repositories | gate |
 | C6 | npm packages with install scripts | gate / client |
 | C7 | classify pnpm's out-of-memory failure: **decided and implemented, §7** | host |
-| C8 | a label saying where a displayed version came from | client |
+| C8 | a label saying where a displayed version came from: **decided and implemented 2026-10-13, §11** | client |
 | C9 | debounce the search box | client |
 | C10 | a GitHub install stranded when an npm package shadows the name | host |
 | C11 | a prefilled failure-report link | client |
@@ -803,3 +804,76 @@ none of them as rescued.
   and `release-asset.ts`. The two are independent in logic: §9 adds no
   `DECLARATIONS_RULE` bump, and its marker is separate from that design's
   rule-2 stamp. Whichever lands second resolves text conflicts only.
+
+## 11. C8: a version says what it is
+
+### 11.1 The defect
+
+The card printed `v` followed by `displayVersion(entry)`, which kept an npm
+version whole and cut every github version to seven characters. That was
+right when it was written on 2026-08-30, because a github version was then
+always a commit. The release rescue of 2026-08-31 put release tags in the same
+field, and nothing that prints a version changed with it. On the catalog built
+2026-10-12T09:33:35.944Z:
+
+- 377 of the 382 release-rescued cards printed a version their release does
+  not carry. 372 doubled the tag's own `v` (`vv2.1.3`), and one put a `v`
+  before a tag's capital `V` (`vV0.4.1`). 13 tags longer than seven
+  characters were cut, 9 of them doubled as well: `v0.29.10` printed as
+  `vv0.29.1` and `v0.1.54.1` as `vv0.1.54`, each read as another version,
+  and 7 lost a prerelease suffix (`v0.4.0-rc.2` as `vv0.4.0-`).
+- All 7,780 commit-pinned cards printed their commit behind a `v`, as if it
+  were a version number (`v4da5ae8`).
+- The Updatable row printed a github entry's latest version unchanged, so a
+  commit appeared whole, all forty characters behind a `v`, and cut an
+  installed tag the same way as the card.
+
+### 11.2 The rule
+
+`versionLabel(source, version)` in `present.ts`:
+
+| Version | Printed | Accessible name and tooltip |
+|---|---|---|
+| npm | `v1.2.3`, the `v` added only before a digit, so a range an install outside the shop wrote into the manifest prints as written | npm version 1.2.3 |
+| github, forty lowercase hex | the first seven characters, no `v` | GitHub commit 4da5ae8 |
+| any other github string | the tag as tagged, uncut and unprefixed | GitHub release v0.29.10 |
+
+- **By shape, never by `tarball`.** An installed row carries only the pin the
+  shop recorded at install, which is the catalog `version` of that moment
+  (`host/index.ts`, `github-pins.json`), and no `tarball`. The registry pins
+  a commit as forty lowercase hex and a release by its tag, and
+  `present.test.ts` holds that against the committed live catalog. A release
+  tagged as forty lowercase hex would print as a commit; none of the 382 tags
+  on 2026-10-12 was.
+- **Three places print a version, and all three call it:** the card's badge
+  row, the Updatable row's installed and latest versions, and a
+  verified-stale entry's review line. The shop's own version beside the
+  search box is an npm version and was already right.
+- **The kind is not spelled out on the card.** LivXue chose on 2026-10-13 to
+  carry it in the version's accessible name and tooltip, in the size label's
+  idiom, rather than as a word on the card, which crowds the badge row at a
+  narrow width.
+- **A tag is capped at `15ch` with an ellipsis**: fourteen characters plus
+  the badge's letter-spacing. On 2026-10-12, 3 of the 382 tags were longer,
+  the longest 25 characters; the tooltip carries the whole tag.
+
+### 11.3 Not built
+
+- A word on the card naming the kind.
+- The manifest version beside a commit (`0.1.7 · 4da5ae8`): 1,992 of the
+  7,780 commit-pinned entries carried `manifestVersion` on 2026-10-12, so
+  cards would differ by whether their repository had been re-read yet.
+
+### 11.4 Testing
+
+- `present.test.ts`: each row of the table, a forty-character string that is
+  not lowercase hex, and the shape premise checked on the committed live
+  catalog.
+- `ShopTab.client.spec.tsx`: an npm card, a commit card (whose earlier
+  expectation of a `v` changed with the rule), a release card's whole tag and
+  accessible name, an outdated github row by commit and by tag, and a
+  verified-stale release entry whose review line names a tag longer than seven
+  characters (its fixture's earlier `v1.2.0` printed the same under the old
+  cut). The npm assertions (`v1.2.0`, `installed v1.0.0`, `latest v1.2.0`,
+  `reviewed v1.0.0 / current v1.2.0`) are unchanged.
+- `css-tokens.client.spec.ts`: the cap and the ellipsis.

@@ -166,6 +166,14 @@ Plugin entries gain `source: 'npm' | 'github'`. GitHub entries carry:
 - `publishedAt`: the commit date, `repository`, `license`, `description`:
   same fields as npm entries.
 
+**Amendment (2026-10-13):** as built, a published entry carries no separate
+`commit`. Its `version` is the full pinned commit (40 hex), which `integrity`
+repeats. For a release-rescued entry (2026-08-31) `version` is the release
+tag, and `integrity` is the tarball's sha256. Seven characters is how the card
+prints a commit, never what the field holds, and a tag prints whole; §8's
+"short-commit version" names that same display (shop design, 2026-10-13
+amendment; `2026-09-26-market-borrowings.md` §11).
+
 The catalog data schema bumps `schemaVersion` 2 → 3, additively. The client
 release supporting source `github` ships before the daily build flips the
 flag, so no live catalog ever serves v3 to a client that cannot parse it.
