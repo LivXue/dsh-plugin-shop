@@ -679,11 +679,13 @@ describe('orderShelf', () => {
     // 31 where `i % 13 === 0` are dated past `BUILT_AT`; the 34 where
     // `i % 11 === 0` are `null` — three fewer than a naive count, because
     // indices 0, 143 and 286 divide by both and the first branch wins them;
-    // the other 335 land on one of twelve days and one of ten hours, which is
-    // 120 keys for 335 entries, so the tied class is guaranteed rather than
-    // hoped for. Under `'added'` the generator is coarser: 58 indices carry no
-    // `added` date at all (`i % 7 === 0`), 48 of which still have a usable
-    // `publishedAt` — the entries that make the two date orders disagree.
+    // the other 335 land on one of twelve days and one of ten hours, but `i`
+    // sets both (the day through `i mod 12`, the hour through `i mod 10`), so
+    // the pair repeats every 60 indices: 60 keys for 335 entries, and the
+    // tied class is guaranteed rather than hoped for. Under `'added'` the
+    // generator is coarser: 58 indices carry no `added` date at all
+    // (`i % 7 === 0`), 48 of which still have a usable `publishedAt` — the
+    // entries that make the two date orders disagree.
     //
     // The future class is the one worth reading twice: under `'updated'` it
     // fails `ms > built` inside `shelfTime` and is therefore UNKNOWN, so
