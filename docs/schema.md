@@ -71,6 +71,36 @@ A package with no `dsh.catalog` and no npm `description` is not listed at all �
 
 `metadata` is independent of trust tier: a derived listing can still be `verified`, because review reads the plugin's code, not its prose.
 
+## Listed, but it does not install or load
+
+Being listed means the build read your manifest and found nothing it refuses. The build never installs your plugin and never runs it, so a listed plugin can still fail on a reader's machine. Below is what dsh 0.2.0-rc.2 — npm's `latest` for `@deepseek-ai/dsh` on 2026-10-13 — does in each case, read from its source, and what you can change.
+
+**Your harness peers leave out the reader's dsh.** dsh checks every `peerDependencies` entry named `@deepseek-ai/dsh` or `@deepseek-ai/dsh-*`, optional ones included, against the version it is running, and a range that leaves that version out refuses the install: before pnpm runs when dsh can read your manifest from the registry, and otherwise after pnpm, restoring the profile's `package.json` and lockfile. A plugin installed before the reader upgraded dsh stays installed and is skipped at startup. The reader can accept the risk for one exact version with `dsh plugin allow-version`; the `dshPeers` paragraph below says when the shop makes this check before the click and shows that command. Prereleases count as the `dsh.compatibility` paragraph below describes, and a caret range on a `0.x` version stops below the next minor: `^0.1.0-rc.6` admits nothing from `0.2.0-0` on and refuses dsh 0.2.0-rc.2. Unlike `dsh.compatibility`, a range dsh cannot parse is refused, not left unjudged. Only `workspace:^`, `workspace:~` and `workspace:*` are read as the running version, so every dsh refuses `workspace:^0.1.0`, a range `npm publish` ships as written. Declare the range of dsh versions you have run your plugin on, and publish with `pnpm publish`, which rewrites `workspace:` ranges.
+
+**A package your patch inserts is checked the same way.** After pnpm, dsh also reads each package your `dsh.bundle.patch` inserts and checks that package's harness peers, and one refusal refuses the whole install. The shop judges only your own manifest before the click, so a refusal for one of these packages comes after pnpm has run. Insert only packages whose harness peers admit the dsh versions you declare.
+
+**`dsh.bundle.patch` must be a file path or a list of file paths, and every file it names must be in what installs.** A missing `patch` or any other value (`true`, a number, an object, a list holding a non-string), or a named file that is not there, stops dsh reading your package: an install is refused with `Cannot validate installed package`, which no exemption clears, and a package that is already installed is skipped at startup, with a `skipping profile bundle` line naming the reason.
+
+**The catalog never opens an npm tarball.** It lists an npm package from the registry's metadata alone, so a file left out of what you publish is found only by the reader's install: a missing patch file is refused as above, and a module your patch inserts that is not there fails when dsh starts it. Before you publish, run `npm pack --dry-run` and check that its list holds every file your `dsh.bundle.patch` names and the file your `exports` (or `main`) resolves to for each module the patch inserts. A GitHub listing is held to this at the gate instead (`requires-build`, above).
+
+**An error during activation is recorded against your entry; an error left unhandled stops dsh.** An error your entry throws, or a promise it rejects, while dsh activates it is recorded against that entry: dsh starts the rest of the profile without it, apart from the plugins that wait for a service it provides, and prints `warning: N entries did not activate`, naming your entry's id, its package and the error. An unhandled rejection or an uncaught exception at any other moment, during startup or long after it — a callback that throws, an `error` event with no listener, a rejected promise nothing handles — ends the whole process: dsh prints `dsh: fatal load failure` or `dsh: fatal uncaught exception` with the error and exits with status 1. dsh also fails to start, printing `startup failed: N required plugins did not activate`, when an entry it requires does not activate — a fixed list of built-in ids, such as `connection` and `webserver` — and a required entry left waiting for a service counts: `connection` waits for the `credentials` service, so a failed credentials provider stops dsh starting, and so does the failure of any plugin that provides a service a required entry waits for. Handle every error your code can raise once activation has returned.
+
+**Under pnpm 11, an install that needs a build script fails.** dsh installs with whichever pnpm the reader has. pnpm 11 runs no package's build scripts unless the profile allows them, and by default (`strictDepBuilds`) a held script stops the install with `ERR_PNPM_IGNORED_BUILDS`, naming the package, which dsh classifies as `build-blocked`. That covers your own `preinstall`, `install` and `postinstall` and every dependency's. The reader has to allow those scripts — pnpm's message points to `pnpm approve-builds`, run in the profile directory — and install again. Publish built code instead of building it on install.
+
+**The version the catalog lists has to stay installable until the next build.** The catalog re-reads your package every day, and the shop installs exactly the version it lists, so unpublishing that version leaves the shop asking npm for a version it no longer has. Deprecate it, or publish a fixed version, instead.
+
+**One profile holds one package of each name.** A profile records one dependency per name, so a fork that keeps the original's `name` can never be installed beside it: `dsh plugin add` replaces whichever of the two is installed, and the shop refuses the install, naming the package that holds the name, until the reader uninstalls it. Give a fork its own `name`.
+
+**Try your plugin the way a reader installs it.** In a throwaway dsh home, add it with the spec the shop uses, then start dsh and read what it prints:
+
+```sh
+export DSH_HOME="$(mktemp -d)"
+dsh plugin --profile web add <spec>
+dsh --profile web --no-open --port 0
+```
+
+Then open the address it prints. `--port 0` takes a free port: on the default one, a dsh you already run makes this one fail to start, because `webserver` is a required entry. `<spec>` is `name@version` for an npm package, `github:owner/repo#<commit>` for a GitHub listing (with `&path:<dir>` appended for a subpackage), and the release asset's URL for a listing that installs from a release tarball. Run it on each dsh version you declare, and on npm's `latest` for `@deepseek-ai/dsh`.
+
 ## The published catalog data file
 
 Each build publishes the catalog as a content-addressed data file, `plugins.<sha256>.json`, named by the hash of its own contents. Besides the accepted `plugins` array, it carries a `denied` array: every denylisted package with the author-readable reason it was blocked. The Host consults `denied` when a `shop/installStart` request names a blocked package. Rejections that are not denials — a missing bundle, a `dsh.catalog` that failed validation, a name too similar to an existing plugin — appear only in the build report, never in the published data.
