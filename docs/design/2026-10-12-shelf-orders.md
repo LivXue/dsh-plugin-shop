@@ -181,8 +181,10 @@ export function orderShelf(starOrdered: readonly CatalogEntry[], order: ShelfOrd
 - CSS: the toggle reuses `.categoryButton`/`.categoryButtonOn` (their hue
   defaults to the brand token where no `data-category` is set), so the
   selected state is a border colour, a 14% fill and an inset ring — never a
-  size change. The label reuses the size figure's style: mono, tabular
-  numerals, secondary colour, at 12px.
+  size change. (Since 2026-10-14 it is a border mixed toward the foreground
+  and a 22% fill, with no ring: the shop design's "One line per control".)
+  The label reuses the size figure's style: mono, tabular numerals,
+  secondary colour, at 12px.
 
 **No host, RPC, catalog-schema or registry change.** The host already parses
 `added` and `publishedAt` (both optional on the consumer) and returns entries
