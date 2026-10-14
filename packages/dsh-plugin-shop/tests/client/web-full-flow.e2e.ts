@@ -133,6 +133,8 @@
  *   `uninstall` or `toggle`) (activation `reload`), the §8 offer `[data-shop-restart]` (activation
  *   `restart` && the host can restart), or `[data-shop-restart-disabled]`
  *   (activation `restart` && the host cannot restart); `live` offers neither
+ * - restart gate: `[data-shop-restart-gate]`, which the §8 offer opens, its
+ *   title the first paragraph and 取消 closing it again
  * - uninstall: `[data-shop-uninstall]`; done view `[data-shop-uninstall-done]`
  * - loader inventory tab: `dialog.getByRole('tab', { name: '插件列表' })`, then
  *   `expandGlobalPlane` — the tab splits into 会话插件 (the selected agent
@@ -701,18 +703,20 @@ async function checkCategoryBar(app: Page, dialog: Locator): Promise<void> {
   }
 }
 
-/** Red text clears 4.5:1 in both harness palettes.
+/** State-coloured text clears 4.5:1 in both harness palettes.
  *
- * `css-tokens.client.spec.ts` pins WHICH red each rule paints with; this
- * measures the result, because the failure is a composited one — the badge's
- * red reads on its own 14% red fill, and the uninstall button's on a 10% fill
- * under the pointer. dsh's token alone measures 4.498:1 as text on white and
- * 3.57:1 / 4.00:1 on the badge's tint, so the mix `.panel` derives has to be
- * re-measured against the live palette rather than trusted.
+ * `css-tokens.client.spec.ts` pins WHICH colour each rule paints with; this
+ * measures the result, because the failure is a composited one — a badge's
+ * text reads on its own 14% fill, and the uninstall button's on a 10% fill
+ * under the pointer. dsh's state tokens miss as text in the light theme: the
+ * error red measures 4.498:1 on white and 3.57:1 on the badge's tint, the
+ * warn amber 2.15:1 and the success green 2.28:1 on white. So the mixes
+ * `.panel` derives from them have to be re-measured against the live palette
+ * rather than trusted.
  *
  * Each target is measured at rest and, when `hover`, under the pointer too:
  * the button's hover fill is the surface it shipped failing on. */
-async function checkRedText(app: Page, targets: Array<{ label: string; locator: Locator; hover?: boolean }>): Promise<void> {
+async function checkTextContrast(app: Page, targets: Array<{ label: string; locator: Locator; hover?: boolean }>): Promise<void> {
   const originalTheme = await app.evaluate(() => document.body.getAttribute('data-ds-dark-theme'))
   try {
     for (const theme of ['light', 'dark']) {
@@ -734,6 +738,101 @@ async function checkRedText(app: Page, targets: Array<{ label: string; locator: 
     }, originalTheme)
     await app.mouse.move(0, 0)
   }
+}
+
+/** The state texts no flow in this run reaches, measured from their own rules:
+ * the warn and success ones, and the one red that sits on the panel itself
+ * rather than on a card. The fixture catalog is all community tier, so
+ * neither reviewed tier badge renders and neither does the reviewed line; the
+ * stale badge needs a cached catalog served in place of an origin that
+ * failed, the refresh failure a refresh every origin refused, and the
+ * self-update's failure heading a self-update that failed. So each is a
+ * stand-in: an
+ * element carrying the class the bundle generated for it — looked up in the
+ * page's own stylesheet, because class names are content-hashed at bundle
+ * time — placed in the container the component renders it in, and read like
+ * any other text. The rule, the tokens and the ground are the live ones; only
+ * the element is not. */
+async function checkStandInText(app: Page, dialog: Locator, entry: string): Promise<void> {
+  type StandIn = { label: string; local: string; tag: 'span' | 'p'; container: string | null; tier?: string }
+  // `container: null` is the card: the tier badges sit in its header and the
+  // reviewed line in its detail, and neither of those has a fill of its own.
+  const standIns: StandIn[] = [
+    { label: 'stale badge', local: 'staleBadge', tag: 'span', container: 'toolbarRight' },
+    { label: 'refresh failed', local: 'catalogRefreshFailed', tag: 'span', container: 'catalogStatsRow' },
+    { label: 'verified tier', local: 'tierBadge', tag: 'span', container: null, tier: 'verified' },
+    { label: 'verified-stale tier', local: 'tierBadge', tag: 'span', container: null, tier: 'verified-stale' },
+    { label: 'reviewed line', local: 'reviewedLine', tag: 'p', container: null },
+    // The self-update panel has no fill of its own, so its heading reads on
+    // the panel's ground, where plain red is at its thinnest in the dark
+    // theme: #2c2c2e is lighter than a card's #232324.
+    { label: 'self-update failure heading', local: 'failedHeading', tag: 'p', container: 'panel' },
+  ]
+  await dialog.evaluate((root, { items, entry }) => {
+    const classOf = (local: string): string => {
+      const pattern = new RegExp(`\\.(s[0-9a-f]{6}_${local})(?![\\w-])`)
+      for (const sheet of Array.from(document.styleSheets)) {
+        let list: CSSRuleList
+        try {
+          list = sheet.cssRules
+        } catch {
+          // A cross-origin stylesheet refuses `cssRules`. The shop's rules are
+          // a style tag its own bundle injects, which never does, so the
+          // search goes on and still throws below if the rule is absent.
+          continue
+        }
+        for (const rule of Array.from(list)) {
+          const found = rule instanceof CSSStyleRule ? pattern.exec(rule.selectorText) : null
+          if (found?.[1] !== undefined) return found[1]
+        }
+      }
+      throw new Error(`no rule for .${local} in the page's stylesheets`)
+    }
+    const card = root.querySelector(`[data-shop-entry="${entry}"]`)
+    if (card === null) throw new Error(`no card ${entry} to hold the stand-ins`)
+    for (const item of items) {
+      const parent = item.container === null ? card : root.querySelector(`.${classOf(item.container)}`)
+      if (parent === null) throw new Error(`no .${item.container} to hold the ${item.label} stand-in`)
+      const el = document.createElement(item.tag)
+      el.className = classOf(item.local)
+      if (item.tier !== undefined) el.setAttribute('data-tier', item.tier)
+      el.setAttribute('data-shop-e2e-stand-in', item.label)
+      el.textContent = item.label
+      parent.appendChild(el)
+    }
+  }, { items: standIns, entry })
+  try {
+    await checkTextContrast(app, standIns.map(({ label }) => ({
+      label,
+      locator: dialog.locator(`[data-shop-e2e-stand-in="${label}"]`),
+    })))
+  } finally {
+    await dialog.evaluate(root => {
+      for (const el of root.querySelectorAll('[data-shop-e2e-stand-in]')) el.remove()
+    })
+  }
+}
+
+/** The restart offer's text in both palettes, whichever this platform
+ * renders: the gate's warn title on the gate's own 8% tint — opened, read and
+ * cancelled again, so the case goes on from the offer it was handed — or the
+ * success-coloured notice that takes the button's place where dsh cannot
+ * restart itself. */
+async function checkRestartOfferText(app: Page, card: Locator): Promise<void> {
+  if (process.platform === 'win32') {
+    await checkTextContrast(app, [{ label: 'restart-disabled notice', locator: card.locator('[data-shop-restart-disabled]') }])
+    return
+  }
+  const restart = card.locator('[data-shop-restart]')
+  await restart.click()
+  const gate = card.locator('[data-shop-restart-gate]')
+  await gate.waitFor({ state: 'visible', timeout: 10_000 })
+  try {
+    await checkTextContrast(app, [{ label: 'restart gate title', locator: gate.locator('p').first() }])
+  } finally {
+    await gate.getByRole('button', { name: zh.cancel, exact: true }).click()
+  }
+  await restart.waitFor({ state: 'visible', timeout: 10_000 })
 }
 
 /** Every element in the tab draws at most one 1px line: no border side wider
@@ -1295,6 +1394,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await checkCategoryBar(app, dialog)
       // Then the whole tab: one 1px line per control, as the cascade resolves it.
       await checkOneLine(app, dialog)
+      // And the warn and success texts this run never stages, from their rules.
+      await checkStandInText(app, dialog, 'dsh-e2e-fixture-plugin')
 
       // The expanded detail's npm row: the link to the package's own npm page,
       // the other half of that same comparison.
@@ -1378,6 +1479,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const notice = card.locator('[data-shop-restart-notice]')
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
       expect(await notice.textContent()).toContain('已安装并热挂载')
+      // The success colour, on the card it reports for.
+      await checkTextContrast(app, [{ label: 'install notice', locator: notice }])
       // Both offers, not just the enabled one: under activation `restart` a
       // host that cannot restart renders `[data-shop-restart-disabled]`
       // instead, so counting `[data-shop-restart]` alone would be satisfied by
@@ -1416,7 +1519,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await uninstall.waitFor({ state: 'visible', timeout: 15_000 })
       // The one red text with a tint UNDER the pointer: hovering paints a 10%
       // red fill behind the word, which is the surface it shipped failing on.
-      await checkRedText(app, [{ label: 'uninstall', locator: uninstall, hover: true }])
+      await checkTextContrast(app, [{ label: 'uninstall', locator: uninstall, hover: true }])
 
       // Toggle: the REAL pluginInventory returns a snapshot object, not a
       // bare array — a click that fails here means the host misread the
@@ -1609,6 +1712,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         expect(await refused.getAttribute('role')).toBe('img')
         expect((await refused.getAttribute('aria-label') ?? '').split('\n').length).toBeGreaterThan(1)
         expect(await refused.getAttribute('title')).toBe(await refused.getAttribute('aria-label'))
+        // Its text is the page's base colour on its own red fill.
+        await checkTextContrast(app, [{ label: 'refused label', locator: refused }])
       } else {
         // Below 0.1.7-rc.1 nothing here refuses: every reason is advisory, so
         // the card keeps its button and the badge carries the word.
@@ -1730,16 +1835,17 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await card.locator('[class*="entryHeader"]').click()
       await expect.poll(async () => tall(), { timeout: 60_000 }).toBeGreaterThan(collapsed * 1.5)
 
-      // Every red line this card still carries after the exemption: the
-      // refusal's detachment takes the harness-peers line with it, so the
-      // three advisory lines read on the card's own surface — and the specs
-      // pin the token; only the browser composites the fill.
+      // Every red text this card still carries, on every harness: the three
+      // advisory lines on the card's own surface, and the badge on its own
+      // tint beside the button it qualifies, the thinnest of the reds. The
+      // specs pin the token; only the browser composites the fill.
       const afterKinds = ['missing-peers', 'harness-range', 'harness-profile'] as const
       const lineTargets: Array<{ label: string; locator: Locator }> = []
       for (const kind of afterKinds) {
         lineTargets.push({ label: `detail/${kind}`, locator: card.locator(`[data-shop-incompatible-detail="${kind}"]`) })
       }
-      await checkRedText(app, lineTargets)
+      lineTargets.push({ label: 'badge', locator: card.locator('[data-shop-blocker]') })
+      await checkTextContrast(app, lineTargets)
 
       // And the seed-only card says nothing at all. Its two peers, `react` and
       // `react-dom`, have no package on disk, so node resolution alone would
@@ -2054,6 +2160,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // What the reader is told instead: restart, and why.
       expect(await notice.textContent()).toBe(zh.hotAlreadyLoadedNotice)
       await expectRestartOffer(dialog, card)
+      await checkRestartOfferText(app, card)
       expect(await card.locator('[data-shop-reload]').count()).toBe(0)
     },
     120_000,

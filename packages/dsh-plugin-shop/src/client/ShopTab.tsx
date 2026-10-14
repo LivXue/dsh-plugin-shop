@@ -918,7 +918,7 @@ function RestartPanel({ t, restart, reload, gate }: {
   if (monitor?.kind === 'not-restarted') return null
   if (gateOpen) {
     return (
-      <div className={css.gate}>
+      <div className={css.gate} data-shop-restart-gate>
         <p className={css.gateTitle}>{t('restartTitle')}</p>
         <p className={css.gateBody}>{t('restartBody')}</p>
         <div className={css.gateActions}>
