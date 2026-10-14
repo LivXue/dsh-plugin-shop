@@ -73,6 +73,82 @@ describe('useKeyedFlows: the flow identity a memo depends on', () => {
   })
 })
 
+describe('useKeyedFlows: one start in flight per key', () => {
+  // Removing the §9.3 gate exposed a second click that the gate used to
+  // absorb. The gate's confirm button was the only thing between "Install" and
+  // the RPC, and a second press while the first was still unanswered reopened
+  // the gate instead of starting a second install. Without it, two clicks on
+  // one card are two 开始 requests, and the host does not dedupe: a release
+  // asset is downloaded and hashed twice, or the same name is installed twice
+  // over. Every button that offers an install shares this hook, so one guard
+  // here covers the card, both update buttons and the outdated row.
+
+  /** A `begin` the test resolves by hand, so the in-flight window is ours. */
+  function deferredBench() {
+    let release: (() => void) | undefined
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const begin = vi.fn(async (args: Args): Promise<InstallView> => {
+      await gate
+      return { kind: 'running', installId: args.installId, log: [], phase: 'installing' }
+    })
+    const installStatus = vi.fn(async (): Promise<ShopInstallStatusResult> =>
+      ({ found: true, state: 'running', log: [] }))
+    const rendered = renderHook(() => useKeyedFlows<Args>(begin, installStatus))
+    return { ...rendered, begin, release: () => { release?.() } }
+  }
+
+  it('ignores a second start for the same key while the first is unanswered', async () => {
+    const { result, begin, release } = deferredBench()
+    let first: Promise<void> | undefined
+    act(() => { first = result.current.flowFor('npm:busy').start({ installId: 'i1' }) })
+    expect(begin).toHaveBeenCalledTimes(1)
+    // The second press, from the same card with the same key. Deliberately not
+    // awaited here: with the guard missing this promise is the hang itself,
+    // and a timeout is a worse signal than a count.
+    let second: Promise<void> | undefined
+    act(() => { second = result.current.flowFor('npm:busy').start({ installId: 'i1' }) })
+    expect(begin, 'the host does not dedupe; this is the only thing that does').toHaveBeenCalledTimes(1)
+    await act(async () => { release(); await first; await second })
+    expect(result.current.flowFor('npm:busy').view).toMatchObject({ kind: 'running', installId: 'i1' })
+  })
+
+  it('reports the in-flight window on the flow, so the button can show it', async () => {
+    const { result, release } = deferredBench()
+    expect(result.current.flowFor('npm:busy').starting).toBe(false)
+    let first: Promise<void> | undefined
+    act(() => { first = result.current.flowFor('npm:busy').start({ installId: 'i1' }) })
+    // Between the click and the answer the reader gets a disabled button and a
+    // wait cursor, which is a fact about the flow, not about the button.
+    expect(result.current.flowFor('npm:busy').starting).toBe(true)
+    await act(async () => { release(); await first })
+    expect(result.current.flowFor('npm:busy').starting).toBe(false)
+  })
+
+  it('takes a start again once the first one has answered', async () => {
+    const { result, begin, release } = deferredBench()
+    let first: Promise<void> | undefined
+    act(() => { first = result.current.flowFor('npm:busy').start({ installId: 'i1' }) })
+    await act(async () => { release(); await first })
+    // A retry of a settled flow is a new request, not a repeat of the one in
+    // flight: `start` clears the previous outcome and asks again.
+    await act(async () => { await result.current.flowFor('npm:busy').start({ installId: 'i2' }) })
+    expect(begin).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not let one key in flight block another', async () => {
+    const { result, begin, release } = deferredBench()
+    let first: Promise<void> | undefined
+    let second: Promise<void> | undefined
+    act(() => { first = result.current.flowFor('npm:a').start({ installId: 'i1' }) })
+    act(() => { second = result.current.flowFor('npm:b').start({ installId: 'i2' }) })
+    // The guard is per identity: the whole shelf is not held hostage by one
+    // card, and two different plugins install at once.
+    expect(begin).toHaveBeenCalledTimes(2)
+    expect(result.current.flowFor('npm:b').starting).toBe(true)
+    await act(async () => { release(); await first; await second })
+  })
+})
+
 describe('useKeyedFlows: resetting by what a flow holds', () => {
   // dsh restarting under the page settles every receipt that was waiting for
   // a restart, across every card at once; the tab names which by the view,

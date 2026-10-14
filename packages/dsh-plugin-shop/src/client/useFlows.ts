@@ -29,6 +29,10 @@ import { isTerminalInstallState } from '../shared/install-state.ts'
 /** One identity's flow, as the tab hands it to a panel. */
 export interface KeyedFlow<TArgs> {
   view: InstallView
+  /** A start for THIS key is in flight and unanswered. The button that
+   * offered it renders disabled with a wait cursor while this holds, and a
+   * second `start` for the same key is ignored rather than sent. */
+  starting: boolean
   start: (args: TArgs) => Promise<void>
   reset: () => void
 }
@@ -91,6 +95,12 @@ export function useKeyedFlows<TArgs>(
   onSettled?: (key: string, outcome: 'done' | 'failed') => void,
 ): UseKeyedFlows<TArgs> {
   const [views, setViews] = useState<ReadonlyMap<string, InstallView>>(() => new Map())
+  const [starting, setStarting] = useState<ReadonlySet<string>>(() => new Set())
+  // The synchronous half of `starting`. React batches state updates, so two
+  // clicks dispatched in one task would both read the pre-update Set and both
+  // reach `begin` — which is exactly the double install this guard exists to
+  // stop. The ref is what a second call in the same tick sees.
+  const inFlight = useRef(new Set<string>())
   const settled = useRef(onSettled)
   settled.current = onSettled
 
@@ -114,10 +124,27 @@ export function useKeyedFlows<TArgs>(
   }, [])
 
   const start = useCallback(async (key: string, args: TArgs): Promise<void> => {
-    // `idle` first, so a retry of a settled flow clears the previous outcome
-    // before the new request is in flight rather than after it answers.
-    put(key, { kind: 'idle' })
-    put(key, await begin(args))
+    // ONE start in flight per identity. The §9.3 gate used to absorb a second
+    // press — it reopened instead of asking again — and nothing else does:
+    // `begin` reaches the host, and the host does not dedupe. A release asset
+    // would be downloaded and hashed twice, or one name installed twice over.
+    if (inFlight.current.has(key)) return
+    inFlight.current.add(key)
+    setStarting(current => new Set(current).add(key))
+    try {
+      // `idle` first, so a retry of a settled flow clears the previous outcome
+      // before the new request is in flight rather than after it answers.
+      put(key, { kind: 'idle' })
+      put(key, await begin(args))
+    } finally {
+      inFlight.current.delete(key)
+      setStarting(current => {
+        if (!current.has(key)) return current
+        const next = new Set(current)
+        next.delete(key)
+        return next
+      })
+    }
   }, [begin, put])
 
   const reset = useCallback((key: string): void => {
@@ -203,16 +230,22 @@ export function useKeyedFlows<TArgs>(
       flowClosures.current = { start, reset }
     }
     const view = views.get(key) ?? IDLE_VIEW
+    // `starting` is part of the identity for the reason `view` is: it is a
+    // fact the consumer renders from — the button is disabled and its cursor
+    // waits while it holds — so a flow that kept the old object would leave
+    // the button live through the whole in-flight window.
+    const isStarting = starting.has(key)
     const cached = flowCache.current.get(key)
-    if (cached !== undefined && cached.view === view) return cached
+    if (cached !== undefined && cached.view === view && cached.starting === isStarting) return cached
     const flow: KeyedFlow<TArgs> = {
       view,
+      starting: isStarting,
       start: args => start(key, args),
       reset: () => reset(key),
     }
     flowCache.current.set(key, flow)
     return flow
-  }, [views, start, reset])
+  }, [views, starting, start, reset])
 
   return { flowFor, resetFlow: reset, resetWhere, pending }
 }

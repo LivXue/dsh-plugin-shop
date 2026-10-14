@@ -117,14 +117,14 @@ export function harnessVerdictOf(
  * facts its copy names — never the copy, which the tab localizes (§4: no copy
  * crosses the RPC).
  *
- * Refusals and warnings, each with its own remedy. Two are refusals, and
- * disable the button (`refusesInstall`): a taken name, which the host WILL
- * refuse and the reader fixes by uninstalling a plugin; and harness peers the
- * running dsh WILL refuse (0.1.7 on), fixed by dsh's exact-version exemption,
- * whose command the host sends when dsh would accept one. Everything else is
- * about this harness and is advisory — the host installs anyway: components
- * node resolution and the page's module table both lack, and an author's
- * declared range or profile list this dsh falls outside of.
+ * Refusals and warnings, each with its own remedy. Two are refusals, and put
+ * a label in the button's place (`refusesInstall`): a taken name, which the
+ * host WILL refuse and the reader fixes by uninstalling a plugin; and harness
+ * peers the running dsh WILL refuse (0.1.7 on), fixed by dsh's exact-version
+ * exemption, whose command the host sends when dsh would accept one.
+ * Everything else is about this harness and is advisory — the host installs
+ * anyway: components node resolution and the page's module table both lack,
+ * and an author's declared range or profile list this dsh falls outside of.
  */
 export type Blocker =
   | { kind: 'name-taken'; holder: string }
@@ -189,10 +189,10 @@ export function readsIncompatible(blockers: readonly { kind: BlockerKind }[]): b
 }
 
 /**
- * Whether this install is refused before it starts, so its button is
- * disabled rather than opening the acknowledgement gate for an install that
- * cannot proceed: by the host, for a taken name, or by the running dsh, for
- * its harness peers.
+ * Whether this install is refused before it starts, so the card shows the
+ * refused label where its button would be, rather than a button for an
+ * install that cannot proceed: refused by the host, for a taken name, or by
+ * the running dsh, for its harness peers.
  *
  * The second is the one harness reason that blocks (design
  * 2026-09-26-dsh-017-readiness, B1, amending "warn, never block"): dsh 0.1.7
@@ -200,9 +200,9 @@ export function readsIncompatible(blockers: readonly { kind: BlockerKind }[]): b
  * entry after it, rolling the profile back, and the shop cannot install past
  * it. The verdict is dsh's own rule on the profile's own exemptions, whichever
  * channel the entry comes from (design
- * 2026-09-28-bundle-components-and-github-peers, section 7.3), so a disabled
- * button is dsh's answer given early, never the shop's opinion — and
- * recording the exemption the card shows is what enables it again.
+ * 2026-09-28-bundle-components-and-github-peers, section 7.3), so the label
+ * is dsh's answer given early, never the shop's opinion — and recording the
+ * exemption the card shows is what brings the button back.
  */
 export function refusesInstall(blockers: readonly { kind: BlockerKind }[]): boolean {
   return blockers.some(blocker => blocker.kind === 'name-taken' || blocker.kind === 'harness-peers')
@@ -252,14 +252,22 @@ export function heldBy(
   return specVerdict(entry, spec) === 'same' ? undefined : holderLabel(spec, entry.name)
 }
 
-/** Spec §9.3 verbatim — the community-tier acknowledgement. The zh dictionary
- * states the same facts in its own register; never soften this wording. */
-export const ACKNOWLEDGEMENT_EN =
-  'Once installed, this plugin holds the same privileges as a built-in one: reading and writing your files, running shell commands, and reading and modifying the requests sent to the model. It has not been reviewed.'
+/** The disclosure every install now stands under (spec §9.3, amended
+ * 2026-10-14). It used to be the acknowledgement dialog's body: the gate asked
+ * a reader to accept THESE privileges before each community install. The gate
+ * is gone, and the same facts stand instead as one quiet line on the page, so
+ * they cannot be missed and cannot be dismissed unread.
+ *
+ * Stated in the general case — "a plugin", not "this plugin" — because it now
+ * describes the tier system rather than one entry, and because the community
+ * tier is never badged on a card: naming a badge that is not rendered would
+ * send a reader looking for it. */
+export const DISCLOSURE_EN =
+  'Once installed, a plugin holds the same privileges as a built-in one: reading and writing your files, running shell commands, and reading and modifying the requests sent to the model. Plugins not marked Verified have not been reviewed.'
 
-/** Spec §9.3 in the zh register — the same facts, the same force. */
-export const ACKNOWLEDGEMENT_ZH =
-  '安装后，此插件将拥有与内置插件相同的权限：读写你的文件、执行 shell 命令，以及读取和修改发送给模型的请求。它未经审核。'
+/** The same facts in the zh register, with the same force. */
+export const DISCLOSURE_ZH =
+  '安装后，插件拥有与内置插件相同的权限：读写你的文件、执行 shell 命令，以及读取和修改发送给模型的请求。未标「已审核」的插件未经审核。'
 
 /** Install rejection code → locale key, for the rejected-state code label
  * (§7.2): every rejection the host can return has a human label here. */

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, RESTART_GRACE_MS, RESTART_STABLE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
+import { DISCLOSURE_EN, DISCLOSURE_ZH, RESTART_GRACE_MS, RESTART_STABLE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
 import { en, zh, type ShopLocaleKey } from '../../src/client/locales.ts'
 import { ShopTab, type ShopTabInjected, type ShopTabProps } from '../../src/client/ShopTab.tsx'
 import { noteBoot, registerRestartCarrier, resetRestartMonitor, startRestartMonitor } from '../../src/client/restart-monitor.ts'
@@ -361,27 +361,16 @@ describe('ShopTab', () => {
     expect(container.querySelector('img')).toBeNull()
   })
 
-  it('gates a community install behind the acknowledgement wording', async () => {
+  it('starts a community install on the first click, acknowledging as it goes', async () => {
+    // The §9.3 gate is gone: what it asked for is one indisputable click on
+    // the button itself, and the facts it stated stand on the page instead
+    // (see the disclosure case below).
     const { injected, install } = bench(snapshot())
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
-    await waitFor(() => expect(screen.getByText(en.acknowledgementBody)).toBeTruthy())
-    expect(screen.getByText(en.acknowledgementTitle)).toBeTruthy()
-    expect(install).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByText(en.confirm))
     await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm', repo: undefined, subdir: undefined }))
-  })
-
-  it('closes the acknowledgement gate on cancel without installing', async () => {
-    const { injected, install } = bench(snapshot())
-    renderTab(injected)
-    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    fireEvent.click(screen.getByText(en.install))
-    await waitFor(() => expect(screen.getByText(en.acknowledgementBody)).toBeTruthy())
-    fireEvent.click(screen.getByText(en.cancel))
-    expect(install).not.toHaveBeenCalled()
-    expect(screen.queryByText(en.acknowledgementBody)).toBeNull()
+    expect(screen.queryByText(en.cancel), 'no dialog opened').toBeNull()
   })
 
   it('installs a verified entry without acknowledgement', async () => {
@@ -390,7 +379,19 @@ describe('ShopTab', () => {
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
     await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: undefined, source: 'npm', repo: undefined, subdir: undefined }))
-    expect(screen.queryByText(en.acknowledgementBody)).toBeNull()
+  })
+
+  it('states the install disclosure on the page, not behind a dialog', async () => {
+    // Every install stands under it now, so it is not something a reader
+    // dismisses per install: it sits under the stats row, always visible.
+    const { injected } = bench(snapshot())
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.disclosure)).toBeTruthy())
+    const line = container.querySelector('[data-shop-disclosure]')
+    expect(line?.textContent).toBe(en.disclosure)
+    // Under the stats row, which is the row it qualifies.
+    const stats = container.querySelector('[data-shop-catalog-stats]')
+    expect(stats?.compareDocumentPosition(line as Node) === Node.DOCUMENT_POSITION_FOLLOWING).toBe(true)
   })
 
   it.each([
@@ -438,7 +439,7 @@ describe('ShopTab', () => {
     const { injected } = bench(catalog, [], { 'dsh-skill-manager': 'github:CLAPEILL/dsh-skill-manager' })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-skill-manager')).toBeTruthy())
-    await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-blocker]')).toBeTruthy())
+    await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-refused]')).toBeTruthy())
     // The reason names the plugin that holds the name — not "missing
     // components", which is a different problem with a different remedy.
     const detail = container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-incompatible-detail]')
@@ -465,18 +466,17 @@ describe('ShopTab', () => {
     const details = [...container.querySelectorAll('[data-shop-entry="dsh-skill-manager"] [data-shop-incompatible-detail]')]
     expect(details[0]?.textContent ?? '').toContain('CLAPEILL/dsh-skill-manager')
     expect(details[1]?.textContent ?? '').toContain('@deepseek-ai/dsh-client-ui-slots')
-    // The badge's accessible name carries both, since it is the only place a
-    // screen reader meets them on a row that prints no detail line.
-    const badge = container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-blocker]')
-    expect(badge?.getAttribute('aria-label') ?? '').toContain('CLAPEILL/dsh-skill-manager')
-    expect(badge?.getAttribute('aria-label') ?? '').toContain('@deepseek-ai/dsh-client-ui-slots')
+    // The refused LABEL's accessible name carries both, since it is the only
+    // place a screen reader meets them on a row that prints no detail line.
+    const label = container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-refused]')
+    expect(label?.getAttribute('aria-label') ?? '').toContain('CLAPEILL/dsh-skill-manager')
+    expect(label?.getAttribute('aria-label') ?? '').toContain('@deepseek-ai/dsh-client-ui-slots')
   })
 
-  it('blocks the install button for a taken name instead of opening the §9.3 gate', async () => {
-    // The gate asks the reader to accept a plugin's privileges. Spending it on
-    // an install the host will refuse — and then landing them on a rejected
-    // card with no retry — is the worst order to do these things in, and every
-    // live catalog entry is community-tier, so that gate always opens.
+  it('replaces the install button with a label for a taken name', async () => {
+    // The button that a refused install cannot use is not rendered at all: a
+    // disabled button reads as "try again later", and no later try can help.
+    // The label states the verdict instead, and nothing reaches the host.
     const catalog = snapshot({
       name: 'dsh-skill-manager', source: 'github', repo: 'Mvyvn/dsh-skill-manager',
       version: 'a'.repeat(40), repository: 'https://github.com/Mvyvn/dsh-skill-manager',
@@ -484,10 +484,14 @@ describe('ShopTab', () => {
     const { injected, install } = bench(catalog, [], { 'dsh-skill-manager': 'github:CLAPEILL/dsh-skill-manager' })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-skill-manager')).toBeTruthy())
-    const button = container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-install]') as HTMLButtonElement
-    expect(button.disabled).toBe(true)
-    fireEvent.click(button)
-    expect(screen.queryByText(en.acknowledgementTitle)).toBeNull()
+    const card = container.querySelector('[data-shop-entry="dsh-skill-manager"]') as HTMLElement
+    expect(card.querySelector('[data-shop-install]'), 'no button to press').toBeNull()
+    const label = card.querySelector('[data-shop-refused]') as HTMLElement
+    expect(label.textContent).toBe(en.nameTakenBadge)
+    // The reasons ride on the label, the way they rode on the badge.
+    expect(label.getAttribute('role')).toBe('img')
+    expect(label.getAttribute('aria-label')).toBe(en.nameTakenDetail.replace('{holder}', 'CLAPEILL/dsh-skill-manager'))
+    expect(label.getAttribute('title')).toBe(label.getAttribute('aria-label'))
     expect(install).not.toHaveBeenCalled()
   })
 
@@ -504,12 +508,12 @@ describe('ShopTab', () => {
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-skill-manager')).toBeTruthy())
     const badge = await waitFor(() => {
-      const found = container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-blocker]')
+      const found = container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-refused]')
       expect(found).toBeTruthy()
       return found as HTMLElement
     })
     expect(badge.textContent).toBe(en.nameTakenBadge)
-    expect(badge.getAttribute('data-shop-blocker')).toBe('name-taken')
+    expect(badge.getAttribute('data-shop-blocker-kind')).toBe('name-taken')
   })
 
   it('makes no claim about a name conflict when the host cannot read the manifest', async () => {
@@ -527,7 +531,7 @@ describe('ShopTab', () => {
     const { injected } = bench(catalog, [], null)
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-skill-manager')).toBeTruthy())
-    expect(container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-blocker]')).toBeNull()
+    expect(container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-refused]')).toBeNull()
     const button = container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-install]') as HTMLButtonElement
     expect(button.disabled).toBe(false)
   })
@@ -544,8 +548,9 @@ describe('ShopTab', () => {
     }])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-skill-manager')).toBeTruthy())
+    expect(container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-refused]')).toBeNull()
     expect(container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-blocker]')).toBeNull()
-    // The detail line, not just the badge: an installed card renders no
+    // The detail line, not just the badge/label: an installed card renders no
     // install button, so its badge never sees `nameTakenBy` and asserting on
     // the badge alone would pass even with the identity comparison deleted.
     expect(container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-incompatible-detail]')).toBeNull()
@@ -1793,9 +1798,9 @@ describe('ShopTab', () => {
     expect(all.getAttribute('aria-pressed')).toBe('false')
   })
 
-  it('pins the acknowledgement wording to §9.3 in both dictionaries', () => {
-    expect(en.acknowledgementBody).toBe(ACKNOWLEDGEMENT_EN)
-    expect(zh.acknowledgementBody).toBe(ACKNOWLEDGEMENT_ZH)
+  it('pins the disclosure wording in both dictionaries', () => {
+    expect(en.disclosure).toBe(DISCLOSURE_EN)
+    expect(zh.disclosure).toBe(DISCLOSURE_ZH)
   })
 
   it('heads the update rows "Updatable", which the Installed filter does not say', () => {
@@ -1833,7 +1838,13 @@ describe('ShopTab', () => {
     // Emptiness is checked in the same pass, because it is the other hole a
     // distinctness assertion leaves open: `satisfies Record<ShopLocaleKey,
     // string>` accepts '', and a heading with no word at all is worse than a
-    // heading with the wrong one.
+    // heading with the wrong one. Since the §9.3 dialog is gone, the copy it
+    // held is gone with it: there is no `acknowledgementTitle` or
+    // `acknowledgementBody`, and no `confirm`, because a click is its own
+    // acknowledgement now (spec, amended 2026-10-14).
+    expect(Object.keys(dict as Record<string, string>), 'the §9.3 dialog keys are gone').not.toContain('acknowledgementTitle')
+    expect(Object.keys(dict as Record<string, string>)).not.toContain('acknowledgementBody')
+    expect(Object.keys(dict as Record<string, string>)).not.toContain('confirm')
     const byCopy = new Map<string, string[]>()
     for (const [key, value] of Object.entries(dict as Record<string, string>)) {
       expect(value, `${locale}.${key} is empty`).not.toBe('')
@@ -2022,14 +2033,11 @@ describe('ShopTab', () => {
     await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: undefined, source: 'npm', repo: undefined, subdir: undefined }))
   })
 
-  it('gates a community-tier update behind the acknowledgement', async () => {
+  it('starts a community-tier update on the first click, acknowledging as it goes', async () => {
     const { injected, install } = bench(snapshot({ tier: 'community' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-update]')!)
-    await waitFor(() => expect(screen.getByText(en.acknowledgementBody)).toBeTruthy())
-    expect(install).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByText(en.confirm))
     await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm', repo: undefined, subdir: undefined }))
   })
 
@@ -2119,14 +2127,11 @@ describe('ShopTab', () => {
     await waitFor(() => expect(screen.getByText('dsh-not-installed')).toBeTruthy())
   })
 
-  it('gates the card update button behind the acknowledgement for a community install', async () => {
+  it('starts the card update on one click for a community install', async () => {
     const { injected, install } = bench(snapshot({ tier: 'community' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-update]')!)
-    await waitFor(() => expect(screen.getByText(en.acknowledgementBody)).toBeTruthy())
-    expect(install).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByText(en.confirm))
     await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm', repo: undefined, subdir: undefined }))
   })
 
@@ -2179,10 +2184,10 @@ describe('ShopTab', () => {
     })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    fireEvent.click(screen.getByText(en.install))
-    expect(container.querySelector('[data-shop-incompatible-detail]')).toBeTruthy()
-    // Warn, never block: the confirm button stays live and the install runs.
-    fireEvent.click(container.querySelector('[data-shop-confirm]') as HTMLElement)
+    fireEvent.click(container.querySelector('[data-shop-incompatible-detail]') as HTMLElement)
+    // Warn, never block: the install button stays live and the install runs on
+    // one click, the advisory detail already stated on the card above it.
+    fireEvent.click(container.querySelector('[data-shop-install]') as HTMLElement)
     await waitFor(() => expect(install).toHaveBeenCalled())
   })
 
@@ -2269,7 +2274,7 @@ describe('ShopTab', () => {
     )
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    expect(container.querySelector('[data-shop-blocker="name-taken"]')).toBeTruthy()
+    expect(container.querySelector('[data-shop-refused]')).toBeTruthy()
     expect(container.querySelector('[data-shop-hide-incompatible]')?.textContent).toContain('Hide incompatible 0')
 
     fireEvent.click(container.querySelector('[data-shop-hide-incompatible]') as HTMLElement)
@@ -2292,7 +2297,7 @@ describe('ShopTab', () => {
     )
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    expect(container.querySelector('[data-shop-blocker]')?.getAttribute('data-shop-blocker')).toBe('name-taken')
+    expect(container.querySelector('[data-shop-refused]')?.getAttribute('data-shop-blocker-kind')).toBe('name-taken')
     // Uncounted as well as unhidden: the count states the size of the set the
     // button would take away, so counting one it must keep would overstate it.
     expect(container.querySelector('[data-shop-hide-incompatible]')?.textContent).toContain('Hide incompatible 0')
@@ -2430,11 +2435,11 @@ describe('ShopTab', () => {
     expect(detail).toBeTruthy()
   })
 
-  it('states the missing modules once on a card, not again inside its gate', async () => {
-    // The card renders the detail whenever anything is missing, and the gate
-    // opens inside that same card. Both rendering it printed the two lines
-    // twice, verbatim — invisible while the two surfaces used different copy,
-    // obvious the moment they were unified.
+  it('states the missing modules once on a card, and nowhere else on it', async () => {
+    // The card renders the detail whenever anything is missing, and the §9.3
+    // gate used to open inside that same card and print the two lines a second
+    // time, verbatim. The gate is gone; what this still guards is the count,
+    // because a second surface stating the same fact is how that happened.
     const { injected } = bench({
       ...snapshot({ tier: 'community' }),
       incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
@@ -2442,15 +2447,15 @@ describe('ShopTab', () => {
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]') as HTMLElement
-    fireEvent.click(card.querySelector('[data-shop-install]') as HTMLElement)
-    expect(card.querySelector('[data-shop-confirm]'), 'the gate should be open').toBeTruthy()
     const line = en.incompatibleDetail.replace('{modules}', '@deepseek-ai/dsh-client-store').split('\n')[0] ?? ''
     const text = card.textContent ?? ''
     expect(line, 'the copy must carry a newline for this to mean anything').not.toBe('')
     expect(text.split(line).length - 1, 'the detail must appear exactly once').toBe(1)
-    // Still stated, just once: it is a fact about the entry, so it belongs to
-    // the card, while the gate speaks only about the acknowledgement.
+    // A fact about the entry, so it belongs to the card.
     expect(card.querySelector('[data-shop-incompatible-detail]')).toBeTruthy()
+    // And one click installs it: advisory reasons never block.
+    fireEvent.click(card.querySelector('[data-shop-install]') as HTMLElement)
+    expect(card.querySelector('[data-shop-confirm]'), 'no dialog stands in the way').toBeNull()
   })
 
   it('warns with the same wording when the gate opens for an update', async () => {
@@ -2683,7 +2688,7 @@ describe("ShopTab refusal by the running dsh's own peer check (0.1.7)", () => {
   const cardOf = (container: HTMLElement): HTMLElement =>
     container.querySelector('[data-shop-entry="dsh-hello-plugin"]') as HTMLElement
 
-  it('disables Install on the card, naming what dsh refused and the command that exempts it', async () => {
+  it('replaces Install with a label on the card, naming what dsh refused and the command that exempts it', async () => {
     const { injected, install } = bench(withVerdict(PEERS))
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
@@ -2693,19 +2698,47 @@ describe("ShopTab refusal by the running dsh's own peer check (0.1.7)", () => {
     expect(remedy.textContent).toContain(en.harnessPeersRemedy)
     // Verbatim, on a line of its own: it goes to a terminal unchanged.
     expect(remedy.querySelector('[data-shop-allow-command]')?.textContent).toBe(COMMAND)
-    expect(card.querySelector('[data-shop-blocker]')?.getAttribute('data-shop-blocker')).toBe('harness-peers')
-    expect(card.querySelector('[data-shop-blocker]')?.textContent).toBe(en.incompatibleBadge)
 
-    const button = card.querySelector('[data-shop-install]') as HTMLButtonElement
-    expect(button.disabled).toBe(true)
-    expect(button.hasAttribute('data-shop-refused')).toBe(true)
-    // No gate for an install that cannot proceed, and nothing reaches the host.
-    fireEvent.click(button)
-    expect(card.querySelector('[data-shop-confirm]')).toBeNull()
+    // No button at all, and no badge beside it: the label says the same word
+    // the badge said, so keeping both would print it twice. The card's action
+    // row is the surface this is about — the body above it still states the
+    // detail lines, which is right.
+    const actions = card.querySelector('[data-shop-actions]') as HTMLElement
+    expect(actions.querySelector('[data-shop-install]'), 'no button for a refused install').toBeNull()
+    // The label says the same word the badge said, so no badge beside it. The
+    // refused install still carries the verdict's kind for the locator, but
+    // on `data-shop-blocker-kind`, which no badge ever will.
+    expect(actions.querySelector('[data-shop-blocker]'), 'the label takes the badge\'s place').toBeNull()
+    const label = actions.querySelector('[data-shop-refused]') as HTMLElement
+    expect(label.textContent).toBe(en.incompatibleBadge)
+    // The full reasons still reach a reader: on the label, where the badge
+    // carried them (`role="img"` + `aria-label`, title for the mouse).
+    const detail = card.querySelectorAll('[data-shop-incompatible-detail]')[0]?.textContent ?? ''
+    expect(detail).toContain(peersLine.split('\n')[0] ?? peersLine)
+    expect(label.getAttribute('role')).toBe('img')
+    expect(label.getAttribute('aria-label')).toContain(peersLine.split('\n')[0] ?? peersLine)
+    expect(label.getAttribute('title')).toBe(label.getAttribute('aria-label'))
+    expect(label.querySelector('[data-shop-allow-command]'), 'the command stays on the card, not in the label').toBeNull()
     expect(install).not.toHaveBeenCalled()
   })
 
-  it('still disables Install, with no command, when dsh would refuse the exemption too', async () => {
+  it('replaces Update with a label on a refused row, and writes the reasons out beside it', async () => {
+    const { injected } = bench(withVerdict(PEERS), [outdatedRow])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
+    expect(row.querySelector('[data-shop-update]'), 'no button').toBeNull()
+    expect((row.querySelector('[data-shop-refused]') as HTMLElement).textContent).toBe(en.incompatibleBadge)
+    const reasons = row.querySelector('[data-shop-refusal]') as HTMLElement
+    expect(reasons.querySelector('[data-shop-incompatible-warning="harness-peers"]')?.textContent).toBe(peersLine)
+    expect(reasons.querySelector('[data-shop-allow-command]')?.textContent).toBe(COMMAND)
+    // The card for the same install states it once, in its own detail line.
+    const card = cardOf(container)
+    expect(card.querySelector('[data-shop-refusal]')).toBeNull()
+    expect(card.querySelector('[data-shop-refused]')).toBeTruthy()
+  })
+
+  it('still shows the label, with no command, when dsh would refuse the exemption too', async () => {
     const { injected } = bench(withVerdict({ peers: { ...PEERS.peers!, allowCommand: null } }))
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
@@ -2713,18 +2746,21 @@ describe("ShopTab refusal by the running dsh's own peer check (0.1.7)", () => {
     expect(card.querySelector('[data-shop-incompatible-detail="harness-peers"]')?.textContent).toBe(peersLine)
     expect(card.querySelector('[data-shop-remedy]')).toBeNull()
     expect(card.querySelector('[data-shop-allow-command]')).toBeNull()
-    expect((card.querySelector('[data-shop-install]') as HTMLButtonElement).disabled).toBe(true)
+    expect(card.querySelector('[data-shop-install]')).toBeNull()
+    expect(card.querySelector('[data-shop-refused]')).toBeTruthy()
   })
 
-  it('writes the refusal and its command out on the outdated row, whose disabled Update opens no gate', async () => {
-    // The row states no detail line, and the gate was where its reasons were
-    // written out; a disabled button opens none, so the refusal is printed
-    // beside it — or the only way to enable the button would sit in a title.
+  it('writes the refusal and its command out on the outdated row, whose Update is a label', async () => {
+    // The row states no detail line of its own, and it used to open the §9.3
+    // dialog, which was where its reasons were written. There is no dialog
+    // now, and no button either, so the reasons are printed beside the label —
+    // otherwise the only way to clear dsh's refusal would sit in a title.
     const { injected } = bench(withVerdict(PEERS), [outdatedRow])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
-    expect((row.querySelector('[data-shop-update]') as HTMLButtonElement).disabled).toBe(true)
+    expect(row.querySelector('[data-shop-update]'), 'no button to press').toBeNull()
+    expect((row.querySelector('[data-shop-refused]') as HTMLElement).textContent).toBe(en.incompatibleBadge)
     const refusal = row.querySelector('[data-shop-refusal]') as HTMLElement
     expect(refusal.querySelector('[data-shop-incompatible-warning="harness-peers"]')?.textContent).toBe(peersLine)
     expect(refusal.querySelector('[data-shop-allow-command]')?.textContent).toBe(COMMAND)
@@ -2734,25 +2770,34 @@ describe("ShopTab refusal by the running dsh's own peer check (0.1.7)", () => {
     expect(card.querySelectorAll('[data-shop-allow-command]')).toHaveLength(1)
   })
 
-  it('prints no refusal on the outdated row for an advisory reason, which still opens the gate', async () => {
+  it('writes an advisory reason out on the outdated row too, where no dialog states it any more', async () => {
+    // The row has no detail line, and its update starts on one click now, so
+    // the advisory facts must stand beside it — the dialog that used to say
+    // them is gone.
     const { injected } = bench(withVerdict({ dsh: { range: '0.1.2-rc.1', running: '0.1.7-rc.2' } }), [outdatedRow])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
-    expect(row.querySelector('[data-shop-refusal]')).toBeNull()
+    // Not a refusal: the button is there, and it is pressable.
+    expect(row.querySelector('[data-shop-refusal]'), 'refusal is for what dsh refuses').toBeNull()
+    const lines = row.querySelector('[data-shop-blocker-lines]') as HTMLElement
+    const rangeLineForRow = en.harnessRangeDetail.replace('{range}', '0.1.2-rc.1').replace('{running}', '0.1.7-rc.2')
+    expect(lines.querySelector('[data-shop-incompatible-warning="harness-range"]')?.textContent).toBe(rangeLineForRow)
     expect((row.querySelector('[data-shop-update]') as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('enables Install once Refresh finds the exemption recorded', async () => {
     // The way out, end to end on the client: the reader runs the command, the
-    // host's next catalog call reads the exemption and sends no refusal.
+    // host's next catalog call reads the exemption and sends no refusal, and
+    // the label gives way to the button again.
     const { injected, catalog } = bench(withVerdict(PEERS))
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    expect((cardOf(container).querySelector('[data-shop-install]') as HTMLButtonElement).disabled).toBe(true)
+    expect(cardOf(container).querySelector('[data-shop-install]'), 'labelled while refused').toBeNull()
     catalog.mockResolvedValue({ ...snapshot({ tier: 'community' }), incompatibleHarness: {} })
     fireEvent.click(container.querySelector('[data-shop-catalog-refresh]') as HTMLElement)
-    await waitFor(() => expect((cardOf(container).querySelector('[data-shop-install]') as HTMLButtonElement).disabled).toBe(false))
+    await waitFor(() => expect(cardOf(container).querySelector('[data-shop-install]')).toBeTruthy())
+    expect(cardOf(container).querySelector('[data-shop-refused]')).toBeNull()
     expect(cardOf(container).querySelector('[data-shop-incompatible-detail="harness-peers"]')).toBeNull()
   })
 
@@ -2782,15 +2827,12 @@ describe("ShopTab refusal by the running dsh's own peer check (0.1.7)", () => {
       const remedy = card.querySelector('[data-shop-remedy="harness-peers"]') as HTMLElement
       expect(remedy.textContent).toContain(en.harnessPeersRemedy)
       expect(remedy.querySelector('[data-shop-allow-command]')?.textContent).toBe(GITHUB_COMMAND)
-      expect(card.querySelector('[data-shop-blocker]')?.getAttribute('data-shop-blocker')).toBe('harness-peers')
-      expect(card.querySelector('[data-shop-blocker]')?.textContent).toBe(en.incompatibleBadge)
-
-      const button = card.querySelector('[data-shop-install]') as HTMLButtonElement
-      expect(button.disabled).toBe(true)
-      expect(button.hasAttribute('data-shop-refused')).toBe(true)
-      fireEvent.click(button)
-      expect(card.querySelector('[data-shop-confirm]')).toBeNull()
+      const actions = card.querySelector('[data-shop-actions]') as HTMLElement
+      expect(actions.querySelector('[data-shop-install]'), 'no button, whatever the channel').toBeNull()
+      expect(actions.querySelector('[data-shop-blocker]'), 'the label replaces the badge').toBeNull()
+      expect((actions.querySelector('[data-shop-refused]') as HTMLElement).textContent).toBe(en.incompatibleBadge)
       expect(install).not.toHaveBeenCalled()
+      expect(actions.querySelector('[data-shop-refused]')?.getAttribute('data-shop-blocker-kind')).toBe('harness-peers')
 
       // One predicate for the badge and the filter, whichever channel.
       const filter = container.querySelector('[data-shop-hide-incompatible]') as HTMLElement
@@ -2800,9 +2842,9 @@ describe("ShopTab refusal by the running dsh's own peer check (0.1.7)", () => {
       expect(screen.getByText('dsh-works-here')).toBeTruthy()
     })
 
-    it('writes the refusal and its command out on the outdated row, whose Update stays disabled', async () => {
+    it('writes the refusal and its command out on the outdated row, whose Update is a label', async () => {
       // The pin the shop recorded at install differs from the catalog's
-      // commit, so the row offers an update, which dsh refuses the same way.
+      // commit, so the row's update is the one dsh refuses.
       const { injected } = bench(
         { ...snapshot(fromGithub), incompatibleHarness: { [KEY]: GITHUB_PEERS } },
         [{ name: 'dsh-hello-plugin', installed: 'e'.repeat(40), latest: commit, outdated: true, enabled: true, source: 'github', repo: 'someone/dsh-hello-plugin' }],
@@ -2810,7 +2852,8 @@ describe("ShopTab refusal by the running dsh's own peer check (0.1.7)", () => {
       const { container } = renderTab(injected)
       await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
       const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
-      expect((row.querySelector('[data-shop-update]') as HTMLButtonElement).disabled).toBe(true)
+      expect(row.querySelector('[data-shop-update]'), 'no button').toBeNull()
+      expect((row.querySelector('[data-shop-refused]') as HTMLElement).textContent).toBe(en.incompatibleBadge)
       const refusal = row.querySelector('[data-shop-refusal]') as HTMLElement
       expect(refusal.querySelector('[data-shop-incompatible-warning="harness-peers"]')?.textContent).toBe(peersLine)
       expect(refusal.querySelector('[data-shop-allow-command]')?.textContent).toBe(GITHUB_COMMAND)
@@ -2898,32 +2941,32 @@ describe('ShopTab author-declared compatibility (§8.2)', () => {
     expect(container.querySelector('[data-shop-hide-incompatible]')?.textContent).toContain('Hide incompatible 0')
   })
 
-  it('warns, never blocks: the install proceeds through the acknowledgement, stated once', async () => {
+  it('warns rather than blocks: one click installs, and the card states each line once', async () => {
     const { injected, install } = bench(withVerdict({ ...RANGE, ...PROFILE }))
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     const card = cardOf(container)
     fireEvent.click(card.querySelector('[data-shop-install]') as HTMLElement)
-    expect(card.querySelector('[data-shop-confirm]'), 'the gate should be open').toBeTruthy()
-    // The card states each line and the gate opens inside that same card, so
-    // the gate must not print them a second time.
+    // No dialog, and nothing stands between the click and the host: the two
+    // advisory lines are on the card, where they already were.
+    await waitFor(() => expect(install).toHaveBeenCalled())
     const text = card.textContent ?? ''
     expect(text.split(rangeLine).length - 1, 'the range line must appear exactly once').toBe(1)
     expect(text.split(profileLine).length - 1, 'the profile line must appear exactly once').toBe(1)
     expect(card.querySelector('[data-shop-incompatible-warning]')).toBeNull()
-    fireEvent.click(card.querySelector('[data-shop-confirm]') as HTMLElement)
-    await waitFor(() => expect(install).toHaveBeenCalled())
   })
 
-  it('warns inside the update acknowledgement on the outdated row, which has no detail line of its own', async () => {
-    const { injected } = bench(withVerdict({ ...RANGE, ...PROFILE }), [outdatedRow])
+  it('writes both declarations out on the outdated row, which has no detail line of its own', async () => {
+    const { injected, install } = bench(withVerdict({ ...RANGE, ...PROFILE }), [outdatedRow])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
+    const lines = row.querySelector('[data-shop-blocker-lines]') as HTMLElement
+    expect(lines.querySelector('[data-shop-incompatible-warning="harness-range"]')?.textContent).toBe(rangeLine)
+    expect(lines.querySelector('[data-shop-incompatible-warning="harness-profile"]')?.textContent).toBe(profileLine)
+    // And the row's Update runs on the first click, acknowledged.
     fireEvent.click(row.querySelector('[data-shop-update]') as HTMLElement)
-    expect(row.querySelector('[data-shop-confirm]'), 'the gate should be open').toBeTruthy()
-    expect(row.querySelector('[data-shop-incompatible-warning="harness-range"]')?.textContent).toBe(rangeLine)
-    expect(row.querySelector('[data-shop-incompatible-warning="harness-profile"]')?.textContent).toBe(profileLine)
+    await waitFor(() => expect(install).toHaveBeenCalledWith(expect.objectContaining({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })))
   })
 
   it('badges the outdated row beside its Update button, naming the declaration for assistive tech', async () => {
@@ -2983,8 +3026,8 @@ describe('ShopTab author-declared compatibility (§8.2)', () => {
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     const card = cardOf(container)
     // The specs load after the catalog, so the name conflict arrives second.
-    await waitFor(() => expect(card.querySelector('[data-shop-blocker]')?.getAttribute('data-shop-blocker')).toBe('name-taken'))
-    expect(card.querySelector('[data-shop-blocker]')?.textContent).toBe(en.nameTakenBadge)
+    await waitFor(() => expect(card.querySelector('[data-shop-refused]')?.getAttribute('data-shop-blocker-kind')).toBe('name-taken'))
+    expect(card.querySelector('[data-shop-refused]')?.textContent).toBe(en.nameTakenBadge)
     // Every reason is still stated, the name conflict first.
     const kinds = [...card.querySelectorAll('[data-shop-incompatible-detail]')].map(node => node.getAttribute('data-shop-incompatible-detail'))
     expect(kinds).toEqual(['name-taken', 'harness-range', 'harness-profile'])
@@ -3291,13 +3334,11 @@ describe('ShopTab github entries', () => {
     expect(screen.queryByText('dsh-hello-plugin')).toBeNull()
   })
 
-  it('installs a github entry with the commit as the version', async () => {
+  it('installs a github entry with the commit as the version, on one click', async () => {
     const { injected, install } = bench(snapshot({ source: 'github', repo: 'someone/dsh-hello-plugin', version: commit }))
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
-    await waitFor(() => expect(screen.getByText(en.acknowledgementBody)).toBeTruthy())
-    fireEvent.click(screen.getByText(en.confirm))
     await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: commit, acknowledged: true, source: 'github', repo: 'someone/dsh-hello-plugin', subdir: undefined }))
   })
 })
@@ -3498,10 +3539,15 @@ describe('ShopTab duplicate catalog names', () => {
     expect(container.querySelectorAll('[data-shop-outdated-entry]')).toHaveLength(1)
     expect(container.querySelectorAll('[data-shop-outdated-entry] [data-shop-blocker]')).toHaveLength(1)
     expect(container.querySelectorAll('[data-shop-entry="dsh-foo"]')).toHaveLength(2)
-    expect(container.querySelectorAll('[data-shop-install]')).toHaveLength(1)
+    // The row's Update is the one button on the shelf: Alice has no badge and
+    // no refusal (her verdict is empty), Bob is the one dsh refuses.
+    expect(container.querySelectorAll('[data-shop-outdated-entry] [data-shop-update]')).toHaveLength(1)
+    // Bob's card carries the refused label instead of a button — the one
+    // thing only he can wear, because the refuse verdict is keyed by identity.
+    expect(container.querySelectorAll('[data-shop-entry="dsh-foo"] [data-shop-refused]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-shop-outdated-entry] [data-shop-refused]')).toHaveLength(0)
 
     fireEvent.click(container.querySelector('[data-shop-outdated-entry] [data-shop-update]')!)
-    fireEvent.click(container.querySelector('[data-shop-outdated-entry] [data-shop-confirm]')!)
     await waitFor(() => expect(install).toHaveBeenCalled())
     expect(install).toHaveBeenCalledWith(expect.objectContaining({
       name: 'dsh-foo', version: bobCommit, source: 'github', repo: 'bob/dsh-foo', acknowledged: true,

@@ -1,5 +1,5 @@
-/** The shop tab: browse the catalog, detail an entry, install with the
- * acknowledgement gate, poll the install to its terminal state (§7.2).
+/** The shop tab: browse the catalog, detail an entry, install on one click,
+ * poll the install to its terminal state (§7.2).
  * Everything the tab renders is text — summaries, capabilities, log lines,
  * details — never markup, so hostile npm descriptions cannot inject (spec
  * §11.3.4): no render path here may ever use dangerouslySetInnerHTML. */
@@ -545,11 +545,19 @@ function BlockerBadge({ blockers, t }: {
   )
 }
 
-/** One entry's install flow: the button, the §9.3 acknowledgement gate for
- * community-tier entries, and the live view — running log, restart notice,
- * failure detail, rejection detail — driven by `useInstallFlows`. Shared by the
- * catalog cards (`variant: 'install'`) and the outdated rows' update button
- * (`variant: 'update'`, which drives the same install flow for `name@latest`). */
+/** One entry's install flow: the button (or the refused LABEL that stands in
+ * its place), and the live view — running log, restart notice, failure detail,
+ * rejection detail — driven by `useInstallFlows`. Shared by the catalog cards
+ * (`variant: 'install'`) and the outdated rows' update button (`variant:
+ * 'update'`, which drives the same install flow for `name@latest`).
+ *
+ * There is no §9.3 dialog. Until 2026-10-14 a community entry opened an
+ * acknowledgement gate first, and that gate was also the only thing standing
+ * between a second press and a second RPC — it reopened instead of asking
+ * again. What replaced it is one click that carries `acknowledged: true`, the
+ * disclosure standing on the page where a reader cannot dismiss it unread, and
+ * the in-flight guard in `useKeyedFlows`, which is what makes the missing
+ * dialog safe. */
 function InstallPanel({ target, tier, blockers, blockersStated = false, variant = 'install', flow, t, restart, restartBlocked, reload }: {
   /** The install request this panel drives, identity included. */
   target: InstallArgs
@@ -558,11 +566,10 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
    * card. Never a name conflict on an outdated row: that row IS the installed
    * plugin, so its list holds the harness reasons alone. */
   blockers: readonly StatedBlocker[]
-  /** The surface around this panel already states every blocker, so the gate
+  /** The surface around this panel already states every blocker, so the panel
    * must not repeat them. True on a catalog card, which renders a detail line
-   * per blocker; false on an outdated row, which carries the badge and its
-   * title and nothing else — there the gate is the only place the reasons are
-   * written out in plain sight. */
+   * per blocker; false on an outdated row, which carries no detail line — there
+   * the reasons are written out under the row. */
   blockersStated?: boolean
   variant?: 'install' | 'update'
   /** Shared by every panel rendering this install identity. */
@@ -572,8 +579,7 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
   restartBlocked: RestartBlockedReason | null
   reload: () => void
 }): ReactNode {
-  const [gateOpen, setGateOpen] = useState(false)
-  const { view, start } = flow
+  const { view, start, starting } = flow
 
   if (view.kind === 'running') {
     return (
@@ -642,64 +648,65 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
       </div>
     )
   }
-  // idle: the install/update button, or the §9.3 acknowledgement gate for
-  // anything that has not been human-reviewed.
-  if (gateOpen) {
-    return (
-      <div className={css.gate}>
-        <p className={css.gateTitle}>{t('acknowledgementTitle')}</p>
-        <p className={css.gateBody}>{t('acknowledgementBody')}</p>
-        {/* A refusal never reaches this gate: it disables the button that
-          * opens it (below). What arrives here is advisory. */}
-        {!blockersStated && blockers.map(blocker => (
-          <BlockerLine blocker={blocker} className={css.gateWarning} surface="warning" key={blocker.kind} />
-        ))}
-        <div className={css.gateActions}>
-          <button
-            type="button"
-            className={css.confirmButton}
-            data-shop-confirm
-            onClick={() => {
-              setGateOpen(false)
-              void start({ ...target, acknowledged: true })
-            }}
-          >
-            {t('confirm')}
-          </button>
-          <button type="button" className={css.cancelButton} onClick={() => setGateOpen(false)}>
-            {t('cancel')}
-          </button>
-        </div>
-      </div>
-    )
-  }
+  // idle: the install/update button, or — for an install that cannot proceed —
+  // the label that stands in the button's place.
   const update = variant === 'update'
   // A refusal is one the host or dsh WILL make, and the client already holds
-  // the same verdict — so the button must not open the §9.3 gate for it. That
-  // gate asks the reader to accept a plugin's privileges; spending it on an
-  // install that cannot proceed, and then landing them on a failed card, is
-  // the worst order to do these things in. Two kinds refuse (`refusesInstall`):
-  // a taken name, and harness peers dsh itself refuses. Every other harness
-  // reason stays clickable — warn, never block (§4): the host installs those,
-  // the missing-components copy says "may", and an author's declared range is
-  // a claim about what they tested, not a refusal this shop may enforce.
+  // the same verdict, so no button is offered for it: a disabled button reads
+  // as "try again later", and no later try can help. Two kinds refuse
+  // (`refusesInstall`): a taken name, and harness peers dsh itself refuses.
+  // Every other harness reason stays clickable — warn, never block (§4): the
+  // host installs those, the missing-components copy says "may", and an
+  // author's declared range is a claim about what they tested, not a refusal
+  // this shop may enforce.
   const refused = refusesInstall(blockers)
+  const word = blockerBadgeKey(blockers)
+  const detail = blockers.map(blocker => blocker.text).join('\n')
+  if (refused && word !== null) {
+    return (
+      <>
+        {/* The label says what the badge said, in the button's own box: a
+            non-interactive solid red mark, with the full reasons on
+            `role="img"` + `aria-label` and on `title` for the mouse, exactly
+            as the badge carried them. No badge beside it — one word, once. */}
+        <span
+          className={css.refusedLabel}
+          data-shop-refused
+          data-shop-blocker-kind={blockers[0]?.kind}
+          role="img"
+          aria-label={detail}
+          title={detail}
+        >
+          {t(word)}
+        </span>
+        {/* A surface that does not state its blockers — the outdated row —
+            writes them out, the command that clears dsh's refusal included;
+            the label's title alone would hide the only way to enable it. */}
+        {!blockersStated && (
+          <div className={css.refusal} data-shop-refusal>
+            {blockers.map(blocker => (
+              <BlockerLine blocker={blocker} className={css.gateWarning} surface="warning" key={blocker.kind} />
+            ))}
+          </div>
+        )}
+      </>
+    )
+  }
   return (
     <>
       <button
         type="button"
         className={css.installButton}
-        disabled={refused}
-        {...(refused ? { 'data-shop-refused': true } : {})}
+        // Between the click and the host's answer. `starting` is the shared
+        // flow's own state, so the outdated row's button shows it too; the
+        // wait cursor is the CSS's half of the same fact.
+        disabled={starting}
         {...(update ? { 'data-shop-update': true } : { 'data-shop-install': true })}
-        onClick={() => {
-          if (tier === 'verified') {
-            // Reviewed: install directly; there is nothing to acknowledge (§9.3).
-            void start({ ...target, acknowledged: undefined })
-          } else {
-            setGateOpen(true)
-          }
-        }}
+        // One click installs. `acknowledged: true` is the click itself for an
+        // entry the community tier covers; a verified one installs without it,
+        // because there is nothing to acknowledge (§9.3). The host's check is
+        // unchanged, so a caller that skips this UI still has to say so.
+        onClick={() => { void start({ ...target, acknowledged: tier === 'verified' ? undefined : true }) }}
       >
         {t(update ? 'update' : 'install')}
       </button>
@@ -709,15 +716,17 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
           wants the missing module — the copy's "may be" carries that
           imprecision deliberately rather than splitting the string. The
           author's declaration is the catalog version's too, which on that row
-          is exactly the version the Update button would install. */}
-      <BlockerBadge blockers={blockers} t={t} />
-      {/* A disabled button opens no gate, and on a surface that does not
-        * state its blockers — the outdated row — the gate was the one place
-        * the reasons were written out. So a refused install writes them out
-        * here, the command that clears dsh's refusal included; the badge's
-        * title alone would hide the only way to enable the button. */}
-      {refused && !blockersStated && (
-        <div className={css.refusal} data-shop-refusal>
+          is exactly the version the Update button would install. So is the
+          badge — the button beside it is what it qualifies, and a refused
+          install has the LABEL, not a second mark that says the same word. */}
+      {blockers.length > 0 && !refused && <BlockerBadge blockers={blockers} t={t} />}
+      {/* Advisory reasons on a surface that does not state them: the outdated
+          row has no detail line of its own, and its update is one click now,
+          so the reasons are written beside the button rather than inside a
+          dialog that no longer exists. The refusal branch above writes the
+          same block for a refused row. */}
+      {!blockersStated && blockers.length > 0 && (
+        <div className={css.refusal} data-shop-blocker-lines>
           {blockers.map(blocker => (
             <BlockerLine blocker={blocker} className={css.gateWarning} surface="warning" key={blocker.kind} />
           ))}
@@ -1163,9 +1172,11 @@ const UPDATABLE_HEADING_ID = 'dsh-shop-updatable-heading'
  * "Installed" until 2026-09-16, which was the Installed filter's label
  * character for character in both languages, over a strict subset of what
  * that filter selects. Internals stay `outdated` — the Host field name. The
- * tier for the update gate is looked up from the catalog by install IDENTITY,
- * never by name (community → acknowledgement); an entry absent from the
- * catalog defaults to the community gate (the safer read). */
+ * tier is looked up from the catalog by install IDENTITY, never by name, and
+ * decides whether the update's request carries the acknowledgement (a
+ * community entry's does); an entry absent from the catalog is read as
+ * community, so its request acknowledges, which the host accepts for any
+ * tier. */
 function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t, setEnabled, flowFor, restart, restartBlocked, reload, restarts }: {
   state: InstalledState
   entriesByKey: ReadonlyMap<string, CatalogEntry>
@@ -2265,6 +2276,12 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
           ))}
         </span>
       </div>
+      {/* What every install stands under, where it cannot be missed and cannot
+        * be dismissed unread (spec §9.2, amended 2026-10-14). It used to be the
+        * body of the §9.3 dialog, asked once per community install; the dialog
+        * is gone, so the facts live on the page instead. Below the stats row
+        * and above the shelf, so a reader meets it before the first button. */}
+      <p className={css.disclosure} data-shop-disclosure>{t('disclosure')}</p>
       {result.plugins.length === 0 ? (
         <p className={css.emptyLine}>{t('empty')}</p>
       ) : filtered.length === 0 ? (

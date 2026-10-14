@@ -567,7 +567,7 @@ describe('red text clears 4.5:1', () => {
 
 describe('incompatibility reads as an error, not a warning', () => {
   // The shop already spends the warn token on things a user can live with: a
-  // stale catalog, an unreviewed tier, the §9.3 acknowledgement. A plugin whose
+  // stale catalog, an unreviewed tier, the restart gate. A plugin whose
   // modules are absent will not load at all, so it must not sit in the same
   // colour as "we have not reviewed this". jsdom composites no colours, so the
   // token CHOICE is the only layer where this is visible to a test.
@@ -599,9 +599,11 @@ describe('incompatibility reads as an error, not a warning', () => {
     })
   }
 
-  it('leaves the acknowledgement gate itself on the warn token', () => {
-    // .gateWarning turning red inside an amber .gate is the contrast that
-    // separates "not reviewed" from "will not load".
+  it('leaves the restart gate on the warn token', () => {
+    // The gate asks before a restart that disconnects the page: a cost the
+    // reader weighs, not a plugin that will not load, so it stays amber while
+    // every refusal is red. It was the §9.3 acknowledgement's gate too until
+    // that dialog went (2026-10-14).
     expect(rules.get('.gate')).toMatch(/--dsw-alias-state-warn-primary/)
   })
 })

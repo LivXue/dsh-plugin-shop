@@ -522,6 +522,20 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+/* The install disclosure: one grey line under the stats row, always on the
+ * page. It carries what the §9.3 dialog used to say before every community
+ * install, which is why it must not be dismissible or collapsed — a reader
+ * who never installs anything still learns what installing means here.
+ * Secondary label, the same register as the stats line it sits under: the
+ * disclosure is a fact about the shelf, not a warning about one entry. It
+ * wraps to a few lines at a narrow width, which the panel already allows. */
+.disclosure {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary);
+}
+
 /* Sits beside the 12px stats caption, so it is quieter than `.actionButton`:
  * this is an affordance, not a call to action — the catalog reloads on its
  * own at mount and the shelf is already usable without it. Named
@@ -1076,18 +1090,42 @@
   margin-top: 2px;
 }
 
-.installButton, .confirmButton, .cancelButton {
+/* ONE geometry for everything that occupies the install button's place: the
+ * button itself, the confirm/cancel pair beside the restart gate, the installed
+ * label, and the refused label. Stated once because a refused label HAS to look
+ * like the button it replaces apart from its colour and its text, and four
+ * copies of the same five declarations is how they stop looking alike.
+ * `cursor: pointer` is NOT here: only the controls that can be pressed take it,
+ * while a label renders with the default cursor. */
+.installButton,
+.confirmButton,
+.cancelButton,
+.installedLabel,
+.refusedLabel {
   align-self: flex-start;
+  margin: 0;
   padding: 5px 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 6px;
   font-size: 13px;
+}
+
+.installButton, .confirmButton, .cancelButton {
   cursor: pointer;
 }
 
 .installButton {
-  border: 1px solid var(--dsw-alias-brand-primary);
+  border-color: var(--dsw-alias-brand-primary);
   background: var(--dsw-alias-brand-primary);
   color: var(--dsw-alias-bg-base);
+}
+
+/* Between the click and the host's answer. The flow ignores a repeat start for
+ * the same identity, so this is the visible half of the same fact: a control
+ * that says "not now" rather than one that looks ready to send a second
+ * install. Only the button can be in this state — a label is never pressed. */
+.installButton:disabled {
+  cursor: wait;
 }
 
 .installButton:hover {
@@ -1131,6 +1169,20 @@
   font-size: 13px;
   color: var(--dsw-alias-label-secondary);
   background: var(--dsw-alias-bg-layer-2);
+}
+
+/* The refused Install/Update button's replacement: the same box as the button
+ * (the geometry rule above), filled solid red, not pressable. The fill is the
+ * derived red rather than the raw token because text sits on it — bg-base on
+ * `--shop-error` measures 5.31:1 light and 6.14:1 dark — and the raw error red
+ * under bg-base text measures 4.498:1, the miss this whole family of fixes
+ * exists for. Nothing here changes on hover: it is a statement, not a control,
+ * so it keeps the default cursor and its colours. */
+.refusedLabel {
+  border-color: var(--shop-error);
+  background: var(--shop-error);
+  color: var(--dsw-alias-bg-base);
+  white-space: nowrap;
 }
 
 /* An installed card's controls: the installed label or the update button,

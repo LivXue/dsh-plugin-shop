@@ -1,6 +1,6 @@
 /** Copy dictionaries for the shop Settings tab. */
 
-import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH } from './present.ts'
+import { DISCLOSURE_EN, DISCLOSURE_ZH } from './present.ts'
 
 /** Simplified Chinese dictionary and key source of truth. */
 export const zh = {
@@ -49,11 +49,11 @@ export const zh = {
   archivedBadge: '已归档',
   capabilitiesNote: '作者自述，无强制约束',
   install: '安装',
-  confirm: '确认',
   cancel: '取消',
   dismiss: '知道了',
-  acknowledgementTitle: '需要确认',
-  acknowledgementBody: ACKNOWLEDGEMENT_ZH,
+  /** What every install now stands under, on the page rather than in a dialog
+   * (spec §9.2/§9.3, amended 2026-10-14). */
+  disclosure: DISCLOSURE_ZH,
   installing: '正在安装…',
   downloading: '正在下载…',
   installedRestartNotice: '已安装；重启 dsh 后生效',
@@ -65,8 +65,9 @@ export const zh = {
    * "unsupported" leaves the reader guessing which side is off. */
   harnessRangeDetail: '作者声明支持的 dsh 版本：{range}；本机运行的是 {running}。',
   harnessProfileDetail: '作者声明支持的 profile：{declared}；此 dsh 以 {running} profile 启动。',
-  /** dsh's OWN refusal (0.1.7 on), not the author's claim: the install button
-   * is disabled beside it (design 2026-09-26-dsh-017-readiness, B1). `{peers}`
+  /** dsh's OWN refusal (0.1.7 on), not the author's claim: the card shows the
+   * refused label in the install button's place (design
+   * 2026-09-26-dsh-017-readiness, B1, amended 2026-10-14). `{peers}`
    * is each refused peer with the range the package declared. The remedy
    * leads into the exemption command, rendered on its own line after it, and
    * names the Refresh button by its label. */
@@ -240,11 +241,9 @@ export const en = {
   tierCommunity: 'Community',
   capabilitiesNote: 'self-declared by the author, not enforced',
   install: 'Install',
-  confirm: 'Confirm',
   cancel: 'Cancel',
   dismiss: 'Dismiss',
-  acknowledgementTitle: 'Acknowledgement required',
-  acknowledgementBody: ACKNOWLEDGEMENT_EN,
+  disclosure: DISCLOSURE_EN,
   installing: 'Installing…',
   downloading: 'Downloading…',
   installedRestartNotice: 'installed; restart dsh to activate',

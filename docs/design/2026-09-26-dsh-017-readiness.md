@@ -217,7 +217,12 @@ half the 12 KiB per-entry payload budget.
   After running the command, Refresh re-enables the button. The outdated
   row, which states no detail line and whose gate was the one place its
   reasons were written out, now writes a refusal out beside its disabled
-  button.
+  button. **Amended 2026-10-14: no button is shown, disabled or otherwise.
+  A non-interactive solid red label stands in the button's own box and
+  carries the word the badge carried, with the full reasons as its
+  accessible name and tooltip; the badge is not repeated beside it.
+  Refresh after the command brings the button back. `refusesInstall` and
+  the filter are unchanged (shop design §7, amendment of that date).**
 - **A refusal the catalog cannot predict** — a github entry, a bundle's
   components, a manifest dsh cannot judge — still reaches dsh. The failed
   install now reports "dsh refused the install", what dsh restored, and the
@@ -329,10 +334,12 @@ and the rules the new path keeps are in
   the command as tables. The gateway: verdicts merged beside the declared
   halves, exemptions re-read per call, silence without a check or with an
   unreadable record. The client: blocker order, `refusesInstall`, the
-  disabled button and the command on the card and the outdated row, and
-  Refresh re-enabling it. The executor: dsh 0.1.7-rc.2's verbatim output,
-  captured from both a preflight and a post-install refusal. The desktop
-  refusals; the list-valued patch in every reader.
+  refusal as a non-interactive solid red label in the button's own box (the
+  shop design's §7 amendment of 2026-10-14) and the command on the card and
+  under the outdated row, and Refresh clearing the label and unblocking the
+  button. The executor: dsh 0.1.7-rc.2's verbatim output, captured from both
+  a preflight and a post-install refusal. The desktop refusals; the
+  list-valued patch in every reader.
 - **The web e2e, on both harnesses.** The peer fixture declares an
   optional `@deepseek-ai/dsh` peer no 0.1 build satisfies — optional, so
   its required-peer verdict is unchanged. On 0.1.5-rc.3 its card is not
