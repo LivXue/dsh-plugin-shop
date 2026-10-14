@@ -69,6 +69,38 @@ function definedClasses(text: string): Set<string> {
   return out
 }
 
+/** Every style rule at any depth, with the at-rule preludes around it. The
+ * flat `rules` map above folds an @media block into one body, which would
+ * hide a rule inside one from a per-rule check. */
+function everyRule(text: string): Array<{ at: string[]; selector: string; body: string }> {
+  const clean = text.replace(/\/\*[\s\S]*?\*\//g, '')
+  const out: Array<{ at: string[]; selector: string; body: string }> = []
+  const heads: string[] = []
+  let start = 0
+  for (let i = 0; i < clean.length; i++) {
+    const ch = clean[i]
+    if (ch === '{') {
+      heads.push(clean.slice(start, i).trim())
+      start = i + 1
+    } else if (ch === '}') {
+      const head = heads.pop() ?? ''
+      if (!head.startsWith('@')) out.push({ at: heads.filter(h => h.startsWith('@')), selector: head, body: clean.slice(start, i) })
+      start = i + 1
+    }
+  }
+  return out
+}
+
+/** `prop: value` pairs, in order. A value never holds a `;` in this file. */
+function declarationsOf(body: string): Array<{ prop: string; value: string }> {
+  const out: Array<{ prop: string; value: string }> = []
+  for (const part of body.split(';')) {
+    const m = /^\s*([a-z-]+)\s*:\s*([\s\S]*?)\s*$/.exec(part)
+    if (m?.[1] !== undefined && m[2] !== undefined) out.push({ prop: m[1], value: m[2] })
+  }
+  return out
+}
+
 describe('class references', () => {
   it('every css.X the component reads has a rule in the stylesheet', () => {
     // The component tests stub the CSS module, so `css.missing` yields
@@ -349,38 +381,6 @@ describe('every control draws one 1px line', () => {
   // every rule, at every nesting depth, so a ring or a 2px border cannot come
   // back on a control nobody re-measured.
 
-  /** Every style rule at any depth, with the at-rule preludes around it. The
-   * flat `rules` map above folds an @media block into one body, which would
-   * hide the forced-colors rule from a per-rule check. */
-  function everyRule(text: string): Array<{ at: string[]; selector: string; body: string }> {
-    const clean = text.replace(/\/\*[\s\S]*?\*\//g, '')
-    const out: Array<{ at: string[]; selector: string; body: string }> = []
-    const heads: string[] = []
-    let start = 0
-    for (let i = 0; i < clean.length; i++) {
-      const ch = clean[i]
-      if (ch === '{') {
-        heads.push(clean.slice(start, i).trim())
-        start = i + 1
-      } else if (ch === '}') {
-        const head = heads.pop() ?? ''
-        if (!head.startsWith('@')) out.push({ at: heads.filter(h => h.startsWith('@')), selector: head, body: clean.slice(start, i) })
-        start = i + 1
-      }
-    }
-    return out
-  }
-
-  /** `prop: value` pairs, in order. A value never holds a `;` in this file. */
-  function declarationsOf(body: string): Array<{ prop: string; value: string }> {
-    const out: Array<{ prop: string; value: string }> = []
-    for (const part of body.split(';')) {
-      const m = /^\s*([a-z-]+)\s*:\s*([\s\S]*?)\s*$/.exec(part)
-      if (m?.[1] !== undefined && m[2] !== undefined) out.push({ prop: m[1], value: m[2] })
-    }
-    return out
-  }
-
   const all = everyRule(css)
 
   it('finds the rules it guards, so an empty scan cannot pass', () => {
@@ -516,6 +516,55 @@ describe('focus rings are not clipped by their container', () => {
   })
 })
 
+describe('red text clears 4.5:1', () => {
+  // Two measured defects, one cause. dsh's error red is #ec1313 in the light
+  // theme, which lands at 4.498:1 as text on white — just under the floor —
+  // and the badge draws that same red on its OWN 14% red fill, which measures
+  // 3.57:1 light and 4.00:1 dark. Mixing the red toward label-primary fixes
+  // both, because label-primary is the theme's foreground pole. 90% of the
+  // red is 4.69:1 at worst, computed for the dark panel itself (5.29:1
+  // measured on the dark card), and 80% measures 4.92:1 at worst, on the
+  // badge's own tint on the dark card. jsdom composites nothing, so the two
+  // VALUES are pinned here and the e2e measures them live.
+  const PANEL = rules.get('.panel') ?? ''
+
+  it('derives both reds from the error token, on the tab root', () => {
+    // On `.panel` because every red element sits inside it and custom
+    // properties inherit: one declaration reaches all of them.
+    expect(PANEL, 'no .panel rule').not.toBe('')
+    expect(PANEL).toMatch(/--shop-error:\s*color-mix\(in srgb, var\(--dsw-alias-state-error-primary\) 90%, var\(--dsw-alias-label-primary\)\)/)
+    expect(PANEL).toMatch(/--shop-error-on-tint:\s*color-mix\(in srgb, var\(--dsw-alias-state-error-primary\) 80%, var\(--dsw-alias-label-primary\)\)/)
+  })
+
+  it('never paints text with the raw error token', () => {
+    // The defect class this whole block exists for: a `color` that takes dsh's
+    // error red as-is. A mix is fine (the filter blends 45% of it with the
+    // foreground); the bare token is not.
+    const offenders: string[] = []
+    for (const rule of everyRule(css)) {
+      for (const { prop, value } of declarationsOf(rule.body)) {
+        if (prop !== 'color') continue
+        if (/var\(--dsw-alias-state-error-primary\)/.test(value.replace(/color-mix\([^;]*\)/g, ''))) {
+          offenders.push(`${rule.selector} { ${prop}: ${value} }`)
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('takes the on-tint red wherever the text sits on a red tint', () => {
+    // The badge's 14% fill and the uninstall button's 10% hover fill are the
+    // two surfaces where 90% would land under the floor.
+    for (const selector of ['.incompatibleBadge', '.uninstallButton']) {
+      expect(rules.get(selector), `${selector} must use the on-tint red`).toMatch(/--shop-error-on-tint/)
+    }
+    // The rest are read on a plain surface — the card, the panel, the gate.
+    for (const selector of ['.incompatibleDetail', '.gateWarning', '.failedHeading', '.rejectedCode']) {
+      expect(rules.get(selector), `${selector} must use the plain red`).toMatch(/--shop-error\)/)
+    }
+  })
+})
+
 describe('incompatibility reads as an error, not a warning', () => {
   // The shop already spends the warn token on things a user can live with: a
   // stale catalog, an unreviewed tier, the §9.3 acknowledgement. A plugin whose
@@ -532,7 +581,10 @@ describe('incompatibility reads as an error, not a warning', () => {
     it(`${selector} draws from the error token, not the warn token`, () => {
       const body = rules.get(selector)
       expect(body, `no rule for ${selector}`).toBeDefined()
-      expect(body).toMatch(/--dsw-alias-state-error-primary/)
+      // Either spelling of the same family: the derived red `.panel` mixes for
+      // text (see "red text clears 4.5:1"), or the raw token where the element
+      // only needs the HUE — the filter's switch track.
+      expect(body).toMatch(/--shop-error|--dsw-alias-state-error-primary/)
       expect(body).not.toMatch(/--dsw-alias-state-warn-primary/)
     })
   }
