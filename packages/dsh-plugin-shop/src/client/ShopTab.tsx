@@ -14,6 +14,7 @@ import { useUninstallFlows, type UninstallFlow, type UseUninstallFlows } from '.
 import { useUpdateSelf } from './useUpdateSelf.ts'
 import { en, type ShopLocaleKey } from './locales.ts'
 import { expandZhQuery, tokenInText } from '../shared/zh-intents.ts'
+import { FoldableRedBlock } from './FoldableRedBlock.tsx'
 import css from './ShopTab.module.css'
 
 /** The project's home on GitHub, linked from the toolbar. */
@@ -256,9 +257,20 @@ const EntryCard = memo(function EntryCard({ entry, stars, order, shelfDay, insta
           * handed this same list, so the two can never be built from
           * different inputs or drift in ordering. The attribute carries the
           * kind, so a locator can name one line among several. */}
-        {blockers.map(blocker => (
-          <BlockerLine blocker={blocker} className={css.incompatibleDetail} surface="detail" key={blocker.kind} />
-        ))}
+        {/* The whole red block folds as ONE unit, remedy and its exemption
+          * command included — never one fold per blocker. A card wearing two
+          * blockers at once would otherwise take two toggles and the refused
+          * line would still read as two disjoint lines; the row re-uses the
+          * same component (`css.refusal` only names the command's own line
+          * now). Empty lists render nothing: a fold with nothing to fold
+          * means a broken input, not a reason to put a toggle up. */}
+        {blockers.length > 0 && (
+          <FoldableRedBlock t={t} attrName="data-shop-remedy">
+            {blockers.map(blocker => (
+              <BlockerLine blocker={blocker} className={css.incompatibleDetail} surface="detail" key={blocker.kind} />
+            ))}
+          </FoldableRedBlock>
+        )}
         {open && entry.catalog !== undefined && entry.catalog.capabilities.length > 0 && (
           <div className={css.capabilitiesBlock}>
             <p className={css.capabilitiesNote}>{t('capabilitiesNote')}</p>
@@ -679,15 +691,12 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
         >
           {t(word)}
         </span>
-        {/* A surface that does not state its blockers — the outdated row —
-            writes them out, the command that clears dsh's refusal included;
-            the label's title alone would hide the only way to enable it. */}
         {!blockersStated && (
-          <div className={css.refusal} data-shop-refusal>
+          <FoldableRedBlock t={t} attrName="data-shop-refusal">
             {blockers.map(blocker => (
               <BlockerLine blocker={blocker} className={css.gateWarning} surface="warning" key={blocker.kind} />
             ))}
-          </div>
+          </FoldableRedBlock>
         )}
       </>
     )
@@ -726,11 +735,11 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
           dialog that no longer exists. The refusal branch above writes the
           same block for a refused row. */}
       {!blockersStated && blockers.length > 0 && (
-        <div className={css.refusal} data-shop-blocker-lines>
+        <FoldableRedBlock t={t} attrName="data-shop-blocker-lines">
           {blockers.map(blocker => (
             <BlockerLine blocker={blocker} className={css.gateWarning} surface="warning" key={blocker.kind} />
           ))}
-        </div>
+        </FoldableRedBlock>
       )}
     </>
   )

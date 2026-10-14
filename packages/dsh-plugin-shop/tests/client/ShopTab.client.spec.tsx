@@ -6,6 +6,7 @@ import { en, zh, type ShopLocaleKey } from '../../src/client/locales.ts'
 import { ShopTab, type ShopTabInjected, type ShopTabProps } from '../../src/client/ShopTab.tsx'
 import { noteBoot, registerRestartCarrier, resetRestartMonitor, startRestartMonitor } from '../../src/client/restart-monitor.ts'
 import type { HarnessVerdict, ShopCatalogResult, ShopInstalledEntry, ShopVersionResult } from '../../src/host/index.ts'
+import { installFoldGeometry, StubResizeObserver } from '../fixtures/fold-geometry.ts'
 
 afterEach(() => {
   cleanup()
@@ -2744,7 +2745,6 @@ describe("ShopTab refusal by the running dsh's own peer check (0.1.7)", () => {
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     const card = cardOf(container)
     expect(card.querySelector('[data-shop-incompatible-detail="harness-peers"]')?.textContent).toBe(peersLine)
-    expect(card.querySelector('[data-shop-remedy]')).toBeNull()
     expect(card.querySelector('[data-shop-allow-command]')).toBeNull()
     expect(card.querySelector('[data-shop-install]')).toBeNull()
     expect(card.querySelector('[data-shop-refused]')).toBeTruthy()
@@ -4538,5 +4538,144 @@ describe('archived github entry — shelf badge (C5 surface)', () => {
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     expect(container.querySelector('[data-tier="archived"]')).toBeNull()
+  })
+})
+describe('ShopTab red fold', () => {
+  // Measured the way a browser measures it (`tests/fixtures/fold-geometry.ts`):
+  // jsdom lays nothing out, so without the model no block could be shown to
+  // overflow, and without a ResizeObserver the hook would take a path no
+  // supported engine takes. The file's own afterEach unstubs the observer.
+  let uninstallGeometry: () => void = () => {}
+  beforeEach(() => {
+    uninstallGeometry = installFoldGeometry()
+    vi.stubGlobal('ResizeObserver', StubResizeObserver)
+  })
+  afterEach(() => { uninstallGeometry() })
+
+  /** The browser's layout pass: resize observations are delivered. */
+  const settle = async (): Promise<void> => { await act(async () => { StubResizeObserver.settle() }) }
+
+  // With a command, a harness-peers refusal prints three lines: its sentence,
+  // the lead-in and the command. Without one, the sentence alone.
+  const peersVerdict = (allowCommand: string | null): ShopCatalogResult =>
+    ({ ...snapshot({ tier: 'community' }), incompatibleHarness: { 'npm:dsh-hello-plugin': { peers: { refused: { '@deepseek-ai/dsh': '0.1.5-rc.3' }, running: '0.2.0-rc.2', allowCommand } } } })
+
+  const cardOf = (container: HTMLElement): HTMLElement =>
+    container.querySelector('[data-shop-entry="dsh-hello-plugin"]') as HTMLElement
+
+  it('offers the toggle only when the red block overflows two lines, then expands and collapses it', async () => {
+    const { injected } = bench(peersVerdict('dsh plugin --profile web allow-version dsh-hello-plugin@1.2.0 --dsh-version 0.2.0-rc.2 --accept-risk'))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = cardOf(container)
+    const remedy = card.querySelector('[data-shop-remedy]') as HTMLElement
+    // The toggle sits OUTSIDE the fold: it renders as a sibling, not inside
+    // the clamp, so the remedy alone does not answer [data-shop-fold] — the
+    // card does.
+    await waitFor(() => expect(card.querySelector('[data-shop-fold]')).toBeTruthy(), { timeout: 3000 })
+    const toggle = card.querySelector('[data-shop-fold]') as HTMLButtonElement
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.textContent).toBe(en.moreRedLines)
+    expect(remedy.className).toContain('_foldBlock')
+    // independent of the card's own expand: the header's chevron does not open the fold.
+    fireEvent.click(card.querySelector('button[aria-expanded]') as HTMLButtonElement)
+    expect(remedy.className).toContain('_foldBlock')
+    expect(remedy.className).not.toContain('_foldBlockExpanded')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(toggle.textContent).toBe(en.lessRedLines)
+    expect(remedy.className).toContain('_foldBlockExpanded')
+    // The toggle sits OUTSIDE the fold block: a child of the block would
+    // clamp behind the fold along with everything else and its press could
+    // never reopen it.
+    expect(remedy.contains(toggle), 'the toggle is outside the fold block').toBe(false)
+    // The verdict, folded or not, is the label's whole aria-label on a refused
+    // install, because there is no second surface the reader can hover: the
+    // block's own text is the body's, the label answers hover and a screen
+    // reader alike, and both say the same.
+    const label = card.querySelector('[data-shop-refused]') as HTMLElement
+    expect(label.getAttribute('aria-label')).toContain('@deepseek-ai/dsh 0.1.5-rc.3')
+    expect(label.getAttribute('title')).toBe(label.getAttribute('aria-label'))
+    // Collapse back, by the same toggle.
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(remedy.className).not.toContain('_foldBlockExpanded')
+  })
+
+  it('offers no toggle when the block fits in two lines', async () => {
+    // No command dsh would accept, so the refusal is its sentence alone.
+    const { injected } = bench(peersVerdict(null))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    await settle()
+    const card = cardOf(container)
+    expect(card.querySelector('[data-shop-remedy]'), 'the block itself is there').not.toBeNull()
+    expect(card.querySelector('[data-shop-fold]'), 'no toggle to offer').toBeNull()
+  })
+
+  it('folds the Updatable row\'s refusal as a unit of its own', async () => {
+    const { injected } = bench(peersVerdict('dsh plugin --profile web allow-version x@1 --dsh-version 0.1 --accept-risk'), [
+      { name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true },
+    ])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('Updatable')).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
+    await waitFor(() => expect(row.querySelector('[data-shop-fold]')).toBeTruthy(), { timeout: 3000 })
+    // One toggle per surface: the row's folds the row's refusal, never the
+    // card's body, which has a toggle of its own.
+    const toggles = row.querySelectorAll('[data-shop-fold]')
+    expect(toggles).toHaveLength(1)
+    expect(toggles[0]?.getAttribute('data-shop-fold')).toBe('refusal')
+  })
+
+  it('folds a refused row\'s block, and the label still names the whole block to a screen reader', async () => {
+    const { injected } = bench(peersVerdict('dsh plugin --profile web allow-version x@1 --dsh-version 0.1 --accept-risk'), [
+      { name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true },
+    ])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('Updatable')).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
+    await waitFor(() => expect(row.querySelector('[data-shop-fold]')).toBeTruthy(), { timeout: 3000 })
+    const toggle = row.querySelector('[data-shop-fold]') as HTMLButtonElement
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(toggle.textContent).toBe(en.lessRedLines)
+    // The label is not what folds; hover and a screen reader still meet the whole block.
+    const label = row.querySelector('[data-shop-refused]') as HTMLElement
+    expect(label.getAttribute('aria-label')).toContain('@deepseek-ai/dsh 0.1.5-rc.3')
+  })
+
+  it('offers no toggle where nothing can be measured', async () => {
+    // jsdom's own answer, 0 for every height: no proof of overflow, so no
+    // toggle, and the whole block stays in the DOM.
+    uninstallGeometry()
+    const { injected } = bench(peersVerdict('x long command spanning the full width of the card'))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    await settle()
+    const card = cardOf(container)
+    expect(card.querySelector('[data-shop-fold]'), 'a toggle with nothing measured').toBeNull()
+    expect(card.querySelector('[data-shop-allow-command]'), 'the command left the DOM').not.toBeNull()
+  })
+
+  it('offers the toggle when a refreshed verdict grows a two-line block past its clamp', async () => {
+    // The author's two declared halves, one line each, fill the clamp
+    // exactly. The refusal a refresh adds is a third line inside a box that
+    // does not change height, so only the text changing can announce it.
+    const halves = { dsh: { range: '0.1.2-rc.1', running: '0.2.0-rc.2' }, profile: { declared: ['acp'], running: 'web' } }
+    const { injected, catalog } = bench({ ...snapshot(), incompatibleHarness: { 'npm:dsh-hello-plugin': halves } })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(cardOf(container).querySelector('[data-shop-remedy]')).toBeTruthy())
+    await settle()
+    expect(cardOf(container).querySelector('[data-shop-fold]'), 'two lines fit the clamp, and a toggle anyway').toBeNull()
+    catalog.mockResolvedValue({
+      ...snapshot(),
+      incompatibleHarness: { 'npm:dsh-hello-plugin': { ...halves, peers: { refused: { '@deepseek-ai/dsh': '0.1.5-rc.3' }, running: '0.2.0-rc.2', allowCommand: null } } },
+    })
+    fireEvent.click(container.querySelector('[data-shop-catalog-refresh]') as HTMLElement)
+    await waitFor(() => expect(cardOf(container).querySelector('[data-shop-incompatible-detail="harness-peers"]')).toBeTruthy())
+    await settle()
+    await waitFor(() => expect(cardOf(container).querySelector('[data-shop-fold]'), 'a third line arrived and no toggle was offered').toBeTruthy(), { timeout: 3000 })
   })
 })
