@@ -54,6 +54,11 @@ export const zh = {
   /** What every install now stands under, on the page rather than in a dialog
    * (spec §9.2/§9.3, amended 2026-10-14). */
   disclosure: DISCLOSURE_ZH,
+  /** The fold toggle under a card's collapsed red block. `aria-expanded` plus:
+   * open shows the whole block; closed shows two lines of it. This toggle is
+   * independent of the card's own header-expand. */
+  moreRedLines: '展开',
+  lessRedLines: '收起',
   installing: '正在安装…',
   downloading: '正在下载…',
   installedRestartNotice: '已安装；重启 dsh 后生效',
@@ -244,6 +249,8 @@ export const en = {
   cancel: 'Cancel',
   dismiss: 'Dismiss',
   disclosure: DISCLOSURE_EN,
+  moreRedLines: 'Show more',
+  lessRedLines: 'Show less',
   installing: 'Installing…',
   downloading: 'Downloading…',
   installedRestartNotice: 'installed; restart dsh to activate',

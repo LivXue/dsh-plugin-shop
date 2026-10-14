@@ -1692,6 +1692,44 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         expect(await installButton.isDisabled()).toBe(false)
       }
 
+      // The fold, on every harness. By now the card's red block is its three
+      // advisory lines (from 0.1.7-rc.1 the exemption above took the refusal
+      // and its command with it), and the missing-peers sentence alone is two
+      // lines, so the block holds more than the clamp lets through and the
+      // toggle under it is offered. What is read is the block's rendered
+      // height, because a `line-clamp` hides lines without taking them out of
+      // the DOM, and `isVisible` would call every one of them visible either
+      // way. `[data-shop-remedy]` marks the fold block itself; the inner one a
+      // refusal's command sits in has gone with the refusal.
+      const block = card.locator('[data-shop-remedy]').first()
+      await block.waitFor({ state: 'visible', timeout: 15_000 })
+      const tall = async (): Promise<number> => block.evaluate(el => el.getBoundingClientRect().height)
+      const foldToggle = card.locator('[data-shop-fold]')
+      await foldToggle.waitFor({ state: 'visible', timeout: 15_000 })
+      expect(await foldToggle.getAttribute('aria-expanded')).toBe('false')
+      const collapsed = await tall()
+      const firstLine = block.locator('[data-shop-incompatible-detail]').first()
+      const lineHeight = await firstLine.evaluate(el => {
+        const style = getComputedStyle(el)
+        const n = Number.parseFloat(style.lineHeight)
+        return Number.isFinite(n) ? n : Number.parseFloat(style.fontSize) * 1.5
+      })
+      expect(collapsed, `the fold shows about two lines (${lineHeight.toFixed(1)}px each)`).toBeGreaterThan(lineHeight * 1.4)
+      expect(collapsed).toBeLessThan(lineHeight * 2.6)
+      // Open, the same block is at least 1.5x that height: the lines the clamp
+      // held back are shown. The click is dispatched in the engine against the
+      // node the locator resolves, and the block's own rect is what the
+      // assertion rests on.
+      await foldToggle.evaluate(el => (el as HTMLButtonElement).click())
+      await expect.poll(async () => tall(), { timeout: 60_000 }).toBeGreaterThan(collapsed * 1.5)
+      // The press that opened the fold leaves its toggle, now the one that
+      // closes it: an open block fits by construction, and reading that as
+      // "nothing to fold" once took the toggle away with the press.
+      await expect.poll(async () => foldToggle.getAttribute('aria-expanded'), { timeout: 15_000 }).toBe('true')
+      // The card's own expand must not undo the fold.
+      await card.locator('[class*="entryHeader"]').click()
+      await expect.poll(async () => tall(), { timeout: 60_000 }).toBeGreaterThan(collapsed * 1.5)
+
       // Every red line this card still carries after the exemption: the
       // refusal's detachment takes the harness-peers line with it, so the
       // three advisory lines read on the card's own surface — and the specs

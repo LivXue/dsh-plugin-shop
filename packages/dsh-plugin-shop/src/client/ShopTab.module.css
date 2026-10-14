@@ -897,11 +897,55 @@
 
 /* The way out of dsh's own refusal: the lead-in, then the exemption command
  * on its own line. */
+/* Block layout rather than flex: Firefox 153 will not line-clamp a container
+ * that holds a display:flex child (Chromium 151 does), and the fold's
+ * measured goal — "the whole red block, remedy included, as one unit" —
+ * needs the container to clamp in BOTH engines the shop targets. The 4px
+ * rhythm between the lead-in and the command is kept by the margins of the
+ * children. */
 .remedy {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: block;
 }
+
+.remedy > * + * { margin-top: 4px; }
+
+/* The fold under a card's whole red block: two lines by default, a small
+ * Refresh-pill-shaped toggle under it. Two containers, one rhythm: the shelf
+ * uses `.foldBlock` collapsed and `.foldBlockExpanded` open, and they share
+ * one `display: block` (Firefox clamps no flex child inside a -webkit-box).
+ * The clamp is on the BLOCK rather than any one line, so a 43-line remedy
+ * counts as a unit instead of squashing the harness-peers line to a sliver
+ * and hiding the command the reader actually came for. Both containers
+ * still render the full block to a screen reader — `white-space: normal`
+ * instead of pre-line keeps the copy's own `\n` visible without forcing the
+ * browser to lay the block's pieces like a text node. */
+.foldBlock {
+  display: block;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  display: -webkit-box;
+  overflow: hidden;
+}
+
+.foldBlockExpanded { display: block; }
+
+/* The toggle. Geometry and quiet voice are the Refresh pill's
+ * (`catalogStatsRow` right beside it on the same screen): one 1px border,
+ * 11px text, secondary label, no fill. It is the only one of its kind here,
+ * so a class of its own means one function of its own. */
+.foldToggle {
+  padding: 1px 9px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 17px;
+  cursor: pointer;
+}
+
+.foldToggle:hover { border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, var(--dsw-alias-border-l2)); }
+.foldToggle:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
 
 .remedyLead {
   margin: 0;
@@ -930,13 +974,17 @@
 
 /* A refused install on a surface that does not state its blockers — the
  * outdated row — writes them out on their own full-width line under the
- * disabled button, the command that clears dsh's refusal included. */
+ * refused label, the command that clears dsh's refusal included. Block,
+ * rather than flex: Firefox will not line-clamp a -webkit-box that holds a
+ * display:flex child, and the fold this element can sit inside of carries
+ * that clamp. The 6px rhythm between the block's lines is carried by the
+ * children's margins. */
 .refusal {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: block;
   flex-basis: 100%;
 }
+
+.refusal > * + * { margin-top: 6px; }
 
 .capabilitiesBlock {
   display: flex;
