@@ -23,6 +23,21 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* The two reds every red text in this tab is painted with. dsh's error red
+   * is #ec1313 in the light theme, which measures 4.498:1 as text on white —
+   * a miss of two thousandths — and 3.57:1 on the badge's own 14% red fill
+   * (4.00:1 in dark). Mixing it toward label-primary fixes both, because
+   * label-primary is the theme's foreground pole: it darkens the red on light
+   * surfaces and lightens it on dark ones. Measured in the live app: 90% of
+   * the red is 5.30:1 on white and 5.29:1 on the dark card, and 80% is
+   * 4.98:1 on the badge's tint, 4.92:1 in dark. Computed: 90% is 4.69:1 on
+   * the dark panel itself (#2c2c2e), where the self-update's failure heading
+   * sits, and 80% is 5.23:1 on the uninstall button's 10% hover fill.
+   * Declared here, on the tab root, because a custom property inherits: one
+   * declaration reaches every red element, and a new one cannot be
+   * forgotten. */
+  --shop-error: color-mix(in srgb, var(--dsw-alias-state-error-primary) 90%, var(--dsw-alias-label-primary));
+  --shop-error-on-tint: color-mix(in srgb, var(--dsw-alias-state-error-primary) 80%, var(--dsw-alias-label-primary));
   /* The shelf never scrolls sideways: a card too wide for its track wraps
    * its badges rather than widening the panel.
    *
@@ -790,7 +805,9 @@
   border-radius: 999px;
   font-size: 12px;
   white-space: nowrap;
-  color: var(--dsw-alias-state-error-primary);
+  /* On the tint, not on the plain surface: this text reads on its own 14% red
+   * fill, where the 90% red would measure 4.21:1 (light) and 4.43:1 (dark). */
+  color: var(--shop-error-on-tint);
   background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 40%, transparent);
 }
@@ -861,7 +878,7 @@
   font-size: 12px;
   line-height: 1.5;
   white-space: pre-line;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--shop-error);
 }
 
 /* The way out of dsh's own refusal: the lead-in, then the exemption command
@@ -1134,7 +1151,10 @@
   border: 1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 55%, transparent);
   border-radius: 6px;
   background: transparent;
-  color: var(--dsw-alias-state-error-primary);
+  /* The on-tint red: hovering this button paints a 10% red fill under the
+   * word, where the plain red measures 4.50:1 (light) — the same two
+   * thousandths short of the floor the raw token shipped at. */
+  color: var(--shop-error-on-tint);
   font-size: 13px;
   cursor: pointer;
 }
@@ -1239,7 +1259,7 @@
   font-size: 12px;
   line-height: 1.6;
   white-space: pre-line;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--shop-error);
 }
 
 .gateActions {
@@ -1284,7 +1304,7 @@
   margin: 0;
   font-size: 12px;
   font-weight: 600;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--shop-error);
 }
 
 .failedDetail {
@@ -1298,7 +1318,7 @@
   margin: 0;
   font-size: 12px;
   font-weight: 600;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--shop-error);
 }
 
 .rejectedDetail {

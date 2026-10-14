@@ -698,6 +698,41 @@ async function checkCategoryBar(app: Page, dialog: Locator): Promise<void> {
   }
 }
 
+/** Red text clears 4.5:1 in both harness palettes.
+ *
+ * `css-tokens.client.spec.ts` pins WHICH red each rule paints with; this
+ * measures the result, because the failure is a composited one — the badge's
+ * red reads on its own 14% red fill, and the uninstall button's on a 10% fill
+ * under the pointer. dsh's token alone measures 4.498:1 as text on white and
+ * 3.57:1 / 4.00:1 on the badge's tint, so the mix `.panel` derives has to be
+ * re-measured against the live palette rather than trusted.
+ *
+ * Each target is measured at rest and, when `hover`, under the pointer too:
+ * the button's hover fill is the surface it shipped failing on. */
+async function checkRedText(app: Page, targets: Array<{ label: string; locator: Locator; hover?: boolean }>): Promise<void> {
+  const originalTheme = await app.evaluate(() => document.body.getAttribute('data-ds-dark-theme'))
+  try {
+    for (const theme of ['light', 'dark']) {
+      await app.evaluate(dark => document.body.toggleAttribute('data-ds-dark-theme', dark), theme === 'dark')
+      for (const { label, locator, hover } of targets) {
+        await app.mouse.move(0, 0)
+        const resting = await readPill(locator)
+        expect(resting.contrast, `${theme}/${label}: text contrast`).toBeGreaterThanOrEqual(4.5)
+        if (hover !== true) continue
+        await locator.hover()
+        const hovered = await readPill(locator)
+        expect(hovered.contrast, `${theme}/${label}/hover: text contrast`).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+  } finally {
+    await app.evaluate(value => {
+      if (value === null) document.body.removeAttribute('data-ds-dark-theme')
+      else document.body.setAttribute('data-ds-dark-theme', value)
+    }, originalTheme)
+    await app.mouse.move(0, 0)
+  }
+}
+
 /** Every element in the tab draws at most one 1px line: no border side wider
  * than 1px, no box-shadow, no outline. `css-tokens.client.spec.ts` pins the
  * declarations; this reads the computed style, which is where a rule from the
@@ -1383,7 +1418,11 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
       const card2 = dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]')
       await card2.waitFor({ state: 'visible', timeout: 15_000 })
-      await card2.locator('[data-shop-uninstall]').waitFor({ state: 'visible', timeout: 15_000 })
+      const uninstall = card2.locator('[data-shop-uninstall]')
+      await uninstall.waitFor({ state: 'visible', timeout: 15_000 })
+      // The one red text with a tint UNDER the pointer: hovering paints a 10%
+      // red fill behind the word, which is the surface it shipped failing on.
+      await checkRedText(app, [{ label: 'uninstall', locator: uninstall, hover: true }])
 
       // Toggle: the REAL pluginInventory returns a snapshot object, not a
       // bare array — a click that fails here means the host misread the
@@ -1611,6 +1650,17 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         expect(await refusal.count(), 'a harness that refuses nothing on its peers was shown a refusal').toBe(0)
         expect(await installButton.isDisabled()).toBe(false)
       }
+
+      // Every red line this card carries, measured in both palettes: the
+      // badge on its own 14% tint and each blocker line on the card. The
+      // specs pin the token; only the browser composites the tint.
+      await checkRedText(app, [
+        { label: 'badge', locator: card.locator('[data-shop-blocker]') },
+        ...['missing-peers', 'harness-range', 'harness-profile'].map(kind => ({
+          label: `detail/${kind}`,
+          locator: card.locator(`[data-shop-incompatible-detail="${kind}"]`),
+        })),
+      ])
 
       // And the seed-only card says nothing at all. Its two peers, `react` and
       // `react-dom`, have no package on disk, so node resolution alone would
