@@ -194,10 +194,15 @@ describe('category hues', () => {
 
   it('keeps the category hue on the pressed border and fill', () => {
     // Category identity lives on the border and fill. Text blends that hue
-    // with the theme foreground so these 12px labels remain readable.
+    // with the theme foreground so these 12px labels remain readable, and so
+    // does the border: the raw hue measured 1.86:1 against white for `ui`,
+    // under the 3:1 a control's boundary needs, while 70% of the hue against
+    // label-primary measured 3.48:1 for the same tab. label-primary is the
+    // theme's foreground pole, so one mix darkens the line in light and
+    // lightens it in dark (7.01:1 at the worst dark hue).
     const on = rules.get('.categoryButton.categoryButtonOn')
     expect(on, 'no .categoryButton.categoryButtonOn rule').toBeDefined()
-    expect(on).toMatch(/border-color:\s*var\(--category-hue\)/)
+    expect(on).toMatch(/border-color:\s*color-mix\(in srgb, var\(--category-hue\) 70%, var\(--dsw-alias-label-primary\)\)/)
     expect(on).toMatch(/background:\s*color-mix\(in srgb, var\(--category-hue\)/)
     expect(on).not.toMatch(/brand-primary/)
     // The fallback for All/Installed, which have no category and no hue.
@@ -216,15 +221,16 @@ describe('a pressed tab occupies the same box as an unpressed one', () => {
    * `font-variant-numeric`, whose tabular digits change the advance of labels
    * that all end in a count. Every one of those reflows the bar and passed.
    *
-   * `box-shadow` is in because it paints outside the layout box: an inset ring
-   * is the pressed state's non-colour affordance and costs the pill no
-   * metrics. `font-weight` is the reason the guard exists — bold metrics are
-   * wider than regular, so `font-weight: 600` visibly widened whichever tab was
-   * selected. jsdom applies no layout and the component tests stub this
-   * module, so the declaration is the only place a test can see this. */
+   * `box-shadow` is out although it costs the pill no metrics: an inset ring
+   * is a second line, and every control in this stylesheet draws exactly one
+   * (see "every control draws one 1px line" below). `font-weight` is the
+   * reason the guard exists — bold metrics are wider than regular, so
+   * `font-weight: 600` visibly widened whichever tab was selected. jsdom
+   * applies no layout and the component tests stub this module, so the
+   * declaration is the only place a test can see this. */
   const COLOUR_ONLY = [
     'color', 'background', 'background-color', 'background-image',
-    'border-color', 'outline-color', 'box-shadow', 'opacity',
+    'border-color', 'outline-color', 'opacity',
   ]
 
   /** Every state a pill can be in that the base rule does not also apply.
@@ -259,15 +265,25 @@ describe('a pressed tab occupies the same box as an unpressed one', () => {
     expect(heads.indexOf('.categoryButton.categoryButtonOn')).toBeGreaterThan(heads.indexOf('.categoryButton:hover'))
   })
 
-  it('gives the pressed state a signal that is not a colour', () => {
-    // Colour alone is not enough, and this bar proves it twice over: `other`'s
+  it('separates pressed from unpressed by lightness, not by hue alone', () => {
+    // Hue alone is not enough, and this bar proves it twice over: `other`'s
     // hue IS the neutral gray used for "no category", so on the light theme a
-    // pressed Other tab differs from an unpressed one by almost nothing; and
-    // under forced colours the system palette replaces every colour here. The
-    // repo's own recorded lesson — a layer fill can never be an element's only
-    // affordance — is what `font-weight: 600` used to satisfy before it was
-    // removed for reflowing the bar.
-    expect(rules.get('.categoryButton.categoryButtonOn')).toMatch(/box-shadow:\s*inset/)
+    // pressed Other tab coloured by its raw hue differs from an unpressed one
+    // by almost nothing; and under forced colours the system palette replaces
+    // every colour here. The repo's own recorded lesson — a layer fill can
+    // never be an element's only affordance — was met first by `font-weight:
+    // 600`, removed for reflowing the bar, then by an inset ring, removed for
+    // drawing a second line. What meets it now is lightness: the pressed
+    // border is mixed toward label-primary, so it clears 3:1 against the bar
+    // for every hue (the e2e measures it) where the unpressed border-l2 sits
+    // at 1.26:1 on white, and the fill under it is strong enough to see.
+    const on = rules.get('.categoryButton.categoryButtonOn') ?? ''
+    expect(on, 'no .categoryButton.categoryButtonOn rule').not.toBe('')
+    expect(on).toMatch(/border-color:\s*color-mix\([^;]*var\(--dsw-alias-label-primary\)/)
+    const fill = /background:\s*color-mix\(in srgb, var\(--category-hue\) (\d+)%, transparent\)/.exec(on)?.[1]
+    expect(fill, 'the pressed fill must be a stated share of the hue').toBeDefined()
+    expect(Number(fill)).toBeGreaterThanOrEqual(20)
+    expect(on, 'a ring is a second line').not.toMatch(/box-shadow/)
     expect(css, 'no forced-colors fallback for the pressed pill').toMatch(/forced-colors/)
   })
 
@@ -320,6 +336,107 @@ describe('a pressed tab occupies the same box as an unpressed one', () => {
     // box itself: a `<button>` gets UA padding a `<span>` does not.
     expect(track).toMatch(/box-sizing:\s*border-box/)
     expect(track).toMatch(/padding:\s*0/)
+  })
+})
+
+describe('every control draws one 1px line', () => {
+  // A maintainer asked for every button and label border to be thinner. 1px is
+  // already the thinnest line the host can draw: Chromium 151 computes and
+  // paints a 0.5px border as 1px at device pixel ratios 1, 1.25, 1.5 and 2
+  // alike (measured 2026-10-14). So what "thinner" can mean is "never more
+  // than one 1px line", and the pressed pill's inset ring, which doubled its
+  // border, was the one place the stylesheet broke that. This pins it for
+  // every rule, at every nesting depth, so a ring or a 2px border cannot come
+  // back on a control nobody re-measured.
+
+  /** Every style rule at any depth, with the at-rule preludes around it. The
+   * flat `rules` map above folds an @media block into one body, which would
+   * hide the forced-colors rule from a per-rule check. */
+  function everyRule(text: string): Array<{ at: string[]; selector: string; body: string }> {
+    const clean = text.replace(/\/\*[\s\S]*?\*\//g, '')
+    const out: Array<{ at: string[]; selector: string; body: string }> = []
+    const heads: string[] = []
+    let start = 0
+    for (let i = 0; i < clean.length; i++) {
+      const ch = clean[i]
+      if (ch === '{') {
+        heads.push(clean.slice(start, i).trim())
+        start = i + 1
+      } else if (ch === '}') {
+        const head = heads.pop() ?? ''
+        if (!head.startsWith('@')) out.push({ at: heads.filter(h => h.startsWith('@')), selector: head, body: clean.slice(start, i) })
+        start = i + 1
+      }
+    }
+    return out
+  }
+
+  /** `prop: value` pairs, in order. A value never holds a `;` in this file. */
+  function declarationsOf(body: string): Array<{ prop: string; value: string }> {
+    const out: Array<{ prop: string; value: string }> = []
+    for (const part of body.split(';')) {
+      const m = /^\s*([a-z-]+)\s*:\s*([\s\S]*?)\s*$/.exec(part)
+      if (m?.[1] !== undefined && m[2] !== undefined) out.push({ prop: m[1], value: m[2] })
+    }
+    return out
+  }
+
+  const all = everyRule(css)
+
+  it('finds the rules it guards, so an empty scan cannot pass', () => {
+    // A parser that silently matched nothing would make both checks below
+    // vacuous. The stylesheet has dozens of bordered rules and one
+    // forced-colors block; this asserts the scan reached both.
+    const bordered = all.filter(r => declarationsOf(r.body).some(d => /^border(-top|-right|-bottom|-left)?$/.test(d.prop)))
+    expect(bordered.length).toBeGreaterThan(20)
+    expect(all.some(r => r.at.some(a => a.includes('forced-colors')))).toBe(true)
+  })
+
+  it('gives every border a width of 1px, or none at all', () => {
+    // A shorthand that names a style but no width draws the initial `medium`
+    // width, 3px in every engine, so the width has to be stated, not implied.
+    const SHORTHAND = /^border(-(top|right|bottom|left|block|inline)(-(start|end))?)?$/
+    const WIDTH = /^border(-(top|right|bottom|left|block|inline)(-(start|end))?)?-width$/
+    const offenders: string[] = []
+    for (const rule of all) {
+      for (const { prop, value } of declarationsOf(rule.body)) {
+        if (SHORTHAND.test(prop)) {
+          if (value === '0' || value === 'none') continue
+          // Width tokens: a bare length or a keyword, outside any var() or
+          // color-mix() — a `45%` inside a mix is a share, not a width — so
+          // the parenthesised groups go first, innermost outward.
+          let flat = value
+          while (/\([^()]*\)/.test(flat)) flat = flat.replace(/\([^()]*\)/g, '')
+          const widths = flat.split(/\s+/).filter(t => /^(\d*\.?\d+[a-z%]*|thin|medium|thick)$/.test(t))
+          if (widths.length !== 1 || widths[0] !== '1px') offenders.push(`${rule.selector} { ${prop}: ${value} }`)
+        } else if (WIDTH.test(prop)) {
+          if (!value.split(/\s+/).every(t => t === '1px' || t === '0')) offenders.push(`${rule.selector} { ${prop}: ${value} }`)
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('draws no ring or shadow on a control', () => {
+    // `box-shadow` stays on one rule, the card's hover lift, which is a
+    // shadow under a card rather than a line around a control. An outline is
+    // a focus ring, so it lives only where focus is shown, and in the
+    // forced-colors block, where it restores the pressed state the system
+    // palette erased.
+    const shadows: string[] = []
+    const outlines: string[] = []
+    for (const rule of all) {
+      for (const { prop, value } of declarationsOf(rule.body)) {
+        if (prop === 'box-shadow' && rule.selector !== '.card:hover') shadows.push(`${rule.selector} { ${prop}: ${value} }`)
+        if (prop === 'outline' && value !== 'none' && value !== '0') {
+          const focus = rule.selector.split(',').every(part => part.includes(':focus-visible'))
+          const forced = rule.at.some(a => a.includes('forced-colors'))
+          if (!focus && !forced) outlines.push(`${rule.selector} { ${prop}: ${value} }`)
+        }
+      }
+    }
+    expect(shadows).toEqual([])
+    expect(outlines).toEqual([])
   })
 })
 

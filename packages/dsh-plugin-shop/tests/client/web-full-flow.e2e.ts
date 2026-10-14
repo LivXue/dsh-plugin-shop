@@ -523,19 +523,30 @@ async function readPill(pill: Locator) {
       const linear = (v: number): number => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
       return linear(r) * 0.2126 + linear(g) * 0.7152 + linear(b) * 0.0722
     }
-    const layers: Rgba[] = []
-    for (let node: Element | null = el; node !== null; node = node.parentElement) {
-      const style = getComputedStyle(node)
-      if (style.backgroundImage !== 'none') throw new Error('Contrast measurement requires a solid background')
-      const colour = rgba(style.backgroundColor)
-      layers.push(colour)
-      if (colour[3] === 1) break
+    const ratio = (a: number, b: number): number => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+    /** The opaque colour seen through `start` and its ancestors' fills. */
+    const composite = (start: Element | null): Rgba => {
+      const layers: Rgba[] = []
+      for (let node: Element | null = start; node !== null; node = node.parentElement) {
+        const style = getComputedStyle(node)
+        if (style.backgroundImage !== 'none') throw new Error('Contrast measurement requires a solid background')
+        const colour = rgba(style.backgroundColor)
+        layers.push(colour)
+        if (colour[3] === 1) break
+      }
+      let out: Rgba = [1, 1, 1, 1]
+      for (const layer of layers.reverse()) out = over(layer, out)
+      return out
     }
-    let background: Rgba = [1, 1, 1, 1]
-    for (const layer of layers.reverse()) background = over(layer, background)
+    const background = composite(el)
+    // What the pill's edge is seen against: the bar around it, without the
+    // pill's own fill. The fill does run under the border (background-clip is
+    // border-box), so a translucent border is composited over it first.
+    const surround = composite(el.parentElement)
     const style = getComputedStyle(el)
     const fg = luminance(over(rgba(style.color), background))
     const bg = luminance(background)
+    const border = rgba(style.borderTopColor)
     const read = (name: string): Rgba | null => {
       const value = style.getPropertyValue(name).trim()
       return value === '' ? null : rgba(value)
@@ -547,9 +558,10 @@ async function readPill(pill: Locator) {
     const knobEl = trackEl?.firstElementChild ?? null
     const trackStyle = trackEl === null ? null : getComputedStyle(trackEl)
     return {
-      contrast: (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05),
+      contrast: ratio(fg, bg),
       width: el.getBoundingClientRect().width,
-      border: rgba(style.borderTopColor),
+      border,
+      borderContrast: ratio(luminance(over(border, background)), luminance(surround)),
       ring: style.boxShadow,
       // Each is null on the control that does not set it — the pills have no
       // `--switch-hue`, the filter left the hue table when it stopped being a
@@ -557,6 +569,7 @@ async function readPill(pill: Locator) {
       // here, so an unguarded read hands rgba() the empty string and throws.
       hue: read('--category-hue'),
       switchHue: read('--switch-hue'),
+      foreground: read('--dsw-alias-label-primary'),
       track: trackStyle === null ? null : {
         border: rgba(trackStyle.borderTopColor),
         width: trackEl?.getBoundingClientRect().width ?? 0,
@@ -584,9 +597,23 @@ async function checkCategoryBar(app: Page, dialog: Locator): Promise<void> {
     expect(measured.contrast, `${label}: text contrast`).toBeGreaterThanOrEqual(4.5)
     if (width !== undefined) expect(measured.width, `${label}: width changed`).toBe(width)
     if (selected) {
-      // The border carries category identity; text may blend with the theme.
-      expect(measured.border, `${label}: selected border lost its hue`).toEqual(measured.hue)
-      expect(measured.ring, `${label}: selected ring missing`).toContain('inset')
+      // The border carries category identity, mixed 30% toward the theme
+      // foreground so it clears 3:1 for every hue. Equality with that mix is
+      // what catches the hover rule winning while the pointer stays on the
+      // tab just clicked: hover mixes the same hue another way.
+      const { hue, foreground } = measured
+      expect(hue, `${label}: no --category-hue`).not.toBeNull()
+      expect(foreground, `${label}: no --dsw-alias-label-primary`).not.toBeNull()
+      if (hue !== null && foreground !== null) {
+        // Each input was read back through an 8-bit canvas, so the mix of the
+        // read-backs can sit a step from the browser's mix of the exact values.
+        for (let channel = 0; channel < 3; channel++) {
+          const expected = (hue[channel] ?? 0) * 0.7 + (foreground[channel] ?? 0) * 0.3
+          expect(Math.abs((measured.border[channel] ?? 0) - expected), `${label}: selected border is not the pressed mix`).toBeLessThanOrEqual(2 / 255)
+        }
+      }
+      expect(measured.borderContrast, `${label}: selected border against the bar`).toBeGreaterThanOrEqual(3)
+      expect(measured.ring, `${label}: a second line on the selected pill`).toBe('none')
     }
   }
   try {
@@ -606,10 +633,10 @@ async function checkCategoryBar(app: Page, dialog: Locator): Promise<void> {
       }
       // Installed intentionally omits this modifier. Return to the shelf and
       // restore its off state afterwards. This one is a switch, not a pill, so
-      // `check` does not apply: it has no border to carry a hue and no inset
-      // ring. What it has instead is a track, and a label that no longer
-      // changes — so width invariance becomes assertable here, where the old
-      // flipping label made it a documented exception.
+      // `check` does not apply: it has no border to carry a hue. What it has
+      // instead is a track, and a label that no longer changes — so width
+      // invariance becomes assertable here, where the old flipping label made
+      // it a documented exception.
       await all.click()
       const filter = dialog.locator('[data-shop-hide-incompatible]')
       // `.switch` transitions its fill and border over 120ms and a click
@@ -669,6 +696,50 @@ async function checkCategoryBar(app: Page, dialog: Locator): Promise<void> {
     await all.click()
     await app.mouse.move(0, 0)
   }
+}
+
+/** Every element in the tab draws at most one 1px line: no border side wider
+ * than 1px, no box-shadow, no outline. `css-tokens.client.spec.ts` pins the
+ * declarations; this reads the computed style, which is where a rule from the
+ * host or a user-agent default would add a line the stylesheet does not show.
+ * The pointer leaves the tab first, because a hovered card lifts on a shadow,
+ * and focus leaves it too, because a focus ring is the one outline allowed.
+ * Then the scan waits out the transitions that leaving starts: the card's
+ * shadow fades over 120ms, and a probe of the live catalog read one card at
+ * alpha 0.0008 on its way out. Finite animations only — an infinite one, such
+ * as a spinner, never finishes. */
+async function checkOneLine(app: Page, dialog: Locator): Promise<void> {
+  await app.mouse.move(0, 0)
+  const tab = dialog.locator('[data-shop-tab]')
+  const offenders = await tab.evaluate(async root => {
+    const active = document.activeElement
+    if (active instanceof HTMLElement && root.contains(active)) active.blur()
+    await Promise.all(root.getAnimations({ subtree: true })
+      .filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity)
+      .map(animation => animation.finished.catch(() => undefined)))
+    const out: string[] = []
+    const elements = [root, ...root.querySelectorAll('*')]
+    for (const el of elements) {
+      const style = getComputedStyle(el)
+      const name = `${el.tagName.toLowerCase()}${[...el.attributes].filter(a => a.name.startsWith('data-shop')).map(a => `[${a.name}]`).join('')}.${el.className}`
+      for (const side of ['Top', 'Right', 'Bottom', 'Left'] as const) {
+        const width = style.getPropertyValue(`border-${side.toLowerCase()}-width`)
+        if (width !== '0px' && width !== '1px') out.push(`${name}: border-${side.toLowerCase()} ${width}`)
+      }
+      if (style.boxShadow !== 'none') out.push(`${name}: box-shadow ${style.boxShadow}`)
+      if (style.outlineStyle !== 'none' && style.outlineWidth !== '0px') out.push(`${name}: outline ${style.outlineWidth} ${style.outlineStyle}`)
+    }
+    return {
+      tabs: root.querySelectorAll('[data-shop-category-tab]').length,
+      cards: root.querySelectorAll('[data-shop-entry]').length,
+      out,
+    }
+  })
+  // A scan that reached nothing would pass, so it must have read the bar and
+  // the shelf it guards.
+  expect(offenders.tabs, 'the one-line scan missed the category bar').toBe(7)
+  expect(offenders.cards, 'the one-line scan missed the shelf').toBeGreaterThan(0)
+  expect(offenders.out).toEqual([])
 }
 
 // The test needs the real dsh executable on PATH and a playwright chromium.
@@ -1184,6 +1255,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // Both themes and all three active states: readable text, the shared
       // category hue on the selected border, and exact category-tab widths.
       await checkCategoryBar(app, dialog)
+      // Then the whole tab: one 1px line per control, as the cascade resolves it.
+      await checkOneLine(app, dialog)
 
       // The expanded detail's npm row: the link to the package's own npm page,
       // the other half of that same comparison.
