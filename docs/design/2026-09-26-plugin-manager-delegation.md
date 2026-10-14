@@ -32,7 +32,7 @@ The shop performs the same mechanics itself, by spawning
 Direction A keeps what only the shop has: the catalog, the install gates, the
 acknowledgement every install asks for, and the compatibility verdicts on the
 cards. It hands the mechanics to the harness service wherever one exists. On
-a harness without it (0.1.5) nothing changes.
+a harness without it (0.1.5) nothing changes. **Amended 2026-10-14:** the acknowledgement stops being asked for one install at a time and stands on the page instead — every install is acknowledged by one click, and the facts stand under the stats row, which dsh's page does not show either; B still drops that standing statement as well.
 
 Two alternatives were rejected. Making the shop catalog-only on 0.1.7 (B)
 drops the acknowledgement: dsh's page does not ask for one, and it is where

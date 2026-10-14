@@ -225,9 +225,11 @@ One verdict, three renderings:
 
 | Surface | Rendering |
 |---|---|
-| Catalog card | A badge naming the missing module(s) |
-| Install acknowledgement | An added warning line in the existing dialog |
+| Catalog card | A badge naming the missing module(s), with the button beside it |
+| Install action | An extra line under an Updatable row that has no detail line of its own |
 | Installed list | The same badge — where a user looks after a failure |
+
+**Amended 2026-10-14:** the second surface was once the §9.3 acknowledgement dialog, which opened only for community entries and stated advisory reasons there. There is no such dialog now (the shop design's §7 amendment of the same date): a click is its own acknowledgement, the disclosure stands on the page, and the Updatable row states every blocker under itself, advisory or refused, because it is the row's only surface that reads a fact the click has not already answered.
 
 **Warn, never block.** The install proceeds if the person confirms. The
 check is presence-only and this project does not know every way a plugin

@@ -44,8 +44,14 @@ github):
 | `dsh.bundle` that no dsh runs | 23 npm, 6 github | Never a working plugin (section 5.1) | Not listed |
 | github entry whose own peers dsh refuses | 273 | Install enabled, refused after pnpm | Install disabled, with its command |
 
-For scale: 349 npm cards are already disabled on their own peers
-(readiness B1).
+For scale: 349 npm cards are already refused on their own peers
+(readiness B1), rendered from 2026-10-14 onward as a non-interactive solid
+red label in the button's own box rather than as a disabled button (the
+shop design's §7 amendment of that date). Nothing about the refusal
+predicates here changes — `refusesInstall` is unchanged — only its
+rendering. Every "disabled" card or button in this document, the table
+above included, describes the rendering before that date and now reads as
+that label; "enables" is Refresh bringing the button back.
 
 ## 2. What dsh does
 

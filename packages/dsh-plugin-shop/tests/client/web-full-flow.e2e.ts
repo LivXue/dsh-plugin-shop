@@ -4,8 +4,9 @@
  * `dsh --profile web` boots against a temporary DSH_HOME, the shop package
  * and the hello fixture are installed with the REAL `dsh plugin --profile web
  * add file:…` path, and a real chromium walks the settings modal to the shop
- * tab: the fixture entry renders unclaimed, the §9.3 acknowledgement gate
- * shows the spec text, and the install runs to its terminal state through the
+ * tab: the fixture entry renders unclaimed, every install (community or
+ * verified) starts on the first click with no dialog, the install disclosure
+ * stands on the page, and the install runs to its terminal state through the
  * once-per-second status poll.
  *
  * Install-target decision (documented in the task report): no usable
@@ -45,10 +46,11 @@
  * badge renders for a genuinely absent declared peer and for both halves of
  * an unmet `dsh.compatibility`, that a peer the browser's module table seeds
  * is never named — on that card, or as a badge on the seed-only live card —
- * that from dsh 0.1.7-rc.1 the harness peer dsh itself refuses disables the
- * button until the command the card shows records dsh's exemption (and that
- * an older dsh, which refuses nothing, disables nothing), and that the
- * install, warn never block, still reaches done; the client install must
+ * that from dsh 0.1.7-rc.1 the harness peer dsh itself refuses puts the
+ * refused label in the button's place until the command the card shows
+ * records dsh's exemption (and that on an older dsh, which refuses nothing,
+ * the card keeps its button), and that the install, warn never block, still
+ * reaches done; the client install must
  * report done with activation `reload` and offer the reload panel, and the
  * reload must deliver its browser half: the served graph gains the package and
  * the page runs the fixture's client script. (This has flipped twice. It read
@@ -113,8 +115,9 @@
  * - shop tab: `dialog.getByRole('tab', { name: '插件商店' })` — the panel
  *   renders lazily, only after the tab is activated
  * - shop panel + entry: `[data-shop-tab]`, `[data-shop-entry=<name>]`
- * - install gate: `[data-shop-confirm]`; failure view: 安装失败 + the detail
- *   paragraph; state lines are plain text (no data attributes)
+ * - install: `[data-shop-install]` (one click, no dialog; a refused install
+ *   shows `[data-shop-refused]` instead of the button); failure view: 安装失败
+ *   + the detail paragraph; state lines are plain text (no data attributes)
  * - harness compatibility: `[data-shop-blocker]` (badge, on both the
  *   catalog card and the installed row) and one
  *   `[data-shop-incompatible-detail="<kind>"]` line per blocker —
@@ -1161,7 +1164,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   }, 30_000)
 
   it(
-    'browses the shop, installs with the §9.3 acknowledgement, sees the real failure and the recovery hint, and the manifest reflects the file: installs',
+    'browses the shop, installs directly (no acknowledgement dialog), sees the real failure and the recovery hint, and the manifest reflects the file: installs',
     async () => {
       expect(page).toBeDefined()
       const app = page!
@@ -1308,21 +1311,14 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // client path.
       await dialog.getByText('★ 4.3k').waitFor({ state: 'visible', timeout: 15_000 })
 
-      // Install → the §9.3 acknowledgement gate: the confirm button marks the
-      // gate, and the body is the spec text verbatim (zh register).
-      await card.locator('[data-shop-install]').click()
-      await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
-      expect(await card.textContent()).toContain('需要确认')
-      expect(await card.textContent()).toContain(
-        '安装后，此插件将拥有与内置插件相同的权限：读写你的文件、执行 shell 命令，以及读取和修改发送给模型的请求。它未经审核。',
+      // Install → starts immediately: no §9.3 dialog, no confirm button. The
+      // facts it used to state stand on the page instead, in zh register.
+      await dialog.locator('[data-shop-disclosure]').waitFor({ state: 'visible', timeout: 15_000 })
+      expect(await dialog.locator('[data-shop-disclosure]').textContent()).toBe(
+        '安装后，插件拥有与内置插件相同的权限：读写你的文件、执行 shell 命令，以及读取和修改发送给模型的请求。未标「已审核」的插件未经审核。',
       )
-
-      // Confirm → the install runs (正在安装…) and the once-per-second poll
-      // reaches the terminal state: pnpm fails in the profile (the name is
-      // not on npm and the fixture registry 404s it too), and the failed view
-      // renders the heading plus the §10 recovery hint with the last pnpm
-      // stderr line.
-      await card.locator('[data-shop-confirm]').click()
+      expect(await card.locator('[data-shop-confirm]').count()).toBe(0)
+      await card.locator('[data-shop-install]').click()
       await card.getByText('安装失败').waitFor({ timeout: 60_000 })
       if (managerPath) {
         // Through the service, dsh classifies the 404 as `not-found` and the
@@ -1372,10 +1368,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
 
-      // Install through the real wire: the §9.3 gate, then the poll to done.
+      // Install through the real wire: one click, then the poll to done.
       await card.locator('[data-shop-install]').click()
-      await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
-      await card.locator('[data-shop-confirm]').click()
 
       // activation `live`: the done view renders the no-restart notice
       // (never a restart reason) and offers no restart. A hot-mount failure
@@ -1509,10 +1503,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-config"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
 
-      // Install: the same gate and poll.
+      // Install: the same one click and poll.
       await card.locator('[data-shop-install]').click()
-      await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
-      await card.locator('[data-shop-confirm]').click()
       const notice = card.locator('[data-shop-restart-notice]')
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
 
@@ -1555,7 +1547,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   )
 
   it(
-    'badges a peer nothing provides and an unmet dsh.compatibility, never a seeded module, and still installs on confirm',
+    'badges a peer nothing provides and an unmet dsh.compatibility, never a seeded module, and still installs on one click',
     async () => {
       expect(page).toBeDefined()
       const app = page!
@@ -1591,12 +1583,40 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // while 0.1.7 keeps no link farm and serves it only through its runtime
       // resolution, which the host asks through `pluginPackages` (design
       // 2026-09-01-harness-compatibility §11). Before that, on 0.1.7 this card
-      // named it, as 2,214 live cards named some harness package.
-      await card.locator('[data-shop-blocker]').waitFor({ state: 'visible', timeout: 15_000 })
+      // named it, as 2,214 live cards named some harness package. The
+      // missing-peers line is the one every harness renders, so it is what
+      // this waits on.
+      await card.locator('[data-shop-incompatible-detail="missing-peers"]').waitFor({ state: 'visible', timeout: 15_000 })
       expect(await card.textContent()).toContain('@dsh-shop-e2e/absent-peer')
       expect(await card.textContent(), 'a peer the module table seeds was reported missing').not.toContain('@deepseek-ai/dsh-client-store')
       expect(await card.textContent(), 'a package the harness ships was reported missing').not.toContain('@deepseek-ai/dsh-llm')
-      expect(await card.locator('[data-shop-blocker]').textContent()).toBe(zh.incompatibleBadge)
+      if (gte(launchedDshVersion, '0.1.7-rc.1')) {
+        // dsh refuses this install on its harness peers (below), so the card
+        // is refused: no button and no badge, and the label carries the short
+        // word, on the visible card and in the accessible name alike. The
+        // refusal's own line is waited on first, because it is the verdict
+        // that decides all of this, and it may land after the card.
+        await card.locator('[data-shop-incompatible-detail="harness-peers"]').waitFor({ state: 'visible', timeout: 15_000 })
+        expect(await card.locator('[data-shop-install]').count()).toBe(0)
+        expect(await card.locator('[data-shop-blocker]').count()).toBe(0)
+        const refused = card.locator('[data-shop-refused]')
+        await refused.waitFor({ state: 'visible', timeout: 15_000 })
+        expect(await refused.textContent()).toBe(zh.incompatibleBadge)
+        // A name conflict would have decided the word; on this harness the
+        // kind is harness-peers, and the label marks it for the test and the
+        // screen reader alike.
+        expect(await refused.getAttribute('data-shop-blocker-kind')).toBe('harness-peers')
+        expect(await refused.getAttribute('role')).toBe('img')
+        expect((await refused.getAttribute('aria-label') ?? '').split('\n').length).toBeGreaterThan(1)
+        expect(await refused.getAttribute('title')).toBe(await refused.getAttribute('aria-label'))
+      } else {
+        // Below 0.1.7-rc.1 nothing here refuses: every reason is advisory, so
+        // the card keeps its button and the badge carries the word.
+        const badge = card.locator('[data-shop-blocker]')
+        await badge.waitFor({ state: 'visible', timeout: 15_000 })
+        expect(await badge.textContent()).toBe(zh.incompatibleBadge)
+        expect(await card.locator('[data-shop-refused]').count()).toBe(0)
+      }
 
       // The same entry declares a `dsh.compatibility` that fails both halves.
       // Only a real host parse can carry the key to here — the jsdom specs
@@ -1619,25 +1639,40 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // From 0.1.7-rc.1 — the first app-boot to export the check; every
       // earlier published one, 0.1.7-alpha.2 included, has none (measured
       // 2026-09-26) — dsh refuses that install before pnpm runs, so the card
-      // states the refusal with its button disabled. The verdict is the
-      // running app-boot's own rule on this profile's own exemptions, which
-      // only a real harness supplies. Below 0.1.7-rc.1 dsh refuses nothing on
-      // its peers, and a disabled button there would be the shop blocking an
-      // install dsh performs.
+      // states the refusal and the label stands in the button's place. The
+      // verdict is the running app-boot's own rule on this profile's own
+      // exemptions, which only a real harness supplies. Below 0.1.7-rc.1 dsh
+      // refuses nothing on its peers, and a label there would be the shop
+      // refusing an install dsh performs.
       const refusal = card.locator('[data-shop-incompatible-detail="harness-peers"]')
       const installButton = card.locator('[data-shop-install]')
+      const label = card.locator('[data-shop-refused]')
       if (gte(launchedDshVersion, '0.1.7-rc.1')) {
         await refusal.waitFor({ state: 'visible', timeout: 15_000 })
         expect(await refusal.textContent())
           .toBe(zh.harnessPeersDetail.replace('{running}', launchedDshVersion).replace('{peers}', '@deepseek-ai/dsh 0.1.2-rc.1'))
         const shown = await card.locator('[data-shop-allow-command]').textContent()
         expect(shown).toBe(`dsh plugin --profile web allow-version dsh-shop-e2e-peer@1.0.0 --dsh-version ${launchedDshVersion} --accept-risk`)
-        expect(await installButton.isDisabled()).toBe(true)
+        // dsh's refusal renders as a LABEL, never a button: the most honest
+        // thing here is "nothing will happen if I press this", not a disabled
+        // button that says otherwise. The label's title carries the whole
+        // verdict, and it has no click target, hover or colour change.
+        await label.waitFor({ state: 'visible', timeout: 15_000 })
+        expect(await label.textContent()).toBe(zh.incompatibleBadge)
+        // And the label is the box of the button it replaces: one 1px border,
+        // the same 5px 14px padding, 6px radius, 13px font and line-height,
+        // and no hand cursor. Its height is compared with the button's once
+        // the exemption brings the button back, never with a pixel count:
+        // both follow the font's metrics, and the label alone measured 31px
+        // on one machine and 27px on the CI runner.
+        const labelBox = await label.boundingBox()
+        expect(labelBox, 'a bounding box = the label is laid out').not.toBeNull()
+        expect(['auto', 'default']).toContain(await label.evaluate(el => getComputedStyle(el).cursor))
         // The way out, through the real CLI: the command exactly as the card
         // shows it, then Refresh, and the host's next read of this profile's
-        // exemptions clears the refusal. The install that ends this spec then
-        // proves dsh honours the exemption it recorded, at its preflight and
-        // again after pnpm.
+        // exemptions clears the refusal, which is also what brings the button
+        // back. The install that ends this spec then proves dsh honours the
+        // exemption it recorded, at its preflight and again after pnpm.
         const [program, ...argv] = (shown ?? '').split(' ')
         expect(program).toBe('dsh')
         const allow = dshCommand({ dshBin: 'dsh', args: argv, platform: process.platform, execPath: process.execPath, script: dshScript })
@@ -1645,22 +1680,28 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         expect(allowed.status, `the exemption command failed:\n${allowed.stderr}`).toBe(0)
         await dialog.locator('[data-shop-catalog-refresh]').click()
         await refusal.waitFor({ state: 'detached', timeout: 15_000 })
+        await label.waitFor({ state: 'detached', timeout: 15_000 })
+        await installButton.waitFor({ state: 'visible', timeout: 15_000 })
         expect(await installButton.isDisabled()).toBe(false)
+        const buttonBox = await installButton.boundingBox()
+        expect(buttonBox?.height, 'the button came back in a different box from the label').toBe(labelBox?.height)
       } else {
         expect(await refusal.count(), 'a harness that refuses nothing on its peers was shown a refusal').toBe(0)
+        expect(await label.count(), 'a harness that refuses nothing got a label anyway').toBe(0)
+        await installButton.waitFor({ state: 'visible', timeout: 15_000 })
         expect(await installButton.isDisabled()).toBe(false)
       }
 
-      // Every red line this card carries, measured in both palettes: the
-      // badge on its own 14% tint and each blocker line on the card. The
-      // specs pin the token; only the browser composites the tint.
-      await checkRedText(app, [
-        { label: 'badge', locator: card.locator('[data-shop-blocker]') },
-        ...['missing-peers', 'harness-range', 'harness-profile'].map(kind => ({
-          label: `detail/${kind}`,
-          locator: card.locator(`[data-shop-incompatible-detail="${kind}"]`),
-        })),
-      ])
+      // Every red line this card still carries after the exemption: the
+      // refusal's detachment takes the harness-peers line with it, so the
+      // three advisory lines read on the card's own surface — and the specs
+      // pin the token; only the browser composites the fill.
+      const afterKinds = ['missing-peers', 'harness-range', 'harness-profile'] as const
+      const lineTargets: Array<{ label: string; locator: Locator }> = []
+      for (const kind of afterKinds) {
+        lineTargets.push({ label: `detail/${kind}`, locator: card.locator(`[data-shop-incompatible-detail="${kind}"]`) })
+      }
+      await checkRedText(app, lineTargets)
 
       // And the seed-only card says nothing at all. Its two peers, `react` and
       // `react-dom`, have no package on disk, so node resolution alone would
@@ -1729,25 +1770,23 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await filter.click()
       await card.waitFor({ state: 'visible', timeout: 10_000 })
 
-      // Install → the community-tier gate opens and shows the
-      // incompatibility warning alongside the §9.3 acknowledgement.
+      // Install → starts directly, no dialog. The card's blocker lines are
+      // the only surface that states them anywhere, once each: the `detail`
+      // attributes read as JavaScript counts, not duplicated print. Three
+      // advisory kinds remain on every harness by now: from 0.1.7-rc.1 the
+      // exemption above released the `harness-peers` line along with the
+      // refusal, and below it dsh never refused.
       await card.locator('[data-shop-install]').click()
-      await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
-      // The gate does NOT restate what is missing: the card above it already
-      // does, and both rendering the same lines printed them twice. The
-      // outdated row is the one surface that still needs the gate to say it,
-      // and it has no card detail to duplicate. One line per blocker.
       expect(await card.locator('[data-shop-incompatible-warning]').count()).toBe(0)
       expect(await card.locator('[data-shop-incompatible-detail]').count()).toBe(3)
       for (const kind of ['missing-peers', 'harness-range', 'harness-profile']) {
-        expect(await card.locator(`[data-shop-incompatible-detail="${kind}"]`).count(), kind).toBe(1)
+        expect(await card.locator(`[data-shop-incompatible-detail="${kind}"]`).count(), `${kind} stated once`).toBe(1)
       }
 
-      // Confirm → warn, never block: the real pnpm install only warns on the
-      // unresolvable peer (the profile's autoInstallPeers: false, same as
-      // every real dsh profile) and still reaches its terminal done state —
+      // One click carries the acknowledgement: the host's pnpm run only warns
+      // on the unresolvable peer (the profile's autoInstallPeers: false, same
+      // as every real dsh profile) and still reaches its terminal done state —
       // never the failed or rejected view.
-      await card.locator('[data-shop-confirm]').click()
       await card.locator('[data-shop-restart-notice]').waitFor({ state: 'visible', timeout: 60_000 })
     },
     120_000,
@@ -1773,14 +1812,12 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-client"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
 
-      // Install: the same gate and poll as every other hot-mount scenario.
+      // Install: the same one click and poll as every other hot-mount scenario.
       // The one thing new about this fixture is the `dsh.client` declaration
       // in its package.json — the three older live fixtures declare only
       // `dsh.bundle`, so every hot-mount assertion elsewhere in this suite
       // was made about a package with no browser half.
       await card.locator('[data-shop-install]').click()
-      await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
-      await card.locator('[data-shop-confirm]').click()
 
       // activation `reload`, and the measurement under it is why.
       //
@@ -1952,10 +1989,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(booted.length, 'the boot never activated the update fixture').toBeGreaterThan(0)
       expect(new Set(booted)).toEqual(new Set(['1.0.0']))
 
-      // Update through the real wire: the §9.3 gate, then the poll to done.
+      // Update through the real wire: one click, then the poll to done.
       await card.locator('[data-shop-update]').click()
-      await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
-      await card.locator('[data-shop-confirm]').click()
       const notice = card.locator('[data-shop-restart-notice]')
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
 

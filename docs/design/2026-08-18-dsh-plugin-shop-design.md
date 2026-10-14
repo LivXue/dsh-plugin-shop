@@ -406,6 +406,14 @@ Browser                     Host (ShopGateway)                  Subprocess
 
 **Amendment (2026-09-07, name-taken): a profile holds one plugin per name, and the gate says so before the acknowledgement.** Step 2 is new. The shop writes `dependencies[name]`, so installing a second plugin of a name overwrites the first and the plugin the user chose is gone with no notice — 177 live catalog names are claimed by more than one entry, `dsh-skill-manager` by 14. The gate refuses unless the manifest's spec names this very install; a same-identity request is the ordinary update path. It sits ahead of step 3 so a request that cannot proceed never asks the reader to accept a plugin's privileges first.
 
+**Amendment (2026-10-14: the acknowledgement is ONE click, not a dialog, and the disclosure stands on the page.** What step 3 guarded was a dialog the community tier opened before every install; step 3 is unchanged — the host still rejects a community install that does not say the caller acknowledged — but the UI went through one redesign too many for the dialog to remain the conventional reading. The dialog's confirm button was absorbed because it was also the only thing standing between a second press and a second RPC: the gate reopened instead of asking again. What makes the missing dialog safe, stated in one place so each of the three renderings of this rule can point here rather than spell it out:
+
+- The card's Install/Update button and the Updatable row's Update now call `shop/installStart` directly, never opening a dialog. `acknowledged: true` IS the click for a community entry, `undefined` for a verified one (there is nothing to acknowledge).
+- The facts §9.3 required a reader to see before installing stand instead as one line under the stats row, on the page, literally indisputable and literally un-dismissable. It was moved off the card so that reading it costs nothing and skipping it costs the reader everything. `verified.yml` is still empty, so the disclosure is the shop's one standing statement of §9.2's residual-risk line.
+- `useKeyedFlows` dedupes a start for one identity while its first answer is unanswered (`starting` is set and a repeat `start` for the same key returns unanswered rather than sent). This is the only new state change in the whole commit, and it is what keeps a slow first answer — a release download and hash — from counting as a second install.
+- An install the host or dsh WILL refuse shows a non-interactive solid red label in the button's own box instead of a disabled button: the most honest "nothing will happen if I press this". The label carries the full reasons on `role="img"` + `aria-label` and on `title` for the mouse, and its kind on `data-shop-blocker-kind`, which no badge ever will. Every advisory reason stays the button plus the small badge, and the badge's reasons are its own accessible name — warn, never block, unchanged.
+- The outdated row states every blocker under itself, advisory or refused; before 2026-10-14 the advisory reasons were written only inside the dialog that is gone.
+
 The spec is attributed positively — a version or range is npm, the two GitHub forms are a repository — and **a spec the grammar does not cover is a third answer, never npm.** Reading `git+ssh://`, `file:`, `link:`, `workspace:*` or `npm:other@1` as npm made the gate pass them (an npm-vs-npm comparison is unconditionally "same"), so pnpm overwrote git remotes, working checkouts and aliases to other packages entirely; and read the other way it published "already installed from the npm package X" about a local directory. Those are refused now, quoting the spec.
 
 The client refuses in the same breath, on the same input: `shop/installedSpecs` returns the manifest's dependency map — the gate's own argument — and the card runs the same `specVerdict`. It cannot be derived from `shop/installed`, which drops any dependency no catalog entry matches; a fork, a hand `dsh plugin add`, or a delisted holder is invisible there while the gate still refuses over it.
@@ -936,7 +944,7 @@ With the fix, each of those three reloaded on its own on both dsh versions, with
 
 | Threat | Countermeasure | Residual risk |
 |---|---|---|
-| Malicious author | Tiering; mandatory acknowledgement for community entries | The community tier carries real risk; only honest disclosure mitigates it |
+| Malicious author | Tiering; one click acknowledges a community install, and the disclosure stands on the page | The community tier carries real risk; only honest disclosure mitigates it |
 | Typosquatting | Build-time edit-distance check, held for human adjudication | Novel impersonation techniques |
 | Stolen account / malicious new version | verified pins a version; `manifest.lock` records integrity, so version and hash changes are visible in a git diff | Detection lags publication |
 | Catalog man-in-the-middle | `index.json` points at content-addressed data; the Host verifies the fetched sha256 against the pointer; this repository's git history is the second source of truth | `index.json` itself being replaced: HTTPS stops network-level impersonation of an honest origin, but `dist.integrity` (npm transport) is a self-consistency check the origin computes over its own tarball, not an independent signature the Host verifies — a compromised or malicious origin can serve a self-consistent forged catalog and present an arbitrary package as `verified`; this repository's `manifest.lock` is the only out-of-band check, and no automated comparison against it exists |
@@ -947,11 +955,13 @@ With the fix, each of those three reloaded on its own on both dsh versions, with
 
 The community-tier confirmation must convey this:
 
-> Once installed, this plugin holds the same privileges as a built-in one: reading and writing your files, running shell commands, and reading and modifying the requests sent to the model. It has not been reviewed.
+> Once installed, a plugin holds the same privileges as a built-in one: reading and writing your files, running shell commands, and reading and modifying the requests sent to the model. Plugins not marked Verified have not been reviewed.
 
 The basis is dsh's own characterization of `allowBuilds` — "permission to execute the package's code on your machine at install time, outside any sandbox the agent runs under". Reuse the upstream wording rather than inventing a parallel vocabulary.
 
 Wording such as "this plugin comes from the community, please install with care" carries no information and is not acceptable.
+
+**Amended 2026-10-14.** The sentence stands as the page's standing line under the stats row rather than as the body of a per-install dialog. Two deliberate moves follow, and §7's amendment of the same date states both: the click itself is the acknowledgement for a community entry (a verified entry acknowledges nothing because it has nothing to acknowledge), and the general case is stated because the line describes the tier system, not one entry — "Plugins not marked Verified", not a badge a card never renders (the community tier is not badged on a card, so pointing a reader at a badge that does not exist would make the statement look wrong where it is true).
 
 ## 10. Failure modes
 

@@ -3405,9 +3405,9 @@ describe('ShopGateway.catalog: what the running dsh itself refuses', () => {
   })
 
   it('reads the exemptions again on every call, so running the command and pressing Refresh clears the card', async () => {
-    // The whole way out of a disabled button: dsh records the exemption, and
-    // the next catalog call must see it. A verdict remembered per snapshot
-    // would keep the button disabled for as long as the snapshot is served.
+    // The whole way out of a refusal: dsh records the exemption, and the next
+    // catalog call must see it. A verdict remembered per snapshot would keep
+    // the card refused for as long as the snapshot is served.
     const held: { record: Record<string, string[]> } = { record: {} }
     const { readHarness } = refusingHarness(held)
     const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [pinned], denied: [], stars: {} }, { readHarness })
@@ -3444,7 +3444,7 @@ describe('ShopGateway.catalog: what the running dsh itself refuses', () => {
 
   it('says nothing when the exemptions cannot be read, and the declared halves still stand', async () => {
     // Without the exemptions an allowed install and a refused one look the
-    // same, and a disabled button nobody could justify is the worst answer.
+    // same, and a refusal nobody could justify is the worst answer.
     const declared: CatalogEntry = { ...pinned, compatibility: { dsh: '0.9.0' } }
     const { readHarness } = refusingHarness({ record: 'throws' })
     const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [declared], denied: [], stars: {} }, { readHarness })

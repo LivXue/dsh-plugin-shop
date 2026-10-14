@@ -479,7 +479,7 @@ describe('peerVerdictsOf', () => {
   it('judges a github entry with an inexact manifest version, and offers no command dsh would refuse', () => {
     // dsh's rule keys its exemption by any non-empty version, so it refuses
     // this install all the same, while `allow-version` records exact versions
-    // only (`allowVersionCommand`). The card is disabled with no command. An
+    // only (`allowVersionCommand`). The card is refused with no command. An
     // install may fail even earlier, at pnpm, which refuses a package version
     // that is not semver.
     const { check } = scriptedCheck({ 'dsh-git@1.4': refusal('dsh-git', '1.4') })
