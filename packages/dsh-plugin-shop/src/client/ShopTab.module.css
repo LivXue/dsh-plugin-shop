@@ -38,6 +38,18 @@
    * forgotten. */
   --shop-error: color-mix(in srgb, var(--dsw-alias-state-error-primary) 90%, var(--dsw-alias-label-primary));
   --shop-error-on-tint: color-mix(in srgb, var(--dsw-alias-state-error-primary) 80%, var(--dsw-alias-label-primary));
+  /* The amber and the green, mixed the same way for the same reason. dsh's
+   * warn #f59e0b and success #22c55e are one value in both themes and pass
+   * in the dark one, but as text on white they measure 2.15:1 and 2.28:1.
+   * Each derived colour keeps the largest multiple of ten of its hue that
+   * clears every surface it paints, as the reds do. Computed from the live
+   * tokens over every bg layer in both themes: amber at 60% is 4.95:1 on a
+   * plain surface but 4.44:1 on its own 14% tint, so text on an amber tint
+   * takes 50% (5.66:1); green at 60% is 5.18:1 plain and 4.60:1 on its 14%
+   * tint, so one green serves both. */
+  --shop-warn: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 60%, var(--dsw-alias-label-primary));
+  --shop-warn-on-tint: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 50%, var(--dsw-alias-label-primary));
+  --shop-success: color-mix(in srgb, var(--dsw-alias-state-success-primary) 60%, var(--dsw-alias-label-primary));
   /* The shelf never scrolls sideways: a card too wide for its track wraps
    * its badges rather than widening the panel.
    *
@@ -331,7 +343,7 @@
   border-radius: 999px;
   background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--dsw-alias-state-warn-primary) 40%, transparent);
-  color: var(--dsw-alias-state-warn-primary);
+  color: var(--shop-warn-on-tint);
   font-size: 12px;
 }
 
@@ -570,7 +582,7 @@
 
 .catalogRefreshFailed {
   font-size: 11px;
-  color: var(--dsw-alias-state-warn-primary);
+  color: var(--shop-warn);
 }
 
 .emptyLine {
@@ -778,13 +790,13 @@
 }
 
 .tierBadge[data-tier='verified'] {
-  color: var(--dsw-alias-state-success-primary);
+  color: var(--shop-success);
   background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--dsw-alias-state-success-primary) 40%, transparent);
 }
 
 .tierBadge[data-tier='verified-stale'] {
-  color: var(--dsw-alias-state-warn-primary);
+  color: var(--shop-warn-on-tint);
   background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--dsw-alias-state-warn-primary) 40%, transparent);
 }
@@ -1127,7 +1139,7 @@
   border-radius: 6px;
   background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent);
   font-size: 12px;
-  color: var(--dsw-alias-state-warn-primary);
+  color: var(--shop-warn-on-tint);
 }
 
 /* Install flow. */
@@ -1344,7 +1356,7 @@
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--dsw-alias-state-warn-primary);
+  color: var(--shop-warn-on-tint);
 }
 
 .gateBody {
@@ -1397,7 +1409,7 @@
 .notice {
   margin: 0;
   font-size: 12px;
-  color: var(--dsw-alias-state-success-primary);
+  color: var(--shop-success);
 }
 
 .failedHeading {

@@ -565,6 +565,66 @@ describe('red text clears 4.5:1', () => {
   })
 })
 
+describe('warn and success text clear 4.5:1', () => {
+  // The same defect as the red, much further under. dsh's warn amber
+  // (#f59e0b) and success green (#22c55e) are one value in both themes, and
+  // as text on white they measure 2.15:1 and 2.28:1 — on their own 14% tints
+  // 1.93:1 and 2.02:1. They pass in the dark theme, so the mix toward
+  // label-primary that `--shop-error` uses fixes the light theme without
+  // spending the dark one: it darkens toward #0f1115 and lightens toward
+  // #f9fafb. Each derived colour keeps the largest multiple of ten of its hue
+  // that clears every surface it paints, the rule the reds follow. Computed
+  // from the live tokens over every bg layer in both themes: amber at 60% is
+  // 4.95:1 on a plain surface and 4.44:1 on its 14% tint, so the tint takes
+  // 50% (5.66:1); green at 60% is 5.18:1 plain and 4.60:1 on its 14% tint,
+  // so one green serves both and there is no on-tint green. jsdom composites
+  // nothing, so the VALUES are pinned here and the e2e measures every text
+  // live.
+  const PANEL = rules.get('.panel') ?? ''
+
+  it('derives the warn and success text colours from their tokens, on the tab root', () => {
+    expect(PANEL, 'no .panel rule').not.toBe('')
+    expect(PANEL).toContain('--shop-warn: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 60%, var(--dsw-alias-label-primary));')
+    expect(PANEL).toContain('--shop-warn-on-tint: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 50%, var(--dsw-alias-label-primary));')
+    expect(PANEL).toContain('--shop-success: color-mix(in srgb, var(--dsw-alias-state-success-primary) 60%, var(--dsw-alias-label-primary));')
+    // A second green would be the first one again: 60% already clears the tint.
+    expect(PANEL).not.toContain('--shop-success-on-tint')
+  })
+
+  it('never paints text with the raw warn or success token', () => {
+    // Text only: a fill, a border or the switch track wants the hue itself,
+    // and keeps the raw token.
+    const offenders: string[] = []
+    for (const rule of everyRule(css)) {
+      for (const { prop, value } of declarationsOf(rule.body)) {
+        if (prop !== 'color') continue
+        if (/var\(--dsw-alias-state-(warn|success)-primary\)/.test(value.replace(/color-mix\([^;]*\)/g, ''))) {
+          offenders.push(`${rule.selector} { ${prop}: ${value} }`)
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('takes the on-tint amber wherever amber text sits on an amber tint', () => {
+    // The badges' 14% fills, the reviewed line's 12% and the restart gate's
+    // 8%: the on-tint mix clears all three, so one rule covers them.
+    for (const selector of [".tierBadge[data-tier='verified-stale']", '.staleBadge', '.reviewedLine', '.gateTitle']) {
+      expect(rules.get(selector), `no rule for ${selector}`).toBeDefined()
+      expect(rules.get(selector), `${selector} must use the on-tint amber`).toContain('color: var(--shop-warn-on-tint);')
+    }
+    // Read on a plain surface: the stats row.
+    expect(rules.get('.catalogRefreshFailed'), '.catalogRefreshFailed must use the plain amber').toContain('color: var(--shop-warn);')
+  })
+
+  it('takes the one green for every green text, plain or on its tint', () => {
+    for (const selector of [".tierBadge[data-tier='verified']", '.notice']) {
+      expect(rules.get(selector), `no rule for ${selector}`).toBeDefined()
+      expect(rules.get(selector), `${selector} must use the derived green`).toContain('color: var(--shop-success);')
+    }
+  })
+})
+
 describe('incompatibility reads as an error, not a warning', () => {
   // The shop already spends the warn token on things a user can live with: a
   // stale catalog, an unreviewed tier, the restart gate. A plugin whose
