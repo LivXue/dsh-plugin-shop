@@ -252,23 +252,6 @@ export function heldBy(
   return specVerdict(entry, spec) === 'same' ? undefined : holderLabel(spec, entry.name)
 }
 
-/** The disclosure every install now stands under (spec §9.3, amended
- * 2026-10-14). It used to be the acknowledgement dialog's body: the gate asked
- * a reader to accept THESE privileges before each community install. The gate
- * is gone, and the same facts stand instead as one quiet line on the page, so
- * they cannot be missed and cannot be dismissed unread.
- *
- * Stated in the general case — "a plugin", not "this plugin" — because it now
- * describes the tier system rather than one entry, and because the community
- * tier is never badged on a card: naming a badge that is not rendered would
- * send a reader looking for it. */
-export const DISCLOSURE_EN =
-  'Once installed, a plugin holds the same privileges as a built-in one: reading and writing your files, running shell commands, and reading and modifying the requests sent to the model. Plugins not marked Verified have not been reviewed.'
-
-/** The same facts in the zh register, with the same force. */
-export const DISCLOSURE_ZH =
-  '安装后，插件拥有与内置插件相同的权限：读写你的文件、执行 shell 命令，以及读取和修改发送给模型的请求。未标「已审核」的插件未经审核。'
-
 /** Install rejection code → locale key, for the rejected-state code label
  * (§7.2): every rejection the host can return has a human label here. */
 export function rejectionCodeKey(code: InstallRejectionCode): ShopLocaleKey {

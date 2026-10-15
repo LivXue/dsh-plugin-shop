@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
-  DISCLOSURE_EN, DISCLOSURE_ZH, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, activationNoticeKey, categoryKey, entryKey, formatSize, formatStars,
+  INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, activationNoticeKey, categoryKey, entryKey, formatSize, formatStars,
   uninstallActivationNoticeKey,
   authorOf, blockerBadgeKey, blockersOf, harnessVerdictOf, hasGithubHome, heldBy, isCustomLicense, isShopLike, missingPeersOf,
   nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall,
@@ -62,30 +62,18 @@ describe('tierKey', () => {
   })
 })
 
-describe('DISCLOSURE_EN / DISCLOSURE_ZH (§9.3, amended 2026-10-14)', () => {
-  it('is the install disclosure, in both registers', () => {
-    expect(DISCLOSURE_EN).toBe(
-      'Once installed, a plugin holds the same privileges as a built-in one: reading and writing your files, running shell commands, and reading and modifying the requests sent to the model. Plugins not marked Verified have not been reviewed.',
-    )
-    expect(DISCLOSURE_ZH).toBe(
-      '安装后，插件拥有与内置插件相同的权限：读写你的文件、执行 shell 命令，以及读取和修改发送给模型的请求。未标「已审核」的插件未经审核。',
-    )
-    // The general case, not the per-entry one: it describes the tier system
-    // rather than one entry, and names a badge a card never renders.
-    expect(DISCLOSURE_EN).not.toContain('this plugin')
-    expect(DISCLOSURE_ZH).not.toContain('此插件')
-    expect(DISCLOSURE_EN).toContain('Verified')
-    expect(DISCLOSURE_ZH).toContain('已审核')
-  })
-
-  it('drives the page line, and nothing else refers to a dialog that is gone', () => {
-    // The two dictionaries point at it, and the keys the dialog held are gone
-    // with it — a click is its own acknowledgement now.
-    expect(en.disclosure).toBe(DISCLOSURE_EN)
-    expect(zh.disclosure).toBe(DISCLOSURE_ZH)
+describe('the §9.3 dialog and the line that replaced it are gone (amended 2026-10-14, 2026-10-15)', () => {
+  it('leaves no key for the dialog, nor for the disclosure', () => {
+    // A click is its own acknowledgement since 2026-10-14, and since
+    // 2026-10-15 no line on the page restates the dialog's facts either.
+    // `install` is the control: the dictionaries were read, not empty.
+    expect(Object.keys(en)).toContain('install')
+    expect(Object.keys(zh)).toContain('install')
     expect(Object.keys(en)).not.toContain('acknowledgementTitle')
     expect(Object.keys(zh)).not.toContain('acknowledgementBody')
     expect(Object.keys(en)).not.toContain('confirm')
+    expect(Object.keys(en)).not.toContain('disclosure')
+    expect(Object.keys(zh)).not.toContain('disclosure')
   })
 })
 

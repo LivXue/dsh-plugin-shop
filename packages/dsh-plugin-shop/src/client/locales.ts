@@ -1,7 +1,5 @@
 /** Copy dictionaries for the shop's Settings section. */
 
-import { DISCLOSURE_EN, DISCLOSURE_ZH } from './present.ts'
-
 /** Simplified Chinese dictionary and key source of truth. */
 export const zh = {
   /** The shop's name in Settings (design §5.1, amended 2026-10-15): its nav
@@ -56,9 +54,6 @@ export const zh = {
   install: '安装',
   cancel: '取消',
   dismiss: '知道了',
-  /** What every install now stands under, on the page rather than in a dialog
-   * (spec §9.2/§9.3, amended 2026-10-14). */
-  disclosure: DISCLOSURE_ZH,
   /** The fold toggle under a card's collapsed red block. `aria-expanded` plus:
    * open shows the whole block; closed shows two lines of it. This toggle is
    * independent of the card's own header-expand. */
@@ -254,7 +249,6 @@ export const en = {
   install: 'Install',
   cancel: 'Cancel',
   dismiss: 'Dismiss',
-  disclosure: DISCLOSURE_EN,
   moreRedLines: 'Show more',
   lessRedLines: 'Show less',
   installing: 'Installing…',

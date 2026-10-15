@@ -560,20 +560,6 @@
   color: var(--dsw-alias-label-secondary);
 }
 
-/* The install disclosure: one grey line under the stats row, always on the
- * page. It carries what the §9.3 dialog used to say before every community
- * install, which is why it must not be dismissible or collapsed — a reader
- * who never installs anything still learns what installing means here.
- * Secondary label, the same register as the stats line it sits under: the
- * disclosure is a fact about the shelf, not a warning about one entry. It
- * wraps to a few lines at a narrow width, which the panel already allows. */
-.disclosure {
-  margin: 6px 0 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--dsw-alias-label-secondary);
-}
-
 /* Sits beside the 12px stats caption, so it is quieter than `.actionButton`:
  * this is an affordance, not a call to action — the catalog reloads on its
  * own at mount and the shelf is already usable without it. Named

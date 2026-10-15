@@ -5,9 +5,9 @@
  * and the hello fixture are installed with the REAL `dsh plugin --profile web
  * add file:…` path, and a real chromium walks the settings modal to the shop
  * tab: the fixture entry renders unclaimed, every install (community or
- * verified) starts on the first click with no dialog, the install disclosure
- * stands on the page, and the install runs to its terminal state through the
- * once-per-second status poll.
+ * verified) starts on the first click with no dialog and no disclosure line,
+ * and the install runs to its terminal state through the once-per-second
+ * status poll.
  *
  * Install-target decision (documented in the task report): no usable
  * dsh.bundle-declaring package exists on npm for a REAL successful install —
@@ -196,7 +196,8 @@ import { startInstall } from '../../src/host/executor.ts'
  * or, worse, passes vacuously. The two dialog-scoped `count()).toBe(0)`
  * "nothing is live" checks are exactly that hazard — an empty collapsed
  * section satisfies them for free. (The other `count()).toBe(0)` assertions in
- * this file are scoped to a shop card, which this disclosure cannot empty.)
+ * this file are scoped to the shop's body, `[data-shop-tab]`, or a card in it,
+ * which this disclosure cannot empty.)
  *
  * What it must NOT be guarded with is a bare dot or entry selector: the preset
  * plane is open by default and renders both, so `[data-plugin-entry]` and
@@ -1450,12 +1451,12 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // client path.
       await dialog.getByText('★ 4.3k').waitFor({ state: 'visible', timeout: 15_000 })
 
-      // Install → starts immediately: no §9.3 dialog, no confirm button. The
-      // facts it used to state stand on the page instead, in zh register.
-      await dialog.locator('[data-shop-disclosure]').waitFor({ state: 'visible', timeout: 15_000 })
-      expect(await dialog.locator('[data-shop-disclosure]').textContent()).toBe(
-        '安装后，插件拥有与内置插件相同的权限：读写你的文件、执行 shell 命令，以及读取和修改发送给模型的请求。未标「已审核」的插件未经审核。',
-      )
+      // Install → starts immediately: no §9.3 dialog, no confirm button, and
+      // since 2026-10-15 no line on the page restates the dialog's facts. The
+      // card and its star badge were waited for above, so these counts read a
+      // rendered shelf, not an empty one.
+      expect(await dialog.locator('[data-shop-tab] [data-shop-disclosure]').count()).toBe(0)
+      expect(await dialog.locator('[data-shop-tab]').getByText('安装后，插件拥有与内置插件相同的权限').count()).toBe(0)
       expect(await card.locator('[data-shop-confirm]').count()).toBe(0)
       await card.locator('[data-shop-install]').click()
       await card.getByText('安装失败').waitFor({ timeout: 60_000 })
