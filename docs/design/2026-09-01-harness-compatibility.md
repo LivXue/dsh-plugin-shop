@@ -231,6 +231,8 @@ One verdict, three renderings:
 
 **Amended 2026-10-14:** the second surface was once the §9.3 acknowledgement dialog, which opened only for community entries and stated advisory reasons there. There is no such dialog now (the shop design's §7 amendment of the same date): a click is its own acknowledgement, the disclosure stands on the page, and the Updatable row states every blocker under itself, advisory or refused, because it is the row's only surface that reads a fact the click has not already answered.
 
+**Amended 2026-10-15:** the disclosure no longer stands on the page (the shop design's §7 amendment of that date). The rest of the paragraph above stands.
+
 **Warn, never block.** The install proceeds if the person confirms. The
 check is presence-only and this project does not know every way a plugin
 might legitimately work; refusing an install on our inference would make

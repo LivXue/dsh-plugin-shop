@@ -568,10 +568,10 @@ function BlockerBadge({ blockers, t }: {
  * There is no §9.3 dialog. Until 2026-10-14 a community entry opened an
  * acknowledgement gate first, and that gate was also the only thing standing
  * between a second press and a second RPC — it reopened instead of asking
- * again. What replaced it is one click that carries `acknowledged: true`, the
- * disclosure standing on the page where a reader cannot dismiss it unread, and
- * the in-flight guard in `useKeyedFlows`, which is what makes the missing
- * dialog safe. */
+ * again. What replaced it is one click that carries `acknowledged: true`, and
+ * the in-flight guard in `useKeyedFlows`, which keeps a second press from
+ * becoming a second RPC. The page states the dialog's facts nowhere since
+ * 2026-10-15 (the shop design's §7 amendment of that date). */
 function InstallPanel({ target, tier, blockers, blockersStated = false, variant = 'install', flow, t, restart, restartBlocked, reload }: {
   /** The install request this panel drives, identity included. */
   target: InstallArgs
@@ -2288,12 +2288,6 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
           ))}
         </span>
       </div>
-      {/* What every install stands under, where it cannot be missed and cannot
-        * be dismissed unread (spec §9.2, amended 2026-10-14). It used to be the
-        * body of the §9.3 dialog, asked once per community install; the dialog
-        * is gone, so the facts live on the page instead. Below the stats row
-        * and above the shelf, so a reader meets it before the first button. */}
-      <p className={css.disclosure} data-shop-disclosure>{t('disclosure')}</p>
       {result.plugins.length === 0 ? (
         <p className={css.emptyLine}>{t('empty')}</p>
       ) : filtered.length === 0 ? (

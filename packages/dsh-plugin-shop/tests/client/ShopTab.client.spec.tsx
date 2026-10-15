@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DISCLOSURE_EN, DISCLOSURE_ZH, RESTART_GRACE_MS, RESTART_STABLE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
+import { RESTART_GRACE_MS, RESTART_STABLE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
 import { en, zh, type ShopLocaleKey } from '../../src/client/locales.ts'
 import { ShopTab, type ShopTabInjected, type ShopTabProps } from '../../src/client/ShopTab.tsx'
 import { noteBoot, registerRestartCarrier, resetRestartMonitor, startRestartMonitor } from '../../src/client/restart-monitor.ts'
@@ -364,8 +364,8 @@ describe('ShopTab', () => {
 
   it('starts a community install on the first click, acknowledging as it goes', async () => {
     // The §9.3 gate is gone: what it asked for is one indisputable click on
-    // the button itself, and the facts it stated stand on the page instead
-    // (see the disclosure case below).
+    // the button itself. Since 2026-10-15 no line on the page restates its
+    // facts either (see the no-disclosure case below).
     const { injected, install } = bench(snapshot())
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
@@ -382,17 +382,16 @@ describe('ShopTab', () => {
     await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: undefined, source: 'npm', repo: undefined, subdir: undefined }))
   })
 
-  it('states the install disclosure on the page, not behind a dialog', async () => {
-    // Every install stands under it now, so it is not something a reader
-    // dismisses per install: it sits under the stats row, always visible.
+  it('states no install disclosure: the shelf follows the stats row', async () => {
+    // The line that stood under the stats row from 2026-10-14 was removed on
+    // 2026-10-15 (the shop design's §7 amendment of that date). The first card
+    // and the stats row are asserted first, so an empty render cannot pass.
     const { injected } = bench(snapshot())
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText(en.disclosure)).toBeTruthy())
-    const line = container.querySelector('[data-shop-disclosure]')
-    expect(line?.textContent).toBe(en.disclosure)
-    // Under the stats row, which is the row it qualifies.
-    const stats = container.querySelector('[data-shop-catalog-stats]')
-    expect(stats?.compareDocumentPosition(line as Node) === Node.DOCUMENT_POSITION_FOLLOWING).toBe(true)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-catalog-stats]')).not.toBeNull()
+    expect(container.querySelector('[data-shop-disclosure]')).toBeNull()
+    expect(container.textContent).not.toContain('same privileges as a built-in one')
   })
 
   it.each([
@@ -1797,11 +1796,6 @@ describe('ShopTab', () => {
     fireEvent.click(tool)
     expect(tool.getAttribute('aria-pressed')).toBe('true')
     expect(all.getAttribute('aria-pressed')).toBe('false')
-  })
-
-  it('pins the disclosure wording in both dictionaries', () => {
-    expect(en.disclosure).toBe(DISCLOSURE_EN)
-    expect(zh.disclosure).toBe(DISCLOSURE_ZH)
   })
 
   it('heads the update rows "Updatable", which the Installed filter does not say', () => {
