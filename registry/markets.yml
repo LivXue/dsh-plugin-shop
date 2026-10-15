@@ -364,6 +364,11 @@
   by: human
   reason: "7 repos publish this name; all are plugin markets. A loud GitHub plugin radar for DeepSeek Harness."
 
+- name: "dsh-plugin-market-intelligence"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: Market Intelligence Analysis Expert for DeepSeek Harness — CaSee (凯见) market/competition/customer intelligence retrieval with two-stage trusted sourcing and T-Score credibility grading."
+
 - name: "dsh-plugin-market-monorepo"
   market: true
   by: llm
