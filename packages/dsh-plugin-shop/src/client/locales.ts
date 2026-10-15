@@ -1,10 +1,15 @@
-/** Copy dictionaries for the shop Settings tab. */
+/** Copy dictionaries for the shop's Settings section. */
 
 import { DISCLOSURE_EN, DISCLOSURE_ZH } from './present.ts'
 
 /** Simplified Chinese dictionary and key source of truth. */
 export const zh = {
-  tab: '插件商店',
+  /** The shop's name in Settings (design §5.1, amended 2026-10-15): its nav
+   * entry and its page title, one key so the two cannot drift apart. */
+  title: '插件商店',
+  /** The shop's Settings page intro line (design §5.1, amended 2026-10-15),
+   * as the built-in Models and 内置插件 pages carry one under their title. */
+  intro: '浏览、安装和更新目录中的插件。',
   loading: '正在读取目录…',
   error: '暂时无法读取目录。',
   installedError: '暂时无法读取已安装列表。',
@@ -206,7 +211,8 @@ export type ShopLocaleKey = keyof typeof zh
 
 /** English dictionary checked against the Chinese key set. */
 export const en = {
-  tab: 'Plugin shop',
+  title: 'Plugin shop',
+  intro: 'Browse, install, and update plugins from the catalog.',
   loading: 'Reading the catalog…',
   error: 'The catalog is temporarily unavailable.',
   installedError: 'The installed list is temporarily unavailable.',

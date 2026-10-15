@@ -73,8 +73,10 @@ export interface ShopTabInjected {
 }
 
 /** Full component props assembled by the Settings slot renderer. */
+/** The shop body's props: since 2026-10-15 the shop is its own Settings
+ * section (design §5.1), whose one owner prop, `close`, the body ignores. */
 export type ShopTabProps =
-  PropsRuntime<'settings.plugins.tab'>
+  PropsRuntime<'settings.section'>
   & PropsLocale<'settings.shop'>
   & InjectFace<ShopTabInjected>
 
@@ -1338,9 +1340,10 @@ class ShopErrorBoundary extends Component<{ t: ShopTabProps['t']; children: Reac
   }
 }
 
-/** The tab as the settings slot registers it (`index.ts`): the body inside the
- * shop's own error boundary. Exported under the name the body used to carry,
- * so nothing can register the tab without the boundary. */
+/** The shop body inside its own error boundary, as `ShopSection` renders it
+ * below the page's title and intro (the settings slot registers `ShopSection`,
+ * `index.ts`). Exported under the name the body used to carry, so nothing can
+ * render the body without the boundary. */
 export function ShopTab(props: ShopTabProps): ReactNode {
   return (
     <ShopErrorBoundary t={props.t}>

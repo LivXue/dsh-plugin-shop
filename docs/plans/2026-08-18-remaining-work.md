@@ -22,7 +22,7 @@ P0 — the catalog pipeline — is complete: 24 commits on branch `feat/p0-regis
 
 P1 — the Host half — is complete (2026-08-25, branch `feat/p1-host`, merged): the npm package `dsh-plugin-shop` lives at `packages/dsh-plugin-shop/` (the typert generator hardcodes `packages/` as its package container; spec §5.1 was amended accordingly), exposing the five `shop/*` Remote methods. The P1 exit criterion — the real-installation test of spec §11.3.3 — passes against the real dsh CLI, locally and in CI (`plugin.yml`). Execution record: [2026-08-25-p1-host.md](2026-08-25-p1-host.md).
 
-P2 — the Client half — is complete (2026-08-25, branch `feat/p2-client`, merged): the shop tab under `settings.plugins.tab` (browse, detail, the §9.3 acknowledgement gate, install with polling, enable/disable, and the outdated list), the XSS regression of §11.3.4, and the web full-flow e2e. Execution record: [2026-08-25-p2-client.md](2026-08-25-p2-client.md). Two wire-level facts the spec gained as §7.3 amendments: the install method is `shop/installStart` (the namespace service owns `install`), and a self-mounting client consumes its namespace via `ctx.get('remote.shop')`. P3 was absorbed into P2 (enable/disable and `shop/outdated` shipped there); the §12 deviation note records that a successful shop-driven install is deferred until a real npm package with `dsh.bundle` exists.
+P2 — the Client half — is complete (2026-08-25, branch `feat/p2-client`, merged): the shop tab under `settings.plugins.tab` (browse, detail, the §9.3 acknowledgement gate, install with polling, enable/disable, and the outdated list; a Settings section of its own since 2026-10-15, design §5.1 amendment), the XSS regression of §11.3.4, and the web full-flow e2e. Execution record: [2026-08-25-p2-client.md](2026-08-25-p2-client.md). Two wire-level facts the spec gained as §7.3 amendments: the install method is `shop/installStart` (the namespace service owns `install`), and a self-mounting client consumes its namespace via `ctx.get('remote.shop')`. P3 was absorbed into P2 (enable/disable and `shop/outdated` shipped there); the §12 deviation note records that a successful shop-driven install is deferred until a real npm package with `dsh.bundle` exists.
 
 What does **not** exist yet: nothing further in the P0-P3 plan. Remaining are the operational items below (upstream PRs U1-U4, carried-over cleanups). A review workflow was on this list until 2026-09-08 and is not remaining work: decision 4 declines it.
 
@@ -155,7 +155,7 @@ Build it in this order, because the failure-prone parts come first:
 
 ## P2 — the Client half (done 2026-08-25)
 
-`packages/dsh-plugin-shop/src/client/`, contributing one tab to `settings.plugins.tab`. It holds no privilege beyond the five `shop/*` methods.
+`packages/dsh-plugin-shop/src/client/`, contributing one tab to `settings.plugins.tab` (one `settings.section` entry since 2026-10-15, design §5.1 amendment). It holds no privilege beyond the five `shop/*` methods.
 
 Two requirements that are easy to miss:
 

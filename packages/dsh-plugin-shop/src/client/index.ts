@@ -1,5 +1,5 @@
 /**
- * Shop settings surface, browser half — one tab in `settings.plugins.tab`
+ * Shop settings surface, browser half — one Settings section (`settings.section`)
  * that browses the catalog, installs with acknowledgement, toggles
  * enablement, lists installed plugins, and restarts dsh after installs.
  * Mounts the shop Remote itself (the assembly does not know this package)
@@ -18,11 +18,12 @@ import { en, zh } from './locales.ts'
 import { refineAgainstModuleTable } from './module-table.ts'
 import { answeredByAnotherProcess } from './present.ts'
 import { noteBoot, registerRestartCarrier } from './restart-monitor.ts'
-import { ShopTab, type ShopTabInjected } from './ShopTab.tsx'
+import { ShopSection } from './ShopSection.tsx'
+import type { ShopTabInjected } from './ShopTab.tsx'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    /** Shop settings tab copy. */
+    /** Shop Settings section copy. */
     'settings.shop': ShopLocaleKey
   }
 }
@@ -84,7 +85,7 @@ export const inject = ['remote', 'slots', 'locale']
  * `ctx.remote.shop` would expose, read here without the inject gate. */
 type ShopRemoteNamespace = TypertRemoteNamespaceMap['shop']
 
-/** Mount the shop Remote and contribute the shop tab. */
+/** Mount the shop Remote and contribute the shop's Settings section. */
 export async function apply(ctx: ClientContext): Promise<void> {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-plugin-shop: dictionaries')
 
@@ -278,12 +279,17 @@ export async function apply(ctx: ClientContext): Promise<void> {
     updateStart: async args => { warmCatalog = null; return unwrap(await ns.updateStart(args)) },
   })
 
-  ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
-    name: 'settings.plugins.tab',
+  // Its own Settings section, directly after Built-in plugins (design §5.1,
+  // amended 2026-10-15). dsh's built-in sections take General 0, Models 10,
+  // Built-in plugins 15 and Agent presets 20 on every harness the matrix runs,
+  // so 17 lands between the last two. The shell draws the nav icon from its
+  // own table of ids; `shop` is not in it and gets the default gear.
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section',
     id: 'shop',
-    order: 20,
-    label: () => ctx.locale.bind(NS)('tab'),
+    order: 17,
+    label: () => ctx.locale.bind(NS)('title'),
     locale: NS,
     inject: injected,
-  }, ShopTab))
+  }, ShopSection))
 }

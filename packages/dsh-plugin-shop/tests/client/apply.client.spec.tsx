@@ -37,7 +37,7 @@ interface ShopStub {
   version?: () => Promise<unknown>
 }
 
-/** Boot apply() against a stubbed remote and return the shop tab entry's
+/** Boot apply() against a stubbed remote and return the shop section entry's
  * injected face — the real unwrap from index.ts sits between the wire
  * envelopes the stub returns and the injected methods the tab calls.
  *
@@ -49,12 +49,16 @@ async function boot(shop: ShopStub = {}, modules?: unknown) {
   ctx.provide('locale', locale)
   if (modules !== undefined) ctx.provide('modules', modules)
   await ctx.plugin(SlotRegistry).await()
-  // The settings surface declares the tab seat at boot in the real shell;
-  // declaring it here makes the tab's inject callback run synchronously
-  // inside apply (the inventory browser spec declares it the same way).
+  // The settings shell declares the section seat at boot, and the Built-in
+  // plugins section declares the tab seat inside it. Declaring both makes the
+  // section's inject callback run synchronously inside apply, and gives the
+  // "no shop tab" assertion a declared seat to read rather than an absent one.
   ctx.slots.register({
     name: 'root',
-    children: { 'settings.plugins.tab': { kind: 'list', scope: 'root' } },
+    children: {
+      'settings.section': { kind: 'list', scope: 'root' },
+      'settings.plugins.tab': { kind: 'list', scope: 'root' },
+    },
   } as never, () => null)
   const mounted: unknown[] = []
   const disposer = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
@@ -77,27 +81,63 @@ async function boot(shop: ShopStub = {}, modules?: unknown) {
     updateStart: shop.updateStart ?? vi.fn(),
   })
   await apply(ctx)
-  const entry = ctx.slots.entries('settings.plugins.tab').find(e => e.options.id === 'shop')
-  if (entry === undefined) throw new Error('the shop tab entry is not registered')
+  const entry = ctx.slots.entries('settings.section').find(e => e.options.id === 'shop')
+  if (entry === undefined) throw new Error('the shop section entry is not registered')
   const injected = entry.inject!() as unknown as ShopTabInjected
   return { ctx, locale, mounted, disposer, injected }
 }
 
 describe('shop client apply', () => {
-  it('mounts the shop remote, registers the locale namespace and the shop tab', async () => {
+  it('mounts the shop remote, registers the locale namespace and the shop section', async () => {
     const { ctx, locale, mounted, disposer } = await boot()
 
     expect(inject).toEqual(['remote', 'slots', 'locale'])
     expect(mounted).toHaveLength(1)
     expect(mounted[0]).toMatchObject({ package: 'dsh-plugin-shop' })
-    expect(locale.bind(NS)('tab')).toBe('Plugin shop')
+    expect(locale.bind(NS)('title')).toBe('Plugin shop')
     // The runtime augments the cordis Context with the slots service; the
     // accessor is typed, so there is no cast to the class.
     const slots = ctx.slots
-    expect(slots.entries('settings.plugins.tab').some(entry => entry.options.id === 'shop')).toBe(true)
+    const section = slots.entries('settings.section').find(entry => entry.options.id === 'shop')
+    if (section === undefined) throw new Error('the shop section entry is not registered')
+    // Directly after Built-in plugins (15) and before Agent presets (20), the
+    // orders dsh's built-in sections take on every harness the matrix runs.
+    expect(section.options.order).toBeGreaterThan(15)
+    expect(section.options.order).toBeLessThan(20)
+    // No longer a tab inside Built-in plugins (design §5.1, amended 2026-10-15).
+    expect(slots.entries('settings.plugins.tab').some(entry => entry.options.id === 'shop')).toBe(false)
     await ctx.fiber.dispose()
-    expect(slots.entries('settings.plugins.tab')).toHaveLength(0) // the tab is disposed with the context
+    expect(slots.entries('settings.section')).toHaveLength(0) // the section is disposed with the context
     expect(disposer).toHaveBeenCalled()
+  })
+
+  it('names the section in the locale current when the shell reads it', async () => {
+    // dsh re-reads `label` when the locale changes; a label captured once at
+    // registration would keep the nav in the language Settings opened in.
+    const { ctx, locale } = await boot()
+    const section = ctx.slots.entries('settings.section').find(entry => entry.options.id === 'shop')
+    if (section === undefined) throw new Error('the shop section entry is not registered')
+    const label = section.options.label as () => string
+    expect(label()).toBe('Plugin shop')
+    locale.setLocale('zh')
+    expect(label()).toBe('插件商店')
+  })
+
+  it('registers the same section identity on a fresh apply, as a self-update hot swap does', async () => {
+    // The settings shell keeps the open section's id across a re-registration
+    // and falls back to its first row only while that id is absent, so a
+    // stable id is what returns an open panel to the shop.
+    const first = await boot()
+    const before = first.ctx.slots.entries('settings.section').find(entry => entry.options.id === 'shop')
+    await first.ctx.fiber.dispose()
+    // Every boot registers its restart path on the page store, as afterEach
+    // notes; clear it between the two boots the same way.
+    resetRestartMonitor()
+    const second = await boot()
+    const after = second.ctx.slots.entries('settings.section').find(entry => entry.options.id === 'shop')
+    if (before === undefined || after === undefined) throw new Error('the shop section entry is not registered')
+    expect(after.options.id).toBe(before.options.id)
+    expect(after.options.order).toBe(before.options.order)
   })
 
   it('routes a host business rejection through the real unwrap as a resolved value', async () => {
