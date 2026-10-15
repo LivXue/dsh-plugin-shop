@@ -3,7 +3,7 @@
 # dsh-plugin-shop
 
 **The plugin shop for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — browse a catalog of
-dsh plugins, install one with a single confirmation, and manage what you have, from a tab inside Settings.
+dsh plugins, install one with a single click, and manage what you have, from its own page in Settings.
 
 [![npm](https://img.shields.io/npm/v/dsh-plugin-shop?logo=npm&color=cb3837)](https://www.npmjs.com/package/dsh-plugin-shop)
 [![plugins](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2FLivXue.github.io%2Fdsh-plugin-shop%2Fv1%2Findex.json&query=count&label=plugins&color=blue)](https://LivXue.github.io/dsh-plugin-shop/v1/index.json)
@@ -35,15 +35,15 @@ install them once with `npm install -g @deepseek-ai/dsh pnpm` and verify with
 # holds back very recent releases, so a bare `add dsh-plugin-shop` can hand
 # you an older version for a while. Pin the current release — refresh it
 # with `npm view dsh-plugin-shop version`.
-dsh plugin --profile web add dsh-plugin-shop@0.8.6
+dsh plugin --profile web add dsh-plugin-shop@0.8.7
 # or straight through npx, nothing installed:
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.6
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.7
 ```
 
 Replace `web` with your profile if you use another one. Then restart `dsh` once — a
 newly added bundle is not applied to a running process — and open
 
-> **Settings → Built-in plugins → Plugin shop** (the section is called *Plugins* on dsh 0.1.5)
+> **Settings → Plugin shop**
 
 You land on a shelf of plugin cards with a search box. The first load reads the catalog
 over the network and can take a few seconds; a shimmering skeleton stands in until the
@@ -67,7 +67,7 @@ ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 cooldown, and deterministic installs are the point of the agent path.
 
 ```sh
-dsh plugin --profile <profile> add dsh-plugin-shop@0.8.6
+dsh plugin --profile <profile> add dsh-plugin-shop@0.8.7
 ```
 
 **3. Verify — do not skip this.** A zero exit from step 2 means pnpm resolved the
@@ -104,11 +104,11 @@ bundle is not.
 
 <table>
 <tr>
-<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/gate-light.png" alt="Installing an unreviewed plugin requires an explicit acknowledgement"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/gate-light.png" alt="A plugin your dsh would refuse to install says why on its card"></td>
 <td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-dark.png" alt="The same shelf in the dark theme"></td>
 </tr>
 <tr>
-<td align="center"><sub>Installing an unreviewed plugin requires an explicit acknowledgement</sub></td>
+<td align="center"><sub>A plugin your dsh would refuse to install says why on its card</sub></td>
 <td align="center"><sub>The same shelf in the dark theme</sub></td>
 </tr>
 </table>
@@ -117,8 +117,8 @@ bundle is not.
 
 | | |
 |---|---|
-| **Browse & search** | Thousands of plugins, harvested from the whole public npm registry by the `dsh-plugin` and `deepseek-harness` keywords and from GitHub repositories using them as topics — shown with the author's own summary when they declared one, and sorted into seven categories |
-| **Install** | One confirmation. An unreviewed plugin requires an explicit acknowledgement first — an installed plugin holds the same privileges as a built-in one |
+| **Browse & search** | Thousands of plugins, harvested from the whole public npm registry by the `dsh-plugin` and `deepseek-harness` keywords and from GitHub repositories using them as topics — shown with the author's own summary when they declared one, and sorted into seven categories. The shelf orders them by stars, by newest listing or by latest update, the last two with the date on each card, and a version says what it is: an npm version, a GitHub release, or a GitHub commit |
+| **Install** | One click, no dialog. Where your dsh would refuse the install — a harness peer its version does not accept, or a name another installed plugin already holds — the card shows a red label in the button's place and says why, with dsh's own exemption command for a refused peer. Long red text folds to two lines behind Show more |
 | **Enable / disable** | Applies to an installed plugin without a restart. A plugin with a browser half also needs the open page reloaded, and the shop offers the button when it does |
 | **Installed state** | An installed plugin shows an Installed label on its card — or an Update button when the catalog has a newer version — plus an Uninstall button; the Installed filter in the category bar shows only installed plugins |
 | **Size & author** | Each card shows what installing the plugin puts on disk, next to the account that published it — npm's own unpacked figure, so it matches the package's npm page |
@@ -162,8 +162,7 @@ The full pipeline diagram lives in the
 [repository README](https://github.com/LivXue/dsh-plugin-shop#-how-it-fits-together).
 
 One thing this does **not** do: no listing has been read by a human. `verified.yml` is
-empty today, every entry is community-tier, and every install asks you to acknowledge
-that. Mechanical filtering is not review.
+empty today, and every entry is community-tier. Mechanical filtering is not review.
 
 ## 🧩 How it is put together
 

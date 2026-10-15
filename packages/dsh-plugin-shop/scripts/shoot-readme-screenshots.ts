@@ -49,21 +49,22 @@ function readmePin(): string {
 }
 
 const SHOP_VERSION = process.env.SHOP_VERSION ?? readmePin()
+// A whole install spec in place of the pinned version, for a dry run before
+// publishing: a local `pnpm pack` tarball, say. The pictures it writes carry
+// that build's version badge, so they are for looking at, never committing.
+const SHOP_SPEC = process.env.SHOP_SPEC ?? `dsh-plugin-shop@${SHOP_VERSION}`
 // Resolved from this module, never the cwd: an absolute path baked in from one
 // machine, or a cwd-relative one, both write the images somewhere else the
 // moment the script is run from anywhere but where it was written.
 const OUT = process.env.OUT_DIR ?? fileURLToPath(new URL('../../../docs/images', import.meta.url))
-const GATE_TARGET = '@ahggg/dsh-side-chat'
 
-// `plugins` is the Settings section the shop's tab lives under. dsh 0.1.5
-// labels it Plugins / 插件; 0.1.7 relabels the same section Built-in plugins /
-// 内置插件 (`dsh-client-ui-settings-plugins`), because the plain word now names
-// the sidebar's own plugin-manager page. Anchored, so it matches nothing else.
-// `firstRun` opens the toast dsh-client-ui-workspace raises when it cannot
+// `shop` names the shop's own Settings section, a nav entry since 0.8.7
+// (design §5.1, amended 2026-10-15), where it used to be a tab inside Built-in
+// plugins. `firstRun` opens the toast dsh-client-ui-workspace raises when it cannot
 // create the default workspace (`defaultWorkspace.failed`); see waitForFirstRun.
 const T = {
-  en: { settings: 'Settings', plugins: /^(?:Plugins|Built-in plugins)$/, shop: 'Plugin shop', install: 'Install', search: 'Search plugins', firstRun: 'Unable to create default workspace' },
-  zh: { settings: '设置', plugins: /^(?:插件|内置插件)$/, shop: '插件商店', install: '安装', search: '搜索插件', firstRun: '无法创建默认工作区' },
+  en: { settings: 'Settings', shop: 'Plugin shop', firstRun: 'Unable to create default workspace' },
+  zh: { settings: '设置', shop: '插件商店', firstRun: '无法创建默认工作区' },
 } as const
 type Lang = keyof typeof T
 
@@ -182,8 +183,7 @@ async function openShop(page: Page, url: string, lang: Lang, dshVersion: string)
   await page.getByRole('button', { name: t.settings, exact: true }).click({ timeout: 30_000 })
   const dialog = page.getByRole('dialog', { name: t.settings })
   await dialog.waitFor({ state: 'visible', timeout: 15_000 })
-  await dialog.getByRole('button', { name: t.plugins }).click()
-  await dialog.getByRole('tab', { name: t.shop }).click()
+  await dialog.getByRole('button', { name: t.shop, exact: true }).click()
   await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 30_000 })
   // The live catalog is a network fetch: wait for real entries, not the frame.
   await dialog.locator('[data-shop-entry]').first().waitFor({ state: 'visible', timeout: 90_000 })
@@ -202,18 +202,21 @@ async function main(): Promise<void> {
     const dshVersion = dsh.stdout.trim()
     const notice = welcomeNoticeVersion(dshVersion)
     seedSettings(home, 'en', 'light', notice)
-    console.log(`installing dsh-plugin-shop@${SHOP_VERSION} — the version the READMEs tell a reader to run`)
-    const add = spawnSync('dsh', ['plugin', '--profile', 'web', 'add', `dsh-plugin-shop@${SHOP_VERSION}`],
+    console.log(`installing ${SHOP_SPEC} — the version the READMEs tell a reader to run, unless SHOP_SPEC says otherwise`)
+    const add = spawnSync('dsh', ['plugin', '--profile', 'web', 'add', SHOP_SPEC],
       { env: { ...process.env, DSH_HOME: home }, encoding: 'utf8' })
     if (add.status !== 0) throw new Error(`install failed:\n${add.stdout}\n${add.stderr}`)
     if (gte(dshVersion, '0.1.7-rc.1')) seedNoDefaultWorkspace(home)
 
     browser = await chromium.launch()
+    // Each light pass also shoots a refused install. Its file keeps the name it
+    // had while it showed the acknowledgement dialog, which 0.8.7 removed, so
+    // the READMEs of every release still link to a picture that exists.
     const plan = [
-      { lang: 'en', theme: 'light', shelf: 'shelf-light.png', gate: 'gate-light.png' },
-      { lang: 'en', theme: 'dark', shelf: 'shelf-dark.png', gate: null },
-      { lang: 'zh', theme: 'light', shelf: 'shelf-light.zh.png', gate: 'gate-light.zh.png' },
-      { lang: 'zh', theme: 'dark', shelf: 'shelf-dark.zh.png', gate: null },
+      { lang: 'en', theme: 'light', shelf: 'shelf-light.png', refused: 'gate-light.png' },
+      { lang: 'en', theme: 'dark', shelf: 'shelf-dark.png', refused: null },
+      { lang: 'zh', theme: 'light', shelf: 'shelf-light.zh.png', refused: 'gate-light.zh.png' },
+      { lang: 'zh', theme: 'dark', shelf: 'shelf-dark.zh.png', refused: null },
     ] as const
 
     for (const step of plan) {
@@ -227,20 +230,21 @@ async function main(): Promise<void> {
         await page.screenshot({ path: join(OUT, step.shelf) })
         console.log(`  wrote ${step.shelf}`)
 
-        if (step.gate !== null) {
+        if (step.refused !== null) {
           const dialog = page.getByRole('dialog', { name: t.settings })
-          // Scoped to the shop's own panel: from dsh 0.2 the Plugin list tab
-          // mounted beside it carries a search box with the same placeholder,
-          // and a dialog-wide lookup then matches two inputs.
-          await dialog.locator('[data-shop-tab]').getByPlaceholder(t.search).fill(GATE_TARGET)
-          const card = dialog.locator(`[data-shop-entry="${GATE_TARGET}"]`)
+          // The first card on the shelf that the dsh doing the shooting would
+          // refuse: the red label in the Install button's place, its
+          // explanation unfolded. Nothing is clicked but the fold, so nothing
+          // installs; a shelf with no such card in its first page throws.
+          const card = dialog.locator('[data-shop-entry]').filter({ has: page.locator('[data-shop-refused]') }).first()
           await card.waitFor({ state: 'visible', timeout: 30_000 })
-          await card.getByRole('button', { name: t.install, exact: true }).first().click()
-          await dialog.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 15_000 })
+          const fold = card.locator('[data-shop-fold]').first()
+          if (await fold.count() > 0 && (await fold.getAttribute('aria-expanded')) !== 'true') await fold.click()
+          await card.evaluate(el => { el.scrollIntoView({ block: 'center' }) })
           await page.waitForTimeout(800)
-          await assertUnobstructed(page, step.gate, t.settings)
-          await page.screenshot({ path: join(OUT, step.gate) })
-          console.log(`  wrote ${step.gate}`)
+          await assertUnobstructed(page, step.refused, t.settings)
+          await page.screenshot({ path: join(OUT, step.refused) })
+          console.log(`  wrote ${step.refused} (${String(await card.getAttribute('data-shop-entry'))})`)
         }
         await page.close()
       } finally {

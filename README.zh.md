@@ -33,15 +33,15 @@
 # 已全局安装 dsh 时，直接运行以下命令。
 # 请明确指定版本号：pnpm 11 默认限制安装刚发布的版本，省略版本号可能会装到旧版。
 # 下方使用当前版本，可用 `npm view dsh-plugin-shop version` 查询最新版本。
-dsh plugin --profile web add dsh-plugin-shop@0.8.6
+dsh plugin --profile web add dsh-plugin-shop@0.8.7
 # 也可以通过 npx 执行安装命令：
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.6
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.7
 ```
 
 如果你使用的配置不是 `web`，请将命令中的 `web` 换成对应的 profile 名称。安装后需要重启 `dsh`，
 新插件才会生效。随后打开：
 
-> **设置 → 内置插件 → 插件商店**（dsh 0.1.5 上这一栏叫“插件”）
+> **设置 → 插件商店**
 
 ### 🤖 通过 Agent 安装
 
@@ -53,7 +53,7 @@ npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.6
 ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 
 # 2. 指定版本安装，避免 pnpm 的发布冷却期影响结果，确保安装的是预期版本
-dsh plugin --profile <profile> add dsh-plugin-shop@0.8.6
+dsh plugin --profile <profile> add dsh-plugin-shop@0.8.7
 
 # 3. 确认安装结果；上一步退出码为 0 只说明 pnpm 成功解析了包
 dsh plugin --profile <profile> list --depth 0   # 列表中应包含 dsh-plugin-shop
@@ -74,11 +74,11 @@ dsh --profile <profile>
 
 <table>
 <tr>
-<td width="50%"><img src="docs/images/gate-light.zh.png" alt="安装未经评审的插件前，需要手动确认"></td>
+<td width="50%"><img src="docs/images/gate-light.zh.png" alt="dsh 会拒绝安装的插件，卡片上会说明原因"></td>
 <td width="50%"><img src="docs/images/shelf-dark.zh.png" alt="深色主题下的插件商店"></td>
 </tr>
 <tr>
-<td align="center"><sub>安装未经评审的插件前，需要手动确认</sub></td>
+<td align="center"><sub>dsh 会拒绝安装的插件，卡片上会说明原因</sub></td>
 <td align="center"><sub>深色主题下的插件商店</sub></td>
 </tr>
 </table>
@@ -167,14 +167,14 @@ flowchart LR
 |---|---|
 | **公开收录，社区参与** | 在 npm 发布时添加 `dsh-plugin` 或 `deepseek-harness` 关键字，即可被采集流程发现，无需向本项目另行提交申请。 |
 | **变更可追溯** | 每天的目录变更都会提交到 Git，可以逐项查看差异和历史记录。 |
-| **明确标注信任等级** | 人工评审结果仅对评审时的具体版本有效，其他版本不能沿用，避免作者通过一次评审后发布恶意版本。**目前 `registry/verified.yml` 为空，尚无经过人工评审的收录条目。所有插件都属于社区级别，每次安装前都需要确认。** 自动筛查不能代替对插件代码的人工审查。 |
+| **明确标注信任等级** | 人工评审结果仅对评审时的具体版本有效，其他版本不能沿用，避免作者通过一次评审后发布恶意版本。**目前 `registry/verified.yml` 为空，尚无经过人工评审的收录条目，所有插件都属于社区级别。** 自动筛查不能代替对插件代码的人工审查。 |
 | **界面权限受限** | 浏览器界面没有网络和文件系统访问权限。即使界面遭到入侵，也不会因此获得运行时权限。 |
 
 ## 🚫 使用须知
 
 > **插件商店不提供沙箱隔离。** dsh 插件加载后，可以通过完整的 `ctx` 访问文件系统、执行 shell
-> 命令，以及访问发往模型的请求。安装插件意味着你信任它使用这些权限。商店会在安装前说明这些
-> 权限，但不会限制插件运行时的能力。
+> 命令，以及访问发往模型的请求。安装插件意味着你信任它使用这些权限。商店不会限制插件运行时
+> 的能力。
 
 商店不展示下载量、评分或评论，也不会提供“从任意 URL 安装”的功能。如有需要，请使用
 `dsh plugin add`，并自行决定是否允许执行构建脚本、是否固定到某个 commit。

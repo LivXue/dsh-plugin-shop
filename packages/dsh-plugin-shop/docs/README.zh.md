@@ -2,8 +2,8 @@
 
 # dsh-plugin-shop
 
-**[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的插件商店** —— 在设置页的一个标签里
-浏览 dsh 插件目录、一次确认完成安装、管理已装插件。
+**[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的插件商店** —— 在设置页里自己的一栏
+浏览 dsh 插件目录、一键安装、管理已装插件。
 
 [![npm](https://img.shields.io/npm/v/dsh-plugin-shop?logo=npm&color=cb3837)](https://www.npmjs.com/package/dsh-plugin-shop)
 [![plugins](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2FLivXue.github.io%2Fdsh-plugin-shop%2Fv1%2Findex.json&query=count&label=plugins&color=blue)](https://LivXue.github.io/dsh-plugin-shop/v1/index.json)
@@ -33,15 +33,15 @@ pnpm`，并用 `dsh --version` 和 `pnpm --version` 验证。
 # dsh 在 PATH 上（全局安装）。必须钉版本号：pnpm 11 会拦下刚发布的新版本，
 # 不写版本号的裸安装可能给你旧版。下面是当前版本——用
 # `npm view dsh-plugin-shop version` 查最新值。
-dsh plugin --profile web add dsh-plugin-shop@0.8.6
+dsh plugin --profile web add dsh-plugin-shop@0.8.7
 # 或全程走 npx，什么都不装：
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.6
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.7
 ```
 
 如果你用的不是 `web` profile，把它换成你自己的。然后重启一次 `dsh`——新加的 bundle 不会作用于
 已在运行的进程——再打开
 
-> **设置 → 内置插件 → 插件商店**（dsh 0.1.5 上这一栏叫“插件”）
+> **设置 → 插件商店**
 
 进去是一片插件卡片货架，带搜索框。首次加载要联网读目录，可能要等几秒，期间由一层扫光骨架占位。
 
@@ -60,7 +60,7 @@ ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 **2. 安装。** 钉版本号——显式钉版本能绕过 pnpm 的发布冷却期，确定性安装本来也是 agent 路径的要点。
 
 ```sh
-dsh plugin --profile <profile> add dsh-plugin-shop@0.8.6
+dsh plugin --profile <profile> add dsh-plugin-shop@0.8.7
 ```
 
 **3. 验证——这步别省。** 第 2 步返回 0 只说明 pnpm 解析到了这个包，不代表 profile 会加载它。
@@ -95,11 +95,11 @@ dsh plugin --profile <profile> list --depth 0
 
 <table>
 <tr>
-<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/gate-light.zh.png" alt="安装未评审插件需要显式确认"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/gate-light.zh.png" alt="dsh 会拒绝安装的插件，卡片上会说明原因"></td>
 <td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-dark.zh.png" alt="深色主题下的同一片货架"></td>
 </tr>
 <tr>
-<td align="center"><sub>安装未评审插件需要显式确认</sub></td>
+<td align="center"><sub>dsh 会拒绝安装的插件，卡片上会说明原因</sub></td>
 <td align="center"><sub>深色主题下的同一片货架</sub></td>
 </tr>
 </table>
@@ -108,8 +108,8 @@ dsh plugin --profile <profile> list --depth 0
 
 | | |
 |---|---|
-| **浏览与搜索** | 数千个插件，按 `dsh-plugin` 与 `deepseek-harness` 关键字从整个公共 npm registry 采集（外加把这些关键字用作 topic 的 GitHub 仓库）；作者若自己声明了简介就用作者原话，并归入七个分类 |
-| **安装** | 一次确认。未经评审的插件需先显式确认——装上之后它与内置插件权限等同 |
+| **浏览与搜索** | 数千个插件，按 `dsh-plugin` 与 `deepseek-harness` 关键字从整个公共 npm registry 采集（外加把这些关键字用作 topic 的 GitHub 仓库）；作者若自己声明了简介就用作者原话，并归入七个分类。货架可以按星标、最新上架或最近更新排序，后两种在卡片上标出日期；版本号会写明自己是什么：npm 版本、GitHub 发布还是 GitHub 提交 |
+| **安装** | 一次点击，没有对话框。本机 dsh 会拒绝的安装——harness peer 不被当前版本接受，或名字已被另一个已装插件占用——卡片会在按钮的位置显示红色标签并写明原因，peer 被拒时附上 dsh 自己的豁免命令。较长的红字折叠成两行，点「展开」看全文 |
 | **启停** | 对已安装插件生效，无需重启。带浏览器半边的插件还需要刷新当前页面，商店会在需要时给出按钮 |
 | **已安装状态** | 已安装的插件在卡片上显示「已安装」，目录有新版本时改为「更新」按钮，另有「卸载」按钮；顶部「已安装」筛选只看已装插件 |
 | **体积与作者** | 每张卡片显示装上它会占多少磁盘，紧挨着发布账号——用的是 npm 自己的解包体积，所以和该包的 npm 页面对得上 |
@@ -144,7 +144,7 @@ dsh plugin --profile <profile> list --depth 0
 [仓库 README](https://github.com/LivXue/dsh-plugin-shop/blob/main/README.zh.md#-整体是怎么串起来的)。
 
 有一件事它**没有**做：没有任何一条收录被人读过。今天 `verified.yml` 是空的，全部条目都是社区
-层，每次安装都会要求你确认。机械筛查不等于评审。
+层。机械筛查不等于评审。
 
 ## 🧩 结构
 

@@ -35,15 +35,15 @@ are available with `dsh --version` and `pnpm --version`.
 # Specify the version: pnpm 11 restricts newly published releases by default,
 # so omitting the version may install an older release. The current version
 # is shown below; check for updates with `npm view dsh-plugin-shop version`.
-dsh plugin --profile web add dsh-plugin-shop@0.8.6
+dsh plugin --profile web add dsh-plugin-shop@0.8.7
 # Alternatively, run the installation command through npx:
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.6
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.7
 ```
 
 Replace `web` with your profile name if you use a different one. Restart `dsh` after
 installation to load the new plugin, then open:
 
-> **Settings → Built-in plugins → Plugin shop** (the section is called *Plugins* on dsh 0.1.5)
+> **Settings → Plugin shop**
 
 ### 🤖 Installation with an agent
 
@@ -57,7 +57,7 @@ ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 
 # 2. Specify the version to bypass pnpm's release cooldown and ensure
 #    that the expected version is installed.
-dsh plugin --profile <profile> add dsh-plugin-shop@0.8.6
+dsh plugin --profile <profile> add dsh-plugin-shop@0.8.7
 
 # 3. Verify the installation; exit code 0 above only means pnpm resolved the package.
 dsh plugin --profile <profile> list --depth 0   # The output should include dsh-plugin-shop.
@@ -78,11 +78,11 @@ see the [package README](packages/dsh-plugin-shop/README.md#failure-modes).
 
 <table>
 <tr>
-<td width="50%"><img src="docs/images/gate-light.png" alt="Confirmation is required before installing an unreviewed plugin"></td>
+<td width="50%"><img src="docs/images/gate-light.png" alt="A plugin your dsh would refuse to install says why on its card"></td>
 <td width="50%"><img src="docs/images/shelf-dark.png" alt="The plugin shop in dark mode"></td>
 </tr>
 <tr>
-<td align="center"><sub>Confirmation is required before installing an unreviewed plugin</sub></td>
+<td align="center"><sub>A plugin your dsh would refuse to install says why on its card</sub></td>
 <td align="center"><sub>The plugin shop in dark mode</sub></td>
 </tr>
 </table>
@@ -181,7 +181,7 @@ Two details are useful to understand:
 |---|---|
 | **Open to the community** | Publish to npm with the `dsh-plugin` or `deepseek-harness` keyword to make your plugin discoverable. No separate submission to this project is needed. |
 | **Traceable changes** | Catalog updates are committed to Git daily, so you can inspect each change and its history. |
-| **Explicit trust levels** | A human review applies only to the exact version reviewed. Other versions cannot inherit that status, preventing an author from using an earlier review to endorse a malicious release. **Currently, `registry/verified.yml` is empty: no catalog entries have been reviewed by a human. All plugins are in the community tier and require confirmation before each installation.** Automated screening cannot replace a review of the plugin's code. |
+| **Explicit trust levels** | A human review applies only to the exact version reviewed. Other versions cannot inherit that status, preventing an author from using an earlier review to endorse a malicious release. **Currently, `registry/verified.yml` is empty: no catalog entries have been reviewed by a human, and all plugins are in the community tier.** Automated screening cannot replace a review of the plugin's code. |
 | **Restricted UI permissions** | The browser interface has no network or filesystem access. Compromising it does not grant runtime privileges. |
 
 ## 🚫 Permissions and limitations
@@ -189,7 +189,7 @@ Two details are useful to understand:
 > **The shop does not provide sandbox isolation.** Once loaded, a dsh plugin has
 > access to the full `ctx`, including your filesystem, shell, and requests sent to
 > the model. Installing a plugin means trusting it with these permissions. The shop
-> explains them before installation, but does not restrict what a running plugin can do.
+> does not restrict what a running plugin can do.
 
 The shop does not display download counts, ratings, or reviews, and it will not offer
 installation from arbitrary URLs. For that, use `dsh plugin add` and decide whether to
