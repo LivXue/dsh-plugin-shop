@@ -109,10 +109,21 @@ describe('class references', () => {
     // the singular while the stylesheet defined only the plural
     // `.outdatedVersions`, so the two version labels on an outdated row
     // rendered with no class and therefore no separation between them.
-    const tsx = readFileSync(new URL('../../src/client/ShopTab.tsx', import.meta.url), 'utf8')
+    const tsx = ['ShopTab.tsx', 'ShopSection.tsx']
+      .map(file => readFileSync(new URL(`../../src/client/${file}`, import.meta.url), 'utf8'))
+      .join('\n')
     const used = new Set([...tsx.matchAll(/\bcss\.([A-Za-z_][\w]*)/g)].map(m => m[1]))
     const defined = definedClasses(css)
     expect([...used].filter(name => name !== undefined && !defined.has(name))).toEqual([])
+  })
+
+  it('keeps the section in the 760px column Built-in plugins drew it in', () => {
+    // Inside Built-in plugins the shop sat in dsh's `.section` (max-width
+    // 760px); as its own section it keeps that width rather than stretching
+    // across a wide panel (design §5.1, amended 2026-10-15). The intro reads
+    // label-secondary: dsh's own label-tertiary measures 3.71:1 on white.
+    expect(rules.get('.section') ?? '').toMatch(/max-width:\s*760px/)
+    expect(rules.get('.sectionIntro') ?? '').toMatch(/color:\s*var\(--dsw-alias-label-secondary\)/)
   })
 
   it('separates the two version labels on an outdated row', () => {

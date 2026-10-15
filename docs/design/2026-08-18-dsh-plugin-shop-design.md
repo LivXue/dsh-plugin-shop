@@ -115,7 +115,19 @@ China-side reader at 0.03 MB/s against an npm mirror's 12.53 MB/s. See
 **S — `packages/dsh-plugin-shop/` (the npm package `dsh-plugin-shop`, two halves)**
 
 - **Host half**, `ShopGateway`: registers the `shop/*` Remote. It is the only place that touches the network or the profile directory.
-- **Client half**, `dsh-plugin-shop/client`: follows the `dsh.client` convention, mounts the shop's Remote through `ctx.remote.$mount()`, and contributes one tab to `settings.plugins.tab`. **It touches neither the network nor the filesystem.**
+- **Client half**, `dsh-plugin-shop/client`: follows the `dsh.client` convention, mounts the shop's Remote through `ctx.remote.$mount()`, and contributes one Settings section to `settings.section` (a tab in `settings.plugins.tab` until 2026-10-15; see the amendment below). **It touches neither the network nor the filesystem.**
+
+**Amendment (2026-10-15): the shop is a Settings section, not a tab inside Plugins.** At the maintainer's request, the client half registers one entry into `settings.section` with `id: 'shop'` and `order: 17`, and contributes nothing to `settings.plugins.tab`.
+
+- **The seat.** dsh's settings contract (`dsh-client-ui-settings`, `contract/slots.d.ts`) gives one settings page per `settings.section` entry, carrying the registrant's `id`, `order` (the nav position) and localized `label`; "adding a setting never means editing the shell". The built-in pages register there too. Measured on 0.1.5-rc.3, 0.1.7-rc.2 and 0.2.0-rc.2, their orders are the same: General 0, Models 10, Built-in plugins (`plugins`) 15, Agent presets 20, plus account at −10 from 0.1.7. Order 17 puts the shop directly after Built-in plugins on all three.
+- **The page.** The nav label and the page title are "Plugin shop" / "插件商店". Under the title stands one intro line, as on the Models and Built-in plugins pages: "Browse, install, and update plugins from the catalog." / "浏览、安装和更新目录中的插件。" The shop's body below it is unchanged. The intro takes label-secondary, not the label-tertiary dsh's own intro lines use: tertiary measures 3.71:1 on the light theme's white, secondary 5.80:1.
+- **The icon.** The settings shell draws each nav icon itself, from a fixed table keyed by section id (`navIcon` in `dsh-client-ui-settings-general`). An id outside it, `shop` included, gets the default gear, the icon General has. No registration option supplies an icon, and the gear ships (maintainer's decision, 2026-10-15).
+- **What Built-in plugins shows.** Without the shop, `settings.plugins.tab` holds dsh's own tabs. From 0.1.7-rc.2 on that is "Plugin list" alone, whose page dsh renders without a tab bar; 0.1.5-rc.3 also registers "Plugin configuration" at order 0, so its bar keeps two tabs and opens on that one.
+- **Self-update.** A self-update hot swap re-registers the section, and an open panel stays on the shop section across it.
+- **Leaving the section.** The shell renders only the open section, so leaving the shop for any other section, Built-in plugins included, unmounts it, and coming back mounts it afresh. What the page held in its own state goes with it: the search text, the filters, and an install's progress or done view, the restart offer included; the install itself runs on in the host. Until 2026-10-15 a hop from the shop's tab to another tab of Built-in plugins kept the shop mounted, because that section keeps a visited tab mounted, hidden, on 0.1.5-rc.3, 0.1.7-rc.2 and 0.2.0-rc.2 alike; leaving for another section unmounted it then too. Keeping those views across a remount means lifting them out of the page's components, as the restart handoff already is (§8), and is not part of this amendment.
+- **Unchanged:** the host half, every RPC and every install flow.
+- **Not verified:** dsh below 0.1.5, which is outside the CI matrix, as before.
+- **Moves with the 0.8.7 promotion:** the READMEs' path "Settings → Built-in plugins → Plugin shop" and the screenshot script's navigation. Both describe, or shoot, the published `latest`.
 
 **Upstream dsh: no change required for v0.**
 

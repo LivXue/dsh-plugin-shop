@@ -79,6 +79,32 @@
   overflow-clip-margin: 3px;
 }
 
+/* The shop's Settings page (design §5.1, amended 2026-10-15): the frame dsh's
+ * Built-in plugins page draws around its body, where the shop sat as a tab,
+ * measured from dsh 0.2.0-rc.2 — a 760px column, 12px gaps, an 18px semibold
+ * title and a 13px intro line. The intro takes label-secondary, not the
+ * label-tertiary dsh's own intro lines use: tertiary measures 3.71:1 on the
+ * light theme's white, secondary 5.80:1. */
+.section {
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.sectionIntro {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dsw-alias-label-secondary);
+}
+
 .stateLine {
   margin: 0;
   color: var(--dsw-alias-label-primary);

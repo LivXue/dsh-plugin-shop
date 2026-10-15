@@ -112,8 +112,10 @@
  * - settings modal: `page.getByRole('dialog', { name: '设置' })`
  * - plugins section: `dialog.getByRole('button', { name: PLUGINS_SECTION })` —
  *   插件 on 0.1.5-rc.3, 内置插件 from 0.1.7-rc.2 on (see the constant)
- * - shop tab: `dialog.getByRole('tab', { name: '插件商店' })` — the panel
- *   renders lazily, only after the tab is activated
+ * - shop section: `openShopSection` (`dialog.getByRole('button', { name:
+ *   '插件商店', exact: true })`), its own nav entry since 2026-10-15 — the
+ *   panel renders lazily, only once the section is selected; its title
+ *   `[data-shop-section-title]` and intro `[data-shop-section-intro]`
  * - shop panel + entry: `[data-shop-tab]`, `[data-shop-entry=<name>]`
  * - install: `[data-shop-install]` (one click, no dialog; a refused install
  *   shows `[data-shop-refused]` instead of the button); failure view: 安装失败
@@ -136,7 +138,8 @@
  * - restart gate: `[data-shop-restart-gate]`, which the §8 offer opens, its
  *   title the first paragraph and 取消 closing it again
  * - uninstall: `[data-shop-uninstall]`; done view `[data-shop-uninstall-done]`
- * - loader inventory tab: `dialog.getByRole('tab', { name: '插件列表' })`, then
+ * - loader inventory: `openPluginList` (插件列表: a bare page from 0.1.7-rc.2
+ *   on; on 0.1.5-rc.3 the second tab of a bar that opens on 插件配置), then
  *   `expandGlobalPlane` — the tab splits into 会话插件 (the selected agent
  *   preset's composition rows) and 全局插件 (the Loader entries), and the second
  *   is COLLAPSED whenever a preset roster exists. The `include:` prefix on the
@@ -219,17 +222,39 @@ async function expandGlobalPlane(dialog: Locator): Promise<void> {
   await dialog.locator('[data-plugin-entry^="include:"]').first()
     .waitFor({ state: 'visible', timeout: 15_000 })
 }
+
+/** Open the shop's own Settings section (design §5.1, amended 2026-10-15): a
+ * nav entry directly after 插件/内置插件 since the shop stopped being a tab
+ * inside that section. The panel renders lazily, only once it is selected. */
+async function openShopSection(dialog: Locator): Promise<void> {
+  await dialog.getByRole('button', { name: '插件商店', exact: true }).click()
+  await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+}
+
+/** Open 插件/内置插件 on its plugin list. Without the shop, 0.1.7-rc.2 and
+ * later hold 插件列表 alone there and render its page with no tab bar;
+ * 0.1.5-rc.3 also registers 插件配置, at order 0, so its bar opens on that
+ * tab and 插件列表 has to be pressed. Waits for whichever renders, and
+ * presses the tab only where it exists and is not already selected. */
+async function openPluginList(dialog: Locator): Promise<void> {
+  await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
+  const tab = dialog.getByRole('tab', { name: '插件列表' })
+  await tab.or(dialog.getByRole('button', { name: /全局插件/ })).first()
+    .waitFor({ state: 'visible', timeout: 15_000 })
+  if (await tab.count() > 0 && (await tab.getAttribute('aria-selected')) !== 'true') await tab.click()
+}
 import { zh } from '../../src/client/locales.ts'
 import { startCatalogServer, type CatalogServer } from '../fixtures/catalog-server.ts'
 import { startLocalRegistry, type LocalRegistry } from '../fixtures/local-registry.ts'
 import { welcomeNoticeVersion } from '../fixtures/onboarding.ts'
 
 /** The Settings section that renders `settings.plugins.tab`, where the shop
- * tab lives. Harness 0.1.5-rc.3 labels it 插件; 0.1.7-rc.2 relabels the same
- * section 内置插件 (`dsh-client-ui-settings-plugins`, `nav`), because 插件 now
- * names the sidebar's own plugin-manager page. The slot and the tab inside it
- * are unchanged, so the one anchored alternation keeps every call site valid
- * on both harnesses without matching anything else in the dialog. */
+ * was a tab until 2026-10-15; since then it holds dsh's own tabs alone.
+ * Harness 0.1.5-rc.3 labels it 插件; 0.1.7-rc.2 relabels the same section
+ * 内置插件 (`dsh-client-ui-settings-plugins`, `nav`), because 插件 now names
+ * the sidebar's own plugin-manager page. The slot is the same on each
+ * harness, so the one anchored alternation keeps every call site valid on
+ * all of them without matching anything else in the dialog. */
 const PLUGINS_SECTION = /^(?:插件|内置插件)$/
 
 /**
@@ -1044,11 +1069,13 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
    * tagged as enabled, and in the active phase. Written once for the two
    * cases that read it, so both read liveness the same way.
    *
-   * Read on a FRESH page. 0.1.7-rc.2 keeps a Settings tab it has shown
-   * mounted (hidden, holding the snapshot it fetched when first shown),
-   * and 插件列表 is the section's first tab, so the main page's dialog,
-   * opened before the install, fetched it then. Clicking back to it shows
-   * that list. A new page opens Settings from nothing on either harness.
+   * Read on a FRESH page, which opens Settings from nothing on either
+   * harness. 0.1.7-rc.2 keeps a Settings tab it has shown mounted (hidden,
+   * holding the snapshot it fetched when first shown), and while the shop
+   * was a tab beside 插件列表 (until 2026-10-15) the main page's dialog had
+   * shown the list before the install, so clicking back to it showed that
+   * stale snapshot. A fresh page does not depend on what the main page's
+   * dialog has shown.
    */
   const expectLiveInInventory = async (entryId: string): Promise<void> => {
     const probe = await browser!.newPage({ locale: 'zh-CN', viewport: { width: 1680, height: 1000 } })
@@ -1059,8 +1086,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await probe.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const inventory = probe.getByRole('dialog', { name: '设置' })
       await inventory.waitFor({ state: 'visible', timeout: 10_000 })
-      await inventory.getByRole('button', { name: PLUGINS_SECTION }).click()
-      await inventory.getByRole('tab', { name: '插件列表' }).click()
+      await openPluginList(inventory)
       await expandGlobalPlane(inventory)
       const liveEntry = inventory.locator(`[data-plugin-entry="${entryId}"]`)
       await liveEntry.waitFor({ state: 'visible', timeout: 15_000 })
@@ -1277,13 +1303,25 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         .waitFor({ state: 'visible', timeout: 30_000 })
       await expectNoDialog(app)
 
-      // Settings → 插件 → 插件商店: the pinned live-app selectors.
+      // Settings → 插件商店, its own section: the pinned live-app selectors.
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog = app.getByRole('dialog', { name: '设置' })
       await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-      await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
-      await dialog.getByRole('tab', { name: '插件商店' }).click() // panel renders lazily
-      await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+      // Directly after 插件/内置插件 and before Agent 预设 (design §5.1,
+      // amended 2026-10-15), in the order the shell draws its nav.
+      const navLabels = (await dialog.locator('nav button').allTextContents()).map(text => text.trim())
+      const shopAt = navLabels.indexOf('插件商店')
+      expect(shopAt, JSON.stringify(navLabels)).toBeGreaterThan(0)
+      expect(navLabels[shopAt - 1] ?? '', JSON.stringify(navLabels)).toMatch(PLUGINS_SECTION)
+      expect(navLabels[shopAt + 1] ?? '', JSON.stringify(navLabels)).toBe('Agent 预设')
+      await openShopSection(dialog)
+      expect(await dialog.getByRole('button', { name: '插件商店', exact: true }).getAttribute('aria-current')).toBe('true')
+      expect(await dialog.locator('[data-shop-section-title]').textContent()).toBe('插件商店')
+      expect(await dialog.locator('[data-shop-section-intro]').textContent()).toBe('浏览、安装和更新目录中的插件。')
+      await checkTextContrast(app, [
+        { label: 'section title', locator: dialog.locator('[data-shop-section-title]') },
+        { label: 'section intro', locator: dialog.locator('[data-shop-section-intro]') },
+      ])
 
       // The fixture entry renders with the community tier badge (§6.1).
       const card = dialog.locator('[data-shop-entry="dsh-e2e-fixture-plugin"]')
@@ -1464,7 +1502,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const app = page!
 
       // The settings dialog from the first spec is still open on the 插件商店
-      // tab; the live fixture card renders alongside the failed-install card.
+      // section; the live fixture card renders alongside the failed-install card.
       const dialog = app.getByRole('dialog', { name: '设置' })
       const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
@@ -1507,12 +1545,19 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const liveId = managerPath ? 'include:e2e-live' : 'include:shop:mkt-e2e-live'
       await expectLiveInInventory(liveId)
 
-      // The settled mutation re-reads installed() in place. Switching away
-      // and back to the already-mounted shop must expose the installed
-      // actions without closing Settings or pressing Refresh (G-9).
-      await dialog.getByRole('tab', { name: '插件列表' }).click()
-      await dialog.getByRole('tab', { name: '插件商店' }).click()
-      await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+      // Switching to 插件/内置插件 and back must show the installed actions
+      // without closing Settings or pressing Refresh. Since 2026-10-15 the
+      // shop is its own section and the shell renders only the open one, so
+      // the return is a fresh mount; the in-place re-read itself (G-9) is the
+      // unit case in ShopTab.client.spec.tsx.
+      await openPluginList(dialog)
+      // What Built-in plugins holds without the shop (design §5.1, amended
+      // 2026-10-15), read on every leg: 0.1.7-rc.2 and later register
+      // 插件列表 alone and draw its page with no tab bar; 0.1.5-rc.3 also
+      // registers 插件配置, at order 0, so its bar keeps two tabs.
+      const pluginTabs = (await dialog.getByRole('tab').allTextContents()).map(text => text.trim())
+      expect(pluginTabs).toEqual(gte(launchedDshVersion, '0.1.7-rc.2') ? [] : ['插件配置', '插件列表'])
+      await openShopSection(dialog)
       const card2 = dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]')
       await card2.waitFor({ state: 'visible', timeout: 15_000 })
       const uninstall = card2.locator('[data-shop-uninstall]')
@@ -1579,8 +1624,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog3 = app.getByRole('dialog', { name: '设置' })
       await dialog3.waitFor({ state: 'visible', timeout: 10_000 })
-      await dialog3.getByRole('button', { name: PLUGINS_SECTION }).click()
-      await dialog3.getByRole('tab', { name: '插件列表' }).click()
+      await openPluginList(dialog3)
       await expandGlobalPlane(dialog3)
       expect(await dialog3.locator(`[data-plugin-entry="${liveId}"]`).count()).toBe(0)
     },
@@ -1594,15 +1638,13 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const app = page!
 
       // Close the dialog left open by the previous spec, then reopen on the
-      // shop tab for the config fixture's card.
+      // shop section for the config fixture's card.
       const dialog0 = app.getByRole('dialog', { name: '设置' })
       await dialog0.locator('.VOzbGW_close').click()
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog = app.getByRole('dialog', { name: '设置' })
       await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-      await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
-      await dialog.getByRole('tab', { name: '插件商店' }).click()
-      await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+      await openShopSection(dialog)
       const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-config"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
 
@@ -1640,8 +1682,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
         const dialog2 = app.getByRole('dialog', { name: '设置' })
         await dialog2.waitFor({ state: 'visible', timeout: 10_000 })
-        await dialog2.getByRole('button', { name: PLUGINS_SECTION }).click()
-        await dialog2.getByRole('tab', { name: '插件列表' }).click()
+        await openPluginList(dialog2)
         await expandGlobalPlane(dialog2)
         expect(await dialog2.locator('[data-plugin-entry="include:shop:mkt-e2e-config"]').count()).toBe(0)
       }
@@ -1656,17 +1697,15 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const app = page!
 
       // Close the dialog left open by the previous spec, then reopen on the
-      // shop tab for the peer fixture's card (same reopen sequence as the
+      // shop section for the peer fixture's card (same reopen sequence as the
       // previous spec's start: the settings modal was left on 插件列表 on the
-      // CLI path, and on the shop tab through the plugin manager).
+      // CLI path, and on the shop section through the plugin manager).
       const dialog0 = app.getByRole('dialog', { name: '设置' })
       await dialog0.locator('.VOzbGW_close').click()
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog = app.getByRole('dialog', { name: '设置' })
       await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-      await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
-      await dialog.getByRole('tab', { name: '插件商店' }).click()
-      await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+      await openShopSection(dialog)
       const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-peer"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
 
@@ -1943,16 +1982,14 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const app = page!
 
       // Close the dialog left open by the previous spec, then reopen on the
-      // shop tab for the client fixture's card (same reopen sequence as the
+      // shop section for the client fixture's card (same reopen sequence as the
       // previous two specs' start).
       const dialog0 = app.getByRole('dialog', { name: '设置' })
       await dialog0.locator('.VOzbGW_close').click()
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog = app.getByRole('dialog', { name: '设置' })
       await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-      await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
-      await dialog.getByRole('tab', { name: '插件商店' }).click()
-      await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+      await openShopSection(dialog)
       const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-client"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
 
@@ -2054,9 +2091,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(browser).toBeDefined()
       const before = updateActivations().length
       // A page of its own, as the bundle-switch case at the end has: the
-      // update case opens Settings on the main page next, and 0.1.7 keeps a
-      // Settings tab it has shown mounted with the data and the filter it
-      // had.
+      // update case opens Settings on the main page next and expects that
+      // page as the client case's reload left it, with no dialog open and
+      // no shop holding this case's data or filter.
       const fresh = await browser!.newPage({ locale: 'zh-CN', viewport: { width: 1680, height: 1000 } })
       try {
         await fresh.goto(webUrl, { waitUntil: 'load' })
@@ -2065,9 +2102,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         await fresh.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
         const dialog = fresh.getByRole('dialog', { name: '设置' })
         await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-        await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
-        await dialog.getByRole('tab', { name: '插件商店' }).click()
-        await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+        await openShopSection(dialog)
 
         // The package is outdated here (1.0.0 installed, 2.0.0 in the
         // catalog), so its switch is drawn twice, on its card and on its row
@@ -2115,14 +2150,12 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const app = page!
 
       // The previous spec ended on a page reload, so no dialog is open: wait
-      // for the app's own chrome, then open the shop tab from scratch.
+      // for the app's own chrome, then open the shop section from scratch.
       await app.waitForSelector('[class*="frame"]', { timeout: 30_000 })
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog = app.getByRole('dialog', { name: '设置' })
       await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-      await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
-      await dialog.getByRole('tab', { name: '插件商店' }).click()
-      await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+      await openShopSection(dialog)
       const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-update"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
 
@@ -2209,9 +2242,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         await fresh.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
         const dialog = fresh.getByRole('dialog', { name: '设置' })
         await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-        await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
-        await dialog.getByRole('tab', { name: '插件商店' }).click()
-        await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+        await openShopSection(dialog)
         await dialog.locator('[data-shop-category-installed]').click()
         const row = dialog.locator('[data-shop-enabled-switch="dsh-shop-e2e-update"]')
         const toggle = row.locator('[data-shop-toggle]')
