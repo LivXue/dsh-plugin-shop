@@ -57,8 +57,10 @@ export interface UseKeyedFlows<TArgs> {
   /** Return every identity whose view `predicate` selects to `idle`, and
    * nothing else. Stable across renders like `resetFlow`; a call selecting
    * nothing leaves the registry — and so every flow and `pending` — exactly
-   * as it was. The tab clears the receipts dsh restarting under it settled
-   * with this (design §8, 2026-10-06 amendment). */
+   * as it was. The receipts dsh restarting under the page settled are
+   * cleared the same way at the store, through each registry's own
+   * `resetWhere` (page-store.ts `noteRestarted`; design §8, 2026-10-06
+   * amendment). */
   resetWhere: (predicate: (view: InstallView) => boolean) => void
   /**
    * The identities whose flow is not `idle` — asked by the shelf, which has

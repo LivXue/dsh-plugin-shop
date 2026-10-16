@@ -251,7 +251,7 @@ reload starts with no store.
 | Install and uninstall flows per identity: the view (running, done, failed, rejected, with log and phase) and the set whose start is in flight | `useKeyedFlows` |
 | The self-update flow | `useUpdateSelf` |
 | Each installed row's owed notice (reload or restart) | each row's `owed` |
-| A pending reverdict, and a settle count that tells a mounted page to re-read the installed list | `request`, `mutations` |
+| A pending reverdict and a count of those raised, and a settle count that tells a mounted page to re-read the installed list | `request`, `mutations` |
 
 ### 5.3 What it does not keep
 
@@ -271,11 +271,17 @@ through `reduceInstall`. A terminal status does at store level what the tab's
 settle callbacks do today:
 
 - an install that ends `done` resets that identity's uninstall receipt;
-- an uninstall that ends `done` resets the identity's install receipt and
-  records the package as removed by this page (`noteUninstalled`, with the
-  name the uninstall was started with);
+- an uninstall that ends `done` resets the identity's install receipt, drops
+  the notices its switches owed on every surface (a reinstall draws fresh
+  switches under the same keys), and records the package as removed by this
+  page (`noteUninstalled`, with the name the uninstall was started with);
 - either one ending `done` sets the pending reverdict and bumps the settle
   count, and a failed install bumps the count only.
+
+A receipt is a view that has stopped running. A flow of the other kind still
+running for the identity, such as an uninstall pressed while an update ran, is
+left to settle by its own poll: resetting it would drop every later answer for
+it, its settle included.
 
 A mounted page reacts at once. An unmounted page finds the pending reverdict
 on its next mount, and its first catalog request is then a reverdict. The
@@ -283,6 +289,12 @@ first verdicts it shows are therefore judged after the mutation, never
 replayed from a stash taken while the install ran. `index.ts` drops the stash
 when a mutation starts, but a page mounted while the install ran would have
 refilled it with verdicts judged before the install landed.
+
+The pending reverdict clears only when the answer to the request made for it
+lands, a failed answer included, so a page left before then leaves it for its
+next mount. The store counts every reverdict raised, and an answer clears only
+the latest: a request made before a later settle cannot have judged that
+settle, so the page asks again.
 
 ### 5.5 dsh restarted under the page
 
@@ -293,8 +305,11 @@ count. A mounted page also takes the fresh version answer, as it does today.
 
 ### 5.6 The React side
 
-Components subscribe with `useSyncExternalStore`. The flow accessors keep the
-contracts `useKeyedFlows` has, and the existing tests pin them:
+Components subscribe with `useSyncExternalStore`. A switch's owed notice has a
+channel of its own (`subscribeOwed`, `getOwed`), apart from the page snapshot
+the shop body subscribes to, so a notice re-renders its switch and never the
+shelf. The flow accessors keep the contracts `useKeyedFlows` has, and the
+existing tests pin them:
 
 - one flow object per key while that key's view and start state are unchanged;
 - `pending` keeps its identity while its membership is unchanged;
@@ -439,7 +454,12 @@ in the shop's button would reach dsh's page.
 - The catalog, the install gates and the install mechanics.
 - The restart handoff: `restart-monitor.ts`, its store's shape and its
   `sessionStorage` verdict.
-- What the shop body renders.
+- What the shop body renders, with one exception: a failed or rejected install
+  or update, and a failed self-update, offer Retry or Dismiss, a failed
+  uninstall offers Dismiss beside its Retry, and a finished install or update
+  offers Dismiss. The remount that once cleared those views is gone (§5.2), so
+  without them a failure would stand until a page reload, and so would a
+  finished install whose plugin was removed outside the shop.
 
 ## 9. Testing
 

@@ -443,10 +443,11 @@ export function answeredByAnotherProcess(previous: ShopVersionResult, next: Shop
 
 /**
  * Whether dsh restarting under the page settles this receipt: a change that
- * landed and was waiting for exactly that. The tab clears these once the
- * answers come from another process, and nothing else — a reload is still
- * owed by a page nobody reloaded, a failure still happened, and a flow still
- * running settles by its own poll.
+ * landed and was waiting for exactly that. The page store clears these
+ * (page-store.ts, `noteRestarted`) once the answers come from another
+ * process, and nothing else — a reload is still owed by a page nobody
+ * reloaded, a failure still happened, and a flow still running settles by
+ * its own poll.
  */
 export function settledByRestart(view: InstallView): boolean {
   return view.kind === 'done' && view.activation === 'restart'
