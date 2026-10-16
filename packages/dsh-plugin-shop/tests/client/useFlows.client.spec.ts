@@ -9,10 +9,15 @@
  * install a card IS showing has moved on - but to make its result stable per
  * key. These cases pin both halves of that: unchanged keys keep their object,
  * and a key whose own flow moves gets a new one.
+ *
+ * Every case renders `useRegistryFlows`, the hook the shop ships, over a
+ * registry that polls only while something subscribes: the registries of the
+ * store a tab builds for itself when none is handed over. The page store's
+ * own, which poll unwatched, have the last case.
  */
 import { act, cleanup, renderHook } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { useKeyedFlows, useRegistryFlows } from '../../src/client/useFlows.ts'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { useRegistryFlows } from '../../src/client/useFlows.ts'
 import { createFlowRegistry } from '../../src/client/flow-registry.ts'
 import { INSTALL_POLL_MS, type InstallView } from '../../src/client/present.ts'
 import type { ShopInstallStatusResult } from '../../src/host/index.ts'
@@ -22,8 +27,16 @@ afterEach(() => { vi.useRealTimers() })
 
 type Args = { installId: string }
 
-/** `begin` never rejects, per the hook's contract: a transport throw is the
- * caller's to fold into a view. */
+/** A registry over `begin` that polls only while watched, disposed when the
+ * case finishes, rendered through the hook. `begin` never rejects, per the
+ * registry's contract: a transport throw is the mapping's to fold into a
+ * view. */
+function rendered(begin: (args: Args) => Promise<InstallView>, installStatus: () => Promise<ShopInstallStatusResult>) {
+  const registry = createFlowRegistry<Args>(() => ({ begin, installStatus }), { pollUnwatched: false })
+  onTestFinished(() => { registry.dispose() })
+  return renderHook(() => useRegistryFlows(registry))
+}
+
 function bench() {
   const begin = vi.fn(async (args: Args): Promise<InstallView> =>
     ({ kind: 'running', installId: args.installId, log: [], phase: 'installing' }))
@@ -31,11 +44,10 @@ function bench() {
   // assertions with a terminal transition nobody asked for.
   const installStatus = vi.fn(async (): Promise<ShopInstallStatusResult> =>
     ({ found: true, state: 'running', log: [] }))
-  const rendered = renderHook(() => useKeyedFlows<Args>(begin, installStatus))
-  return { ...rendered, begin, installStatus }
+  return { ...rendered(begin, installStatus), begin, installStatus }
 }
 
-describe('useKeyedFlows: the flow identity a memo depends on', () => {
+describe('useRegistryFlows: the flow identity a memo depends on', () => {
   it('hands back one object for an idle key across re-renders', () => {
     const { result, rerender } = bench()
     const first = result.current.flowFor('npm:quiet')
@@ -73,9 +85,48 @@ describe('useKeyedFlows: the flow identity a memo depends on', () => {
     expect(result.current.flowFor('npm:busy').view).toEqual({ kind: 'idle' })
     expect(result.current.flowFor('npm:other')).toBe(other)
   })
+
+  it('keeps the pending set across a poll answer that moves a view but not who is pending', async () => {
+    // Every running status folds to a new view, so the poll answer replaces
+    // the key's flow; the shelf's Installed filter depends on `pending`, and
+    // re-ran over the whole catalog once a second while it followed `views`.
+    vi.useFakeTimers()
+    const { result, installStatus } = bench()
+    installStatus.mockResolvedValue({ found: true, state: 'running', log: ['fetching'] })
+    await act(async () => { await result.current.flowFor('npm:busy').start({ installId: 'i1' }) })
+    const pending = result.current.pending
+    const flow = result.current.flowFor('npm:busy')
+    await act(async () => { await vi.advanceTimersByTimeAsync(INSTALL_POLL_MS) })
+    expect(installStatus).toHaveBeenCalledTimes(1)
+    expect(result.current.flowFor('npm:busy')).not.toBe(flow)
+    expect(result.current.flowFor('npm:busy').view).toMatchObject({ kind: 'running', log: ['fetching'] })
+    expect(result.current.pending).toBe(pending)
+  })
+
+  it('builds its flows over the registry it is handed now, an idle key\'s included', async () => {
+    // An idle key's view is the one shared `IDLE_VIEW` in every registry, so
+    // only the closures tell two registries' flows apart: a flow kept from the
+    // first would start on a registry the hook no longer renders.
+    const registryOver = (begin: (args: Args) => Promise<InstallView>) => {
+      const registry = createFlowRegistry<Args>(() => ({ begin, installStatus: async () => ({ found: true, state: 'running', log: [] }) }), { pollUnwatched: false })
+      onTestFinished(() => { registry.dispose() })
+      return registry
+    }
+    const running = async (args: Args): Promise<InstallView> => ({ kind: 'running', installId: args.installId, log: [], phase: 'installing' })
+    const firstBegin = vi.fn(running)
+    const secondBegin = vi.fn(running)
+    const { result, rerender } = renderHook(({ registry }) => useRegistryFlows(registry), { initialProps: { registry: registryOver(firstBegin) } })
+    const idle = result.current.flowFor('npm:quiet')
+    rerender({ registry: registryOver(secondBegin) })
+    const flow = result.current.flowFor('npm:quiet')
+    expect(flow).not.toBe(idle)
+    await act(async () => { await flow.start({ installId: 'i1' }) })
+    expect(secondBegin).toHaveBeenCalledTimes(1)
+    expect(firstBegin).not.toHaveBeenCalled()
+  })
 })
 
-describe('useKeyedFlows: one start in flight per key', () => {
+describe('useRegistryFlows: one start in flight per key', () => {
   // Removing the §9.3 gate exposed a second click that the gate used to
   // absorb. The gate's confirm button was the only thing between "Install" and
   // the RPC, and a second press while the first was still unanswered reopened
@@ -95,8 +146,7 @@ describe('useKeyedFlows: one start in flight per key', () => {
     })
     const installStatus = vi.fn(async (): Promise<ShopInstallStatusResult> =>
       ({ found: true, state: 'running', log: [] }))
-    const rendered = renderHook(() => useKeyedFlows<Args>(begin, installStatus))
-    return { ...rendered, begin, release: () => { release?.() } }
+    return { ...rendered(begin, installStatus), begin, release: () => { release?.() } }
   }
 
   it('ignores a second start for the same key while the first is unanswered', async () => {
@@ -151,7 +201,7 @@ describe('useKeyedFlows: one start in flight per key', () => {
   })
 })
 
-describe('useKeyedFlows: resetting by what a flow holds', () => {
+describe('useRegistryFlows: resetting by what a flow holds', () => {
   // dsh restarting under the page settles every receipt that was waiting for
   // a restart, across every card at once; the tab names which by the view,
   // not by the key (design §8, 2026-10-06 amendment).
@@ -188,7 +238,7 @@ describe('useKeyedFlows: resetting by what a flow holds', () => {
   })
 })
 
-describe('useKeyedFlows: polling belongs to the component that owns the registry', () => {
+describe('useRegistryFlows: a registry that polls only while watched stops with its last subscriber', () => {
   it('stops polling when the component unmounts', async () => {
     vi.useFakeTimers()
     const { result, unmount, installStatus } = bench()

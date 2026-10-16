@@ -355,8 +355,9 @@ export interface InstallStatusShape {
 /** The install view state machine (§7.2). `phase` distinguishes the download
  * that runs ahead of the per-profile mutex from the install that holds it.
  * It rides the `running` kind rather than adding a kind of its own: every
- * `view.kind === 'running'` site — `useInstall.ts`'s poll collection among
- * them — must keep treating a downloading install as live. */
+ * `view.kind === 'running'` site — the flow registry's poll collection
+ * (flow-registry.ts) among them — must keep treating a downloading install
+ * as live. */
 export type InstallView =
   | { kind: 'idle' }
   | { kind: 'rejected'; code: InstallRejectionCode; detail: string }

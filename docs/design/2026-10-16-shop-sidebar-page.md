@@ -1,12 +1,14 @@
 # The shop's own sidebar page — design
 
-Status: **approved in conversation, not built** (2026-10-16). LivXue started
-0.9.0 on 2026-10-15 and took each decision in §2 between then and
-2026-10-16. The work lands as two pull requests, the page store first (§5) and
-the sidebar page second (§4, §6, §7). When the second lands, it amends §5.1 of
+Status: **approved in conversation; the page store (§5) built, the sidebar
+page not** (2026-10-16). LivXue started 0.9.0 on 2026-10-15 and took each
+decision in §2 between then and 2026-10-16. The work lands as two pull
+requests, the page store first (§5) and the sidebar page second (§4, §6, §7).
+When the second lands, it amends §5.1 of
 `2026-08-18-dsh-plugin-shop-design.md`, whose 2026-10-15 amendment made the
-shop a Settings section and whose "Leaving the section" bullet this design
-answers. English only, per convention.
+shop a Settings section; the first already amends that amendment's "Leaving
+the section" bullet, which its page store makes false (§10). English only, per
+convention.
 
 Every harness fact below was read in the installed bundles of dsh 0.1.5-rc.3,
 0.1.7-rc.2 and 0.2.0-rc.2 (`.claude/worktrees/.dsh0{15,17,20}-prefix`) on
@@ -238,8 +240,9 @@ header explains), and the page store sits beside it for the same reason.
 **Lifetime.** Each `apply` creates a new store. A re-applied bundle is a new
 page, as `warmCatalog` and `pageRemoved` in `index.ts` already treat it.
 Before replacing a predecessor's store, `apply` reads its hand-over facts
-(§6) and disposes it, which stops its timer and drops its listeners. A page
-reload starts with no store.
+(§6) and disposes it, which stops its timer and drops its listeners (that
+read is part 2; part 1 disposes the predecessor's store without reading it).
+A page reload starts with no store.
 
 ### 5.2 What it keeps
 
@@ -308,8 +311,8 @@ count. A mounted page also takes the fresh version answer, as it does today.
 Components subscribe with `useSyncExternalStore`. A switch's owed notice has a
 channel of its own (`subscribeOwed`, `getOwed`), apart from the page snapshot
 the shop body subscribes to, so a notice re-renders its switch and never the
-shelf. The flow accessors keep the contracts `useKeyedFlows` has, and the
-existing tests pin them:
+shelf. The flow accessors, `useRegistryFlows`, keep the contracts
+`useKeyedFlows` had, and `useFlows.client.spec.ts` pins them on that hook:
 
 - one flow object per key while that key's view and start state are unchanged;
 - `pending` keeps its identity while its membership is unchanged;
@@ -536,9 +539,10 @@ On all three harnesses:
 
 ## 10. Documentation and release
 
-- **The spec.** The second pull request adds an amendment to §5.1 of the main
-  design that points here, and marks the 2026-10-15 amendment's "Leaving the
-  section" bullet as superseded.
+- **The spec.** The first pull request amends the 2026-10-15 amendment's
+  "Leaving the section" bullet, since its code is what makes that bullet
+  false; the second adds the 2026-10-16 amendment to §5.1 of the main design,
+  pointing here.
 - **The promotion commit** moves the four READMEs' "Settings → Plugin shop"
   and the screenshot script's navigation, as the 0.8.7 promotion did, because
   READMEs track `latest`. The six screenshots are reshot from the published
