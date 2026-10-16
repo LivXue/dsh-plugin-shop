@@ -236,17 +236,24 @@ The store lives in `page-store.ts`, on
 The registry symbol is the one thing a hot-swapped module instance shares with
 the instance it replaced; that is why `restart-monitor.ts` lives there (its
 header explains), and the page store sits beside it for the same reason.
+Reading the key checks the schema (`readPageStore`): the key holds nothing, a
+store of this schema, or another schema's object. A later shop's store, met
+after a downgrade, is the last of these, and this shop never reads it as its
+own; it stops one only through a `dispose` it has.
 
 **Lifetime.** Each `apply` creates a new store. A re-applied bundle is a new
 page, as `warmCatalog` and `pageRemoved` in `index.ts` already treat it.
 Before replacing a predecessor's store, `apply` reads its hand-over facts
 (§6) and disposes it, which stops its timer and drops its listeners (that
 read is part 2; part 1 disposes the predecessor's store without reading it).
-A page reload starts with no store.
+A disposed store, its flow registries included, publishes nothing and
+registers no listener again, so nothing in a hot swap's window changes it, a
+start that answers late included; what it held stays readable. A page reload
+starts with no store.
 
 ### 5.2 What it keeps
 
-| Kept across leaving and returning | Held today by |
+| Kept across leaving and returning | Held before the page store by |
 |---|---|
 | Search text, category, shelf order, "hide incompatible", the number of cards shown | `ShopTabBody` state |
 | The scroll position (§5.7) | nothing: Settings owned the scroll container |
@@ -268,10 +275,15 @@ A page reload starts with no store.
 
 ### 5.4 Who polls
 
-The store owns one interval, running while any flow is running, at
-`INSTALL_POLL_MS`. It polls each running install id and folds the status
-through `reduceInstall`. A terminal status does at store level what the tab's
-settle callbacks do today:
+The store owns one interval per kind of flow (install, uninstall,
+self-update), each running while a flow of its kind runs, at
+`INSTALL_POLL_MS`. Each polls its own running install ids on every tick and
+folds the status through `reduceInstall` in the order the requests were asked:
+every request takes a number, and an answer asked before one already folded
+for its flow is dropped, so two that crossed never put an older status over a
+newer one. A request that fails, or never answers, holds nothing back: the
+next tick asks again. A terminal status does at store level what the tab's
+settle callbacks did before the store:
 
 - an install that ends `done` resets that identity's uninstall receipt;
 - an uninstall that ends `done` resets the identity's install receipt, drops
@@ -286,6 +298,19 @@ running for the identity, such as an uninstall pressed while an update ran, is
 left to settle by its own poll: resetting it would drop every later answer for
 it, its settle included.
 
+A switch's notices also go when the installed list a page reads no longer
+holds its identity, on every surface. A plugin removed outside the shop,
+through dsh's Plugins page or `dsh plugin remove`, has no uninstall of this
+page to settle, and the list is its one witness; installing it again from the
+shop takes a list read that shows its Install button, so that read drops the
+notice first. Every drop is counted, and a toggle hands back the count it
+started at with its answer. An answer that lands after its identity left the
+profile re-creates nothing. A restart under the page (§5.5) leaves every
+answer standing: the page notes one only from the new process's version
+answer, and the old process sent its answers before it exited, so an answer
+that lands after the restart is noted is the new process's, and the restart it
+owes is real.
+
 A mounted page reacts at once. An unmounted page finds the pending reverdict
 on its next mount, and its first catalog request is then a reverdict. The
 first verdicts it shows are therefore judged after the mutation, never
@@ -297,7 +322,11 @@ The pending reverdict clears only when the answer to the request made for it
 lands, a failed answer included, so a page left before then leaves it for its
 next mount. The store counts every reverdict raised, and an answer clears only
 the latest: a request made before a later settle cannot have judged that
-settle, so the page asks again.
+settle, so the page asks again. A Refresh or Retry clicked while a reverdict is
+pending supersedes the request made for it, and carries its count instead: the
+host judges the click's request after the settle that raised the reverdict, so
+its answer clears it, while a failed one leaves it pending and the page asks
+for it again.
 
 ### 5.5 dsh restarted under the page
 
@@ -311,8 +340,15 @@ count. A mounted page also takes the fresh version answer, as it does today.
 Components subscribe with `useSyncExternalStore`. A switch's owed notice has a
 channel of its own (`subscribeOwed`, `getOwed`), apart from the page snapshot
 the shop body subscribes to, so a notice re-renders its switch and never the
-shelf. The flow accessors, `useRegistryFlows`, keep the contracts
-`useKeyedFlows` had, and `useFlows.client.spec.ts` pins them on that hook:
+shelf. A toggle reads `owedEpoch` when it starts and hands it to `setOwed` with
+its answer, and the shop body hands every installed list it reads to
+`noteInstalled` (§5.4). The expanded cards live on a channel of their own too
+(`subscribeExpanded`, `isExpanded`), outside the shelf view, so opening a card
+re-renders that card: a card's header toggles it (`toggleExpanded`), and
+`expand` opens one from outside it, leaving an open card open. A view change
+that changes nothing, such as a pill pressed again, publishes nothing. The
+flow accessors, `useRegistryFlows`, keep the contracts `useKeyedFlows` had,
+and `useFlows.client.spec.ts` pins them on that hook:
 
 - one flow object per key while that key's view and start state are unchanged;
 - `pending` keeps its identity while its membership is unchanged;
@@ -456,13 +492,23 @@ in the shop's button would reach dsh's page.
 - The host half, and §5.3's nine methods.
 - The catalog, the install gates and the install mechanics.
 - The restart handoff: `restart-monitor.ts`, its store's shape and its
-  `sessionStorage` verdict.
-- What the shop body renders, with one exception: a failed or rejected install
-  or update, and a failed self-update, offer Retry or Dismiss, a failed
+  `sessionStorage` verdict. Only its listener plumbing moves: it goes through
+  `listeners.ts`, which the page store and the flow registries share, while
+  the store's shape, its plain-`Set` `listeners` included, and its behaviour
+  are unchanged.
+- What the shop body renders, with two exceptions. First, a failed or rejected
+  install or update, and a failed self-update, offer Retry or Dismiss, a failed
   uninstall offers Dismiss beside its Retry, and a finished install or update
   offers Dismiss. The remount that once cleared those views is gone (§5.2), so
   without them a failure would stand until a page reload, and so would a
-  finished install whose plugin was removed outside the shop.
+  finished install whose plugin was removed outside the shop. Second, the
+  Installed view says nothing about the search while the installed list is
+  loading or has failed: the store keeps the filter, so a return can open on
+  that view before the list answers. While it loads, the shelf says it is
+  reading the installed list (`installedLoading`), a quiet line in the
+  register of the error's; when the list has failed, its own line reports
+  that and the shelf adds nothing. Either way an empty view no longer said
+  "No matching plugins." under an empty search box.
 
 ## 9. Testing
 
