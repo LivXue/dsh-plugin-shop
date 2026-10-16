@@ -42,6 +42,7 @@
  */
 
 import type { ShopRestartResult } from '../host/index.ts'
+import { listen, notify } from './listeners.ts'
 import { INSTALL_POLL_MS, RESTART_GRACE_MS, restartMonitorVerdict } from './present.ts'
 
 /** What this page is doing about a restart: waiting for the host to answer
@@ -86,6 +87,9 @@ interface Attempt {
 
 interface MonitorStore {
   state: RestartMonitorState | null
+  /** A plain `Set`, read and written in place through listeners.ts's
+   * functions: a 0.8.x predecessor's code holds it too, adding, deleting and
+   * iterating with its own spelling of the same three steps. */
   listeners: Set<() => void>
   /** Stops the running probe loop; null when none runs. */
   stop: (() => void) | null
@@ -114,7 +118,7 @@ function monitorStore(): MonitorStore {
 
 function settle(store: MonitorStore, state: RestartMonitorState | null): void {
   store.state = state
-  for (const listener of [...store.listeners]) listener()
+  notify(store.listeners)
 }
 
 /** sessionStorage key of the restart this tab last saw committed. Not the
@@ -186,9 +190,7 @@ export function readRestartMonitor(): RestartMonitorState | null {
 
 /** Be told when the page's restart changes state. */
 export function subscribeRestartMonitor(listener: () => void): () => void {
-  const store = monitorStore()
-  store.listeners.add(listener)
-  return () => { store.listeners.delete(listener) }
+  return listen(monitorStore().listeners, listener)
 }
 
 /**
