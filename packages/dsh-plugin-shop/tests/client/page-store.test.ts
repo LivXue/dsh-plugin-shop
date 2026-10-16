@@ -5,7 +5,7 @@
  * restarting under the page settles exactly what a restart settles.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createPageStore, INITIAL_VIEW, installPageStore, readPageStore, resetPageStore, type PageStoreDeps } from '../../src/client/page-store.ts'
+import { createPageStore, INITIAL_VIEW, installPageStore, readPageStore, resetPageStore, type PageStoreDeps, type ShopPageStore } from '../../src/client/page-store.ts'
 import { INSTALL_POLL_MS, SHOP_VISIBLE_BATCH } from '../../src/client/present.ts'
 import { SELF_UPDATE_KEY } from '../../src/client/useUpdateSelf.ts'
 import type { ShopInstallStatusResult } from '../../src/host/index.ts'
@@ -243,5 +243,15 @@ describe('the store on the page', () => {
     resetPageStore()
     expect(readPageStore()).toBeUndefined()
     first.dispose()
+  })
+
+  it('forgets a store of another shape without calling what it lacks', () => {
+    // A later shop's store, met after a downgrade, need not share this shape,
+    // which is why index.ts disposes a replaced one only through a `dispose`
+    // that exists. A reset that called a missing one would throw out of
+    // `afterEach` and bury the failure of the case that left it there.
+    installPageStore({ schema: 2 } as unknown as ShopPageStore)
+    expect(() => { resetPageStore() }).not.toThrow()
+    expect(readPageStore()).toBeUndefined()
   })
 })

@@ -1,12 +1,14 @@
 # The shop's own sidebar page — design
 
-Status: **approved in conversation, not built** (2026-10-16). LivXue started
-0.9.0 on 2026-10-15 and took each decision in §2 between then and
-2026-10-16. The work lands as two pull requests, the page store first (§5) and
-the sidebar page second (§4, §6, §7). When the second lands, it amends §5.1 of
+Status: **approved in conversation; the page store (§5) built, the sidebar
+page not** (2026-10-16). LivXue started 0.9.0 on 2026-10-15 and took each
+decision in §2 between then and 2026-10-16. The work lands as two pull
+requests, the page store first (§5) and the sidebar page second (§4, §6, §7).
+When the second lands, it amends §5.1 of
 `2026-08-18-dsh-plugin-shop-design.md`, whose 2026-10-15 amendment made the
-shop a Settings section and whose "Leaving the section" bullet this design
-answers. English only, per convention.
+shop a Settings section; the first already amends that amendment's "Leaving
+the section" bullet, which its page store makes false (§10). English only, per
+convention.
 
 Every harness fact below was read in the installed bundles of dsh 0.1.5-rc.3,
 0.1.7-rc.2 and 0.2.0-rc.2 (`.claude/worktrees/.dsh0{15,17,20}-prefix`) on
@@ -519,9 +521,10 @@ On all three harnesses:
 
 ## 10. Documentation and release
 
-- **The spec.** The second pull request adds an amendment to §5.1 of the main
-  design that points here, and marks the 2026-10-15 amendment's "Leaving the
-  section" bullet as superseded.
+- **The spec.** The first pull request amends the 2026-10-15 amendment's
+  "Leaving the section" bullet, since its code is what makes that bullet
+  false; the second adds the 2026-10-16 amendment to §5.1 of the main design,
+  pointing here.
 - **The promotion commit** moves the four READMEs' "Settings → Plugin shop"
   and the screenshot script's navigation, as the 0.8.7 promotion did, because
   READMEs track `latest`. The six screenshots are reshot from the published

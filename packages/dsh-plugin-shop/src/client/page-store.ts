@@ -86,7 +86,9 @@ export interface ShopPageStore {
   /** dsh restarted under the page (index.ts `onRestarted`). */
   noteRestarted: () => void
   /** Stop the flows' polling and drop every listener. Snapshots stay
-   * readable. */
+   * readable, and the store stays under its page key until the next `apply`
+   * replaces it: a successor reads what this instance left from there
+   * (design 2026-10-16-shop-sidebar-page §5.1, §6). */
   dispose: () => void
 }
 
@@ -234,9 +236,13 @@ export function installPageStore(store: ShopPageStore): ShopPageStore | undefine
   return previous
 }
 
-/** Test-only: dispose the page's store and forget it, as a reload does. */
+/** Test-only: dispose the page's store and forget it, as a reload does. Only
+ * a `dispose` that exists is called, as `apply` disposes the store it
+ * replaces (index.ts): a case that left a store of another shape must not
+ * have its cleanup throw over its own failure. */
 export function resetPageStore(): void {
   const page = globalThis as unknown as PageGlobal
-  page[STORE_KEY]?.dispose()
+  const held: { dispose?: unknown } | undefined = page[STORE_KEY]
+  if (typeof held?.dispose === 'function') held.dispose()
   delete page[STORE_KEY]
 }
