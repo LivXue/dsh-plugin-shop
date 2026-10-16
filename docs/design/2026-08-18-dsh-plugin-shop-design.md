@@ -936,6 +936,7 @@ With the fix, each of those three reloaded on its own on both dsh versions, with
   - it clears every receipt that was waiting for a restart: the self-update's, each card's install and uninstall, and each switch's;
   - it asks for the installed list and a fresh catalog verdict.
   A reload that was owed stays owed, since nothing reloaded the page.
+  **Amended 2026-10-16:** the client half tells the page store too, and the store clears those receipts, sets the pending reverdict and bumps the settle count whether or not a tab is mounted (`2026-10-16-shop-sidebar-page.md` §5.5).
 - **`restart.log` records the handoff itself**, not only the new process's output:
   - A UTC-stamped line records the commit, the pid the takeover waits on, and the command it runs.
   - The helper stamps a second line once that pid is gone, just before it starts the new dsh.

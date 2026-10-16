@@ -245,7 +245,7 @@ reload starts with no store.
 
 ### 5.2 What it keeps
 
-| Kept across leaving and returning | Held today by |
+| Kept across leaving and returning | Held before the page store by |
 |---|---|
 | Search text, category, shelf order, "hide incompatible", the number of cards shown | `ShopTabBody` state |
 | The scroll position (§5.7) | nothing: Settings owned the scroll container |
@@ -267,10 +267,11 @@ reload starts with no store.
 
 ### 5.4 Who polls
 
-The store owns one interval, running while any flow is running, at
-`INSTALL_POLL_MS`. It polls each running install id and folds the status
+The store owns one interval per kind of flow (install, uninstall,
+self-update), each running while a flow of its kind runs, at
+`INSTALL_POLL_MS`. Each polls its own running install ids and folds the status
 through `reduceInstall`. A terminal status does at store level what the tab's
-settle callbacks do today:
+settle callbacks did before the store:
 
 - an install that ends `done` resets that identity's uninstall receipt;
 - an uninstall that ends `done` resets the identity's install receipt and
