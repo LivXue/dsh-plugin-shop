@@ -4,14 +4,16 @@
  * details — never markup, so hostile npm descriptions cannot inject (spec
  * §11.3.4): no render path here may ever use dangerouslySetInnerHTML. */
 
-import { Component, memo, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
+import { Component, memo, useCallback, useEffect, useId, useMemo, useReducer, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, settledByRestart, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, utcDay, versionLabel, versionLabelKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, utcDay, versionLabel, versionLabelKey } from './present.ts'
+import { createPageStore, switchKey, type OwedNotice, type ShopPageStore, type SwitchSurface } from './page-store.ts'
 import { readRestartMonitor, requestRestart, subscribeRestartMonitor, type RestartMonitorState } from './restart-monitor.ts'
-import { useInstallFlows, type InstallFlow } from './useInstall.ts'
-import { useUninstallFlows, type UninstallFlow, type UseUninstallFlows } from './useUninstall.ts'
-import { useUpdateSelf } from './useUpdateSelf.ts'
+import { useRegistryFlows } from './useFlows.ts'
+import type { InstallFlow } from './useInstall.ts'
+import type { UninstallFlow, UseUninstallFlows } from './useUninstall.ts'
+import { useRegistrySelf } from './useUpdateSelf.ts'
 import { en, type ShopLocaleKey } from './locales.ts'
 import { expandZhQuery, tokenInText } from '../shared/zh-intents.ts'
 import { FoldableRedBlock } from './FoldableRedBlock.tsx'
@@ -62,14 +64,23 @@ export interface ShopTabInjected {
   /** Be told when the version answers start coming from another dsh process
    * — dsh restarted under the page, which nothing reloads — with the first
    * answer from it; returns the unsubscribe. The receipts a restart settles
-   * are the tab's to clear (design §8, 2026-10-06 amendment). Optional: a
-   * stub may not offer it. */
+   * are the page store's to clear (`noteRestarted`), which index.ts calls on
+   * every restart under the page, tab or no tab; the tab clears them itself
+   * only for the store it builds when none is handed over (design §8,
+   * 2026-10-06 amendment, and design 2026-10-16-shop-sidebar-page §5.5).
+   * Optional: a stub may not offer it. */
   onRestarted?: (listener: (fresh: ShopVersionResult) => void) => () => void
   updateStart: (args: { version: string }) => Promise<ShopUpdateResult>
   /** The §4 reload trigger, defaulted once at the tab root to a real page
    * reload. Injected so a test can observe it without touching jsdom's
    * non-writable `location.reload`. */
   reload?: () => void
+  /** The page's store (page-store.ts): the reader's place on the shelf and
+   * every flow, kept across leaving and returning (design
+   * 2026-10-16-shop-sidebar-page §5). Optional: without it the tab builds a
+   * store of its own, which lives and dies with the tab — how the tab
+   * behaved before the store existed, and what a stub gets. */
+  page?: ShopPageStore
 }
 
 /** Full component props assembled by the Settings slot renderer. */
@@ -89,8 +100,18 @@ export type ShopTabProps =
  * computed before the mutation does not survive it. Like a refresh, the
  * stale snapshot stays on screen while it runs, and a failed reverdict
  * leaves the screen exactly as it was, with no note — it was never a click
- * the reader made, so there is nothing to report failing. */
-type LoadRequest = { kind: 'initial' } | { kind: 'refresh' } | { kind: 'retry' } | { kind: 'reverdict' }
+ * the reader made, so there is nothing to report failing. A reverdict
+ * carries the page store's `reverdicts` count it was asked at, which its
+ * answer hands back to clear it. A refresh or a retry carries the count of
+ * a reverdict pending when it was clicked, or null: it supersedes that
+ * reverdict's request, and the host judges it after the settle that raised
+ * the reverdict, so its answer clears the reverdict, and a failure asks for
+ * it again. */
+type LoadRequest =
+  | { kind: 'initial' }
+  | { kind: 'refresh'; reverdicts: number | null }
+  | { kind: 'retry'; reverdicts: number | null }
+  | { kind: 'reverdict'; reverdicts: number }
 
 type CatalogState =
   | { kind: 'loading' }
@@ -122,7 +143,7 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, stars, order, shelfDay, installed, missing, harness, nameTakenBy, t, flow, uninstallFlow, restart, restartBlocked, reload, setEnabled, inInstalledView, restarts }: {
+const EntryCard = memo(function EntryCard({ entry, stars, order, shelfDay, installed, missing, harness, nameTakenBy, t, flow, uninstallFlow, restart, restartBlocked, reload, setEnabled, inInstalledView, page }: {
   entry: CatalogEntry
   stars: number | undefined
   /** The shelf's order, so the card can name the date it shows (design
@@ -155,10 +176,21 @@ const EntryCard = memo(function EntryCard({ entry, stars, order, shelfDay, insta
    * from the same `category` state `matched` reads — so the card and the
    * filter it renders under can never disagree about which view this is. */
   inInstalledView: boolean
-  /** How many times dsh has restarted under this page — see EnabledSwitch. */
-  restarts: number
+  /** The page's store: whether this card is expanded, and what the installed
+   * row's switch owes. */
+  page: ShopPageStore
 }): ReactNode {
-  const [open, setOpen] = useState(false)
+  const key = entryKey(entry)
+  // Whether the card is expanded: the page store's, so it outlives the card
+  // (design 2026-10-16-shop-sidebar-page §5.2), on a channel of its own, so
+  // opening it re-renders this card and never the shelf.
+  const open = useSyncExternalStore(page.subscribeExpanded, () => page.isExpanded(key))
+  // React attaches that subscription in a passive effect, after the commit
+  // that mounted the card, so a click before then notifies no listener. The
+  // card re-renders itself on its own click and reads the store's answer at
+  // once; with the subscription attached, React batches the two updates into
+  // one render.
+  const [, rerender] = useReducer((count: number) => count + 1, 0)
   const blockers = stateBlockers(blockersOf(missing, harness, nameTakenBy), t)
   const detailId = useId()
   const summary = entry.catalog?.summary
@@ -189,7 +221,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, order, shelfDay, insta
         className={css.entryHeader}
         aria-expanded={open}
         aria-controls={detailId}
-        onClick={() => setOpen(current => !current)}
+        onClick={() => { page.toggleExpanded(key); rerender() }}
       >
         <span className={css.name}>{entry.name}</span>
         <span className={css.badges}>
@@ -382,7 +414,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, order, shelfDay, insta
             )}
             {/* The hot enable/disable switch (§8) sits on every installed
              * row — current or outdated — and reads the inventory state. */}
-            <EnabledSwitch row={installed} t={t} setEnabled={setEnabled} restart={restart} restartBlocked={restartBlocked} reload={reload} restarts={restarts} />
+            <EnabledSwitch row={installed} surface="card" page={page} t={t} setEnabled={setEnabled} restart={restart} restartBlocked={restartBlocked} reload={reload} />
             <UninstallPanel name={entry.name} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} flow={uninstallFlow} />
           </>
         )}
@@ -561,17 +593,19 @@ function BlockerBadge({ blockers, t }: {
 
 /** One entry's install flow: the button (or the refused LABEL that stands in
  * its place), and the live view — running log, restart notice, failure detail,
- * rejection detail — driven by `useInstallFlows`. Shared by the catalog cards
- * (`variant: 'install'`) and the outdated rows' update button (`variant:
- * 'update'`, which drives the same install flow for `name@latest`).
+ * rejection detail — driven by the page store's install registry. Shared by
+ * the catalog cards (`variant: 'install'`) and the outdated rows' update
+ * button (`variant: 'update'`, which drives the same install flow for
+ * `name@latest`).
  *
  * There is no §9.3 dialog. Until 2026-10-14 a community entry opened an
  * acknowledgement gate first, and that gate was also the only thing standing
  * between a second press and a second RPC — it reopened instead of asking
  * again. What replaced it is one click that carries `acknowledged: true`, and
- * the in-flight guard in `useKeyedFlows`, which keeps a second press from
- * becoming a second RPC. The page states the dialog's facts nowhere since
- * 2026-10-15 (the shop design's §7 amendment of that date). */
+ * the flow registry's in-flight guard (flow-registry.ts, `starting`), which
+ * keeps a second press from becoming a second RPC. The page states the
+ * dialog's facts nowhere since 2026-10-15 (the shop design's §7 amendment of
+ * that date). */
 function InstallPanel({ target, tier, blockers, blockersStated = false, variant = 'install', flow, t, restart, restartBlocked, reload }: {
   /** The install request this panel drives, identity included. */
   target: InstallArgs
@@ -593,7 +627,24 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
   restartBlocked: RestartBlockedReason | null
   reload: () => void
 }): ReactNode {
-  const { view, start, starting } = flow
+  const { view, start, starting, reset } = flow
+  // One click installs. `acknowledged: true` is the click itself for an
+  // entry the community tier covers; a verified one installs without it,
+  // because there is nothing to acknowledge (§9.3). The host's check is
+  // unchanged, so a caller that skips this UI still has to say so. The idle
+  // button and a failed install's Retry send this one request.
+  const request: InstallArgs = { ...target, acknowledged: tier === 'verified' ? undefined : true }
+  // A refusal is one the host or dsh WILL make, and the client already holds
+  // the same verdict, so no button is offered for it: a disabled button reads
+  // as "try again later", and no later try can help. Two kinds refuse
+  // (`refusesInstall`): a taken name, and harness peers dsh itself refuses.
+  // Every other harness reason stays clickable — warn, never block (§4): the
+  // host installs those, the missing-components copy says "may", and an
+  // author's declared range is a claim about what they tested, not a refusal
+  // this shop may enforce. Read before the views, because a failed install's
+  // Retry is such a button too.
+  const refused = refusesInstall(blockers)
+  const word = blockerBadgeKey(blockers)
 
   if (view.kind === 'running') {
     return (
@@ -635,6 +686,16 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
         </p>
         {view.detail !== undefined && <p className={css.notice} data-shop-done-note>{view.detail}</p>}
         <ActivationOffer activation={view.activation} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} where="install" />
+        {/* The way out of `done`, as the uninstall receipt has. The page
+            store keeps this view for the page's life (design
+            2026-10-16-shop-sidebar-page §5.2), and on a card whose plugin is
+            no longer installed — removed through dsh's Plugins page or the
+            CLI — it stands where the Install button would: without this, a
+            `live` install, which offers nothing beside its notice, left the
+            shop no way to install the plugin again until a page reload. */}
+        <button type="button" className={css.cancelButton} data-shop-install-dismiss onClick={reset}>
+          {t('dismiss')}
+        </button>
       </div>
     )
   }
@@ -651,6 +712,24 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
             is its readable face. A non-empty detail is the host's published copy
             (§7.2 stderr plus the recovery hint) and renders verbatim. */}
         <p className={css.failedDetail}>{view.detail === '' ? t('installTransportFailed') : view.detail}</p>
+        {/* `failed` renders no Install button, and the page store keeps this
+            view for the page's life (design 2026-10-16-shop-sidebar-page
+            §5.2): the remount that once cleared it is gone, so without this
+            the failure stood until a page reload. The retry sends what the
+            idle button sent. When the entry is refused now (a refresh or a
+            reverdict since the failure found its name taken, or peers dsh
+            refuses), no retry can help, so the rejected view's Dismiss
+            stands in its place; dismissing lands the card on the idle
+            branch's refused label. */}
+        {refused && word !== null ? (
+          <button type="button" className={css.cancelButton} data-shop-install-dismiss onClick={reset}>
+            {t('dismiss')}
+          </button>
+        ) : (
+          <button type="button" className={css.installButton} data-shop-install-retry disabled={starting} onClick={() => { void start(request) }}>
+            {t('retry')}
+          </button>
+        )}
       </div>
     )
   }
@@ -659,22 +738,20 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
       <div className={css.installPanel}>
         <p className={css.rejectedCode}>{t(rejectionCodeKey(view.code))}</p>
         <p className={css.rejectedDetail}>{view.detail}</p>
+        {/* A refusal is the gate's answer about the catalog it judged, kept
+            for the page's life like every view (design
+            2026-10-16-shop-sidebar-page §5.2). Dismissing it returns the card
+            to whatever its blockers say now: the button, or the refused
+            label. */}
+        <button type="button" className={css.cancelButton} data-shop-install-dismiss onClick={reset}>
+          {t('dismiss')}
+        </button>
       </div>
     )
   }
   // idle: the install/update button, or — for an install that cannot proceed —
   // the label that stands in the button's place.
   const update = variant === 'update'
-  // A refusal is one the host or dsh WILL make, and the client already holds
-  // the same verdict, so no button is offered for it: a disabled button reads
-  // as "try again later", and no later try can help. Two kinds refuse
-  // (`refusesInstall`): a taken name, and harness peers dsh itself refuses.
-  // Every other harness reason stays clickable — warn, never block (§4): the
-  // host installs those, the missing-components copy says "may", and an
-  // author's declared range is a claim about what they tested, not a refusal
-  // this shop may enforce.
-  const refused = refusesInstall(blockers)
-  const word = blockerBadgeKey(blockers)
   const detail = blockers.map(blocker => blocker.text).join('\n')
   if (refused && word !== null) {
     return (
@@ -713,11 +790,7 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
         // wait cursor is the CSS's half of the same fact.
         disabled={starting}
         {...(update ? { 'data-shop-update': true } : { 'data-shop-install': true })}
-        // One click installs. `acknowledged: true` is the click itself for an
-        // entry the community tier covers; a verified one installs without it,
-        // because there is nothing to acknowledge (§9.3). The host's check is
-        // unchanged, so a caller that skips this UI still has to say so.
-        onClick={() => { void start({ ...target, acknowledged: tier === 'verified' ? undefined : true }) }}
+        onClick={() => { void start(request) }}
       >
         {t(update ? 'update' : 'install')}
       </button>
@@ -761,13 +834,12 @@ function UninstallPanel({ name, t, restart, restartBlocked, reload, flow }: {
   reload: () => void
   flow: UninstallFlow
 }): ReactNode {
-  // The flow is lifted to the tab root (useUninstallFlows) and keyed by
-  // install identity, so its `done`/`failed` outcome survives this panel's
-  // own conditional mount — the re-fetch happens inside the hook's own poll
-  // effect, the same way useInstallFlows settles itself. Surviving the mount
-  // means the panel, not the mount, owns the way back to `idle`: `reset` is
-  // wired to the two terminal states below, and a settled install on the
-  // same identity supersedes a `done` receipt from the tab root.
+  // The flow lives in the page store (page-store.ts), keyed by install
+  // identity, so its `done`/`failed` outcome survives this panel's own
+  // conditional mount, and the tab's; the store's own polling settles it.
+  // Surviving the mount means the panel, not the mount, owns the way back to
+  // `idle`: `reset` is wired to the two terminal states below, and a settled
+  // install on the same identity supersedes a `done` receipt in the store.
   const { view, start, reset } = flow
 
   if (view.kind === 'running') {
@@ -824,11 +896,21 @@ function UninstallPanel({ name, t, restart, restartBlocked, reload, flow }: {
             non-empty detail is the host's published copy and renders
             verbatim. */}
         <p className={css.failedDetail}>{view.detail === '' ? t('uninstallTransportFailed') : view.detail}</p>
-        {/* A refusal is recoverable — the package is still installed and the
-            reason may be transient — but `failed` renders no Uninstall
-            button, so before this the only way back was a full page load. */}
+        {/* `failed` renders no Uninstall button, and the page store keeps
+            this view for the page's life (design 2026-10-16-shop-sidebar-page
+            §5.2). A failure may pass on its own — dsh's plugin manager
+            finding some of the bundle's plugins still running, a transport
+            that drops one call — and Retry asks again. An install still
+            running is not one: the profile's queue runs the uninstall after
+            it. A failure may also be a refusal no retry gets past: the host
+            answering that the package is not installed, or the desktop
+            profile refusing every uninstall. Dismiss asks nothing and returns
+            the card to whatever the installed list says. */}
         <button type="button" className={css.uninstallButton} data-shop-uninstall-retry onClick={() => void start({ name })}>
           {t('retry')}
+        </button>
+        <button type="button" className={css.cancelButton} data-shop-uninstall-dismiss onClick={reset}>
+          {t('dismiss')}
         </button>
       </div>
     )
@@ -1035,47 +1117,50 @@ function ReloadPanel({ t, reload, where }: { t: ShopTabProps['t']; reload: () =>
  * transport throw renders the localized failure line — its private detail
  * (which can name hosts and ports) never reaches the UI.
  */
-function EnabledSwitch({ row, t, setEnabled, restart, restartBlocked, reload, restarts }: {
+function EnabledSwitch({ row, surface, page, t, setEnabled, restart, restartBlocked, reload }: {
   row: ShopInstalledEntry
+  /** Which surface draws this switch. An outdated plugin has two, its card's
+   * and its Updatable row's, and each owes only what was done to it. */
+  surface: SwitchSurface
+  /** Holds what this switch owes, so the notice outlives the switch (design
+   * 2026-10-16-shop-sidebar-page §5.2), on a channel of its own: a notice
+   * re-renders this switch, never the shelf. */
+  page: ShopPageStore
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   restart: ShopTabInjected['restart']
   restartBlocked: RestartBlockedReason | null
   reload: () => void
-  /** How many times dsh has restarted under this page; a change settles the
-   * restart this switch was owed (design §8, 2026-10-06 amendment). */
-  restarts: number
 }): ReactNode {
   const [enabled, setEnabledState] = useState(row.enabled)
-  const [toggle, setToggle] = useState<{ kind: 'idle' } | { kind: 'saving' } | { kind: 'saved' } | { kind: 'error'; detail: string }>({ kind: 'idle' })
+  // A saved toggle keeps whether the host answered `live`, because "applied
+  // without a restart" is a claim about that answer and is never inferred
+  // from nothing being owed. The owed notice reaches this switch through the
+  // store and the saved state through its own state, on separate renders, so
+  // dsh restarting under the page (the store's `noteRestarted`) can drop an
+  // owed restart before the saved state renders; read from the answer, the
+  // note cannot follow a restart that applied the change.
+  const [toggle, setToggle] = useState<{ kind: 'idle' } | { kind: 'saving' } | { kind: 'saved'; live: boolean } | { kind: 'error'; detail: string }>({ kind: 'idle' })
   // What THIS PAGE owes before it shows the truth: sticky, and a restart
-  // outranks a reload. A later toggle that FAILED changed nothing on the
-  // server, so it must not dismiss what an earlier one made necessary; and
-  // one that applied live does not say an earlier restart is no longer
-  // owed, so it cannot dismiss that either.
-  const [owed, setOwed] = useState<'nothing' | 'reload' | 'restart'>('nothing')
-  // dsh restarting under the page is the one thing that does dismiss an owed
-  // restart. The saved note goes with it: owing nothing, the switch would
-  // read "applied without a restart" about a change a restart applied. A
-  // reload is still owed, since nothing reloaded this page.
-  const restartsSeen = useRef(restarts)
-  useEffect(() => {
-    if (restartsSeen.current === restarts) return
-    restartsSeen.current = restarts
-    if (owed !== 'restart') return
-    setOwed('nothing')
-    setToggle(current => (current.kind === 'saved' ? { kind: 'idle' } : current))
-  }, [restarts, owed])
+  // outranks a reload (the store's `setOwed`). A later toggle that FAILED
+  // changed nothing on the server, so it must not dismiss what an earlier one
+  // made necessary; and one that applied live does not say an earlier
+  // restart is no longer owed, so it cannot dismiss that either.
+  const owedKey = switchKey(surface, identityKey(row))
+  const owed: OwedNotice | 'nothing' = useSyncExternalStore(page.subscribeOwed, () => page.getOwed(owedKey) ?? 'nothing')
 
   const onToggle = async (): Promise<void> => {
     if (toggle.kind === 'saving') return
     const next = !enabled
+    // Handed back with the answer: one that lands after this installation
+    // left the profile owes nothing (the store's `setOwed`).
+    const since = page.owedEpoch()
     setToggle({ kind: 'saving' })
     try {
       const result = await setEnabled({ name: row.name, enabled: next })
       if (result.ok) {
         setEnabledState(next)
-        setToggle({ kind: 'saved' })
+        setToggle({ kind: 'saved', live: result.activation === 'live' })
         // Anything that is not a DEFINITE `live` offers the reload. The
         // result type makes an absent activation unspellable, but the wire is
         // not the type (see ShopSetEnabledResult), and `present.ts` states
@@ -1083,8 +1168,8 @@ function EnabledSwitch({ row, t, setEnabled, restart, restartBlocked, reload, re
         // cheaper outcome, because that publishes a success claim the host
         // never made — here, "applied without a restart" over a tab that is
         // still showing the plugin the toggle just turned off.
-        if (result.activation === 'restart') setOwed('restart')
-        else if (result.activation !== 'live') setOwed(previous => (previous === 'restart' ? previous : 'reload'))
+        if (result.activation === 'restart') page.setOwed(owedKey, 'restart', since)
+        else if (result.activation !== 'live') page.setOwed(owedKey, 'reload', since)
       } else {
         // The host's business failure carries an author- and user-readable
         // detail (§7.3); surface it verbatim. A missing detail falls back to
@@ -1120,7 +1205,7 @@ function EnabledSwitch({ row, t, setEnabled, restart, restartBlocked, reload, re
         * is a first line asserting the change took effect, about the very
         * thing the reader can see has not. `reloadNote` carries both halves
         * in the right order, so it is the whole message in that case. */}
-      {toggle.kind === 'saved' && owed === 'nothing' && <p className={css.notice} data-shop-hot-apply>{t('hotApplyNote')}</p>}
+      {toggle.kind === 'saved' && toggle.live && owed === 'nothing' && <p className={css.notice} data-shop-hot-apply>{t('hotApplyNote')}</p>}
       {owed === 'restart' && <p className={css.notice} data-shop-toggle-restart>{t('toggleRestartNote')}</p>}
       {owed !== 'nothing' && <ActivationOffer activation={owed} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} where="toggle" />}
       {toggle.kind === 'error' && <p className={css.failedDetail} data-shop-toggle-error>{toggle.detail}</p>}
@@ -1134,7 +1219,7 @@ function EnabledSwitch({ row, t, setEnabled, restart, restartBlocked, reload, re
  * carry a `latest` string — a catalog truth to compare against; §C10's
  * shadowed rows hold `latest: null` and never reach this control, so the
  * field is narrowed at the parameter. */
-function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, restart, restartBlocked, reload, restarts }: {
+function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, restart, restartBlocked, reload, page }: {
   row: ShopInstalledEntry & { latest: string }
   tier: CatalogEntry['tier']
   missing: string[]
@@ -1145,7 +1230,7 @@ function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, rest
   restart: ShopTabInjected['restart']
   restartBlocked: RestartBlockedReason | null
   reload: () => void
-  restarts: number
+  page: ShopPageStore
 }): ReactNode {
   return (
     <div className={css.outdatedRow} data-shop-outdated-entry={row.name}>
@@ -1157,7 +1242,7 @@ function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, rest
         </span>
       </div>
       <div className={css.outdatedActions}>
-        <EnabledSwitch row={row} t={t} setEnabled={setEnabled} restart={restart} restartBlocked={restartBlocked} reload={reload} restarts={restarts} />
+        <EnabledSwitch row={row} surface="row" page={page} t={t} setEnabled={setEnabled} restart={restart} restartBlocked={restartBlocked} reload={reload} />
         <InstallPanel
           target={{ name: row.name, version: row.latest, source: row.source, repo: row.repo, subdir: row.subdir }}
           tier={tier} variant="update" blockers={stateBlockers(blockersOf(missing, harness, undefined), t)}
@@ -1188,7 +1273,7 @@ const UPDATABLE_HEADING_ID = 'dsh-shop-updatable-heading'
  * community entry's does); an entry absent from the catalog is read as
  * community, so its request acknowledges, which the host accepts for any
  * tier. */
-function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t, setEnabled, flowFor, restart, restartBlocked, reload, restarts }: {
+function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t, setEnabled, flowFor, restart, restartBlocked, reload, page }: {
   state: InstalledState
   entriesByKey: ReadonlyMap<string, CatalogEntry>
   missingByKey: ReadonlyMap<string, string[]>
@@ -1201,7 +1286,7 @@ function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t
   restart: ShopTabInjected['restart']
   restartBlocked: RestartBlockedReason | null
   reload: () => void
-  restarts: number
+  page: ShopPageStore
 }): ReactNode {
   if (state.kind === 'loading') return null
   if (state.kind === 'error') {
@@ -1238,7 +1323,7 @@ function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t
               restart={restart}
               restartBlocked={restartBlocked}
               reload={reload}
-              restarts={restarts}
+              page={page}
             />
           </li>
         ))}
@@ -1355,7 +1440,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
 /** The shop tab body: browse, search, refresh, and render one card per
  * entry. Data attributes on the e2e-relevant nodes follow the Task 3 list. */
 function ShopTabBody(props: ShopTabProps): ReactNode {
-  const { t, catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, noteUninstalled, restart, version, onRestarted, updateStart, reload: injectedReload } = props
+  const { t, catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, noteUninstalled, restart, version, onRestarted, updateStart, reload: injectedReload, page: injectedPage } = props
   const [catalogState, setCatalogState] = useState<CatalogState>({ kind: 'loading' })
   const [installedState, setInstalledState] = useState<InstalledState>({ kind: 'loading' })
   /** The install gate's own input, or undefined while it is unknown — loading,
@@ -1386,7 +1471,24 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   // the same gate rather than two. Only the self-update path needs this; the
   // per-plugin panels keep RestartPanel's own state.
   const [selfRestartGate, setSelfRestartGate] = useState(false)
-  const selfUpdate = useUpdateSelf(updateStart, installStatus)
+  // The page's store (page-store.ts), or one this tab builds for itself.
+  // index.ts always hands one over; a stub may not, and an own store lives
+  // and dies with this tab, which is how the tab behaved before the store
+  // existed. It is built only then: every leave-and-return mounts the tab
+  // again, and a store built beside the page's on each mount was three flow
+  // registries thrown away. The functions it runs on are read through a ref,
+  // so the store is never rebuilt when the face hands over new ones.
+  const ownDeps = useRef({ install, uninstall, updateStart, installStatus, noteUninstalled })
+  ownDeps.current = { install, uninstall, updateStart, installStatus, noteUninstalled }
+  const [ownPage] = useState(() => (injectedPage === undefined ? createPageStore(() => ownDeps.current, { pollUnwatched: false }) : null))
+  const page = injectedPage ?? ownPage
+  // A face that handed a store over when the tab mounted and stops handing
+  // one over leaves the tab nothing to fall back on, since it built none.
+  // The boundary's Retry mounts the tab afresh, and that mount builds one.
+  if (page === null) throw new Error('dsh-plugin-shop: the shop face stopped handing over the page store the tab mounted with')
+  const pageState = useSyncExternalStore(page.subscribe, page.getSnapshot)
+  const { query, category, order, hideIncompatible, visibleCount } = pageState.view
+  const selfUpdate = useRegistrySelf(page.self)
   const restartMonitor = useRestartMonitor()
   // A self-update that landed and waits for its restart. This tab's own flow
   // knows only an update it watched finish, and the tab that watched one is
@@ -1399,113 +1501,72 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   // process running. A flow that is running or failed speaks for itself.
   const hostPending = selfVersion !== null && selfVersion.pendingVersion !== null
   const selfPending = selfUpdate.view.kind === 'done' || (selfUpdate.view.kind === 'idle' && hostPending)
-  const [request, setRequest] = useState<LoadRequest>({ kind: 'initial' })
-  // Bumped only by an explicit Retry/Refresh click, never by a reverdict —
-  // see the version-check effect below, which keys on this instead of
-  // `request` precisely so a mutation settling cannot restart it.
+  // A settle that no tab was mounted for leaves the store a pending
+  // reverdict, and then this mount's FIRST catalog request is that reverdict
+  // (design 2026-10-16-shop-sidebar-page §5.4). index.ts drops the stash when
+  // a mutation starts, but a tab mounted while it ran refilled the stash with
+  // verdicts judged before the mutation landed. Read here, and cleared by the
+  // request's answer (the catalog load below), never when the request is
+  // taken: a tab the reader leaves before its answer lands, or before it has
+  // even asked, leaves the reverdict pending for its next mount.
+  const [request, setRequest] = useState<LoadRequest>(() => {
+    const { reverdictPending, reverdicts } = page.getSnapshot()
+    return reverdictPending ? { kind: 'reverdict', reverdicts } : { kind: 'initial' }
+  })
+  // The store's reverdict this tab last asked for, by its count, so each one
+  // raised is asked for once, this mount's first request included.
+  const askedFor = useRef(request.kind === 'reverdict' ? request.reverdicts : null)
+  // A settle while this tab is mounted asks for the reverdict at once. The
+  // store folds the settle itself — it supersedes the other registry's
+  // receipt and names an uninstalled package for the page-removed set — so
+  // all this tab does is ask the catalog again: an entry's badges can depend
+  // on what is now installed (design 2026-09-01-harness-compatibility
+  // section 9.1). A settle that lands while a reverdict's answer is out
+  // raises another, and it is asked for too: the request already out may
+  // have been judged before that settle landed.
+  useEffect(() => {
+    if (!pageState.reverdictPending || askedFor.current === pageState.reverdicts) return
+    askedFor.current = pageState.reverdicts
+    setRequest({ kind: 'reverdict', reverdicts: pageState.reverdicts })
+  }, [pageState.reverdictPending, pageState.reverdicts])
+  // A Refresh or a Retry clicked while a reverdict is pending supersedes its
+  // request, whose answer the load below then drops, and this tab has asked
+  // for that count already. The click's own request carries the count
+  // instead, so its answer settles the reverdict (`LoadRequest`).
+  const pendingReverdict = (): number | null => {
+    const { reverdictPending, reverdicts } = page.getSnapshot()
+    return reverdictPending ? reverdicts : null
+  }
+  // Bumped only by an explicit Retry/Refresh click, never by a reverdict. It
+  // drives two effects below: the version check, which keys on this instead
+  // of `request` precisely so a mutation settling cannot restart it, and the
+  // installed-list read, which a settle reaches through `settled` instead.
   const [versionReload, setVersionReload] = useState(0)
-  // A settled install bumps `mutations` — which refreshes the installed
-  // projection below — on EITHER outcome, done or failed; a settled uninstall
-  // bumps it only on `done`, because a failed one returns immediately and
-  // never reaches `noteMutation()` at all. Only a `done` install or uninstall
-  // ALSO asks the catalog to judge itself again by pushing `request` to
-  // `reverdict` (`installSettled`/`uninstallSettled` below; design
-  // 2026-09-01-harness-compatibility section 9.1) — an entry's badges can
-  // depend on what is now installed, so the catalog no longer merely "stays
-  // on screen" across a mutation the way it does across an unrelated render.
-  const [mutations, setMutations] = useState(0)
-  const noteMutation = useCallback(() => { setMutations(current => current + 1) }, [])
-  // Install and uninstall are mutually exclusive answers about one identity,
-  // so each registry's settle supersedes the other's receipt for that key.
-  // The per-panel state these lifted registries replaced got that for free
-  // from unmounting; lifted, the loser has no way out unless given one. The
-  // ref breaks the cycle: the uninstall registry is built FROM
-  // `installSettled` and so cannot be named by it.
-  const uninstallResetRef = useRef<(key: string) => void>(() => {})
-  const installSettled = useCallback((key: string, outcome: 'done' | 'failed') => {
-    // Only a settled install supersedes. A FAILED one installed nothing, so
-    // a previous uninstall's receipt is still the truth about this identity.
-    if (outcome === 'done') uninstallResetRef.current(key)
-    noteMutation()
-    // An install that lands can resolve another entry's missing peer, so the
-    // catalog is asked to judge again against the installation as it now
-    // stands — never on a FAILED install, which changed nothing. This is a
-    // judge-again, not a reader's click, so it never touches `versionReload`.
-    if (outcome === 'done') setRequest({ kind: 'reverdict' })
-  }, [noteMutation])
-  const flows = useInstallFlows(install, installStatus, installSettled)
-  const uninstallSettled = useCallback((key: string, outcome: 'done' | 'failed') => {
-    // Once removal LANDS, an install/update result from the same session is
-    // stale. Clear it before the installed projection drops this row. A
-    // FAILED uninstall removed nothing: the package is still installed and an
-    // update before it still owes its restart, so clearing here erased an
-    // outcome that is still true, over a rejection the reader did not cause.
-    if (outcome !== 'done') return
-    flows.flowFor(key).reset()
-    noteMutation()
-    // `key` is the composite identity (`entryKey`/`identityKey`:
-    // `npm:<name>` or `github:<repo>#<subdir>`), never the bare package name
-    // that `noteUninstalled` and the module table's page-removed set key on
-    // — look the entry up by identity and hand over its bare `.name`. No
-    // match (catalog not yet loaded, or the entry already gone) leaves
-    // nothing to tell; `noteUninstalled` is best-effort, not the uninstall's
-    // own record of truth.
-    const name = catalogState.kind === 'ready'
-      ? catalogState.result.plugins.find(entry => entryKey(entry) === key)?.name
-      : undefined
-    if (name !== undefined) noteUninstalled?.(name)
-    // Uninstalling can free another entry's blocked peer, or — via the
-    // page-removed set this unblocks on the client side — stop the module
-    // table vouching for the name just removed, so the catalog is asked to
-    // judge again too.
-    setRequest({ kind: 'reverdict' })
-  }, [flows, noteMutation, catalogState, noteUninstalled])
-  const uninstallFlows = useUninstallFlows(uninstall, installStatus, uninstallSettled)
-  uninstallResetRef.current = uninstallFlows.resetFlow
+  // Every settle the store folds — an install on either outcome, an
+  // uninstall that landed — and every restart under the page bump
+  // `settled`, which re-reads the installed list below.
+  const { settled } = pageState
+  const flows = useRegistryFlows(page.installs)
+  const uninstallFlows = useRegistryFlows(page.uninstalls)
   // dsh restarted under the page (index.ts `onRestarted`), which reloads
-  // nothing: the row shows the version the NEW process runs, every receipt
-  // that was waiting for a restart has had it — the self-update's, each
-  // card's, each switch's (through `restarts`) — and the installed list and
-  // the catalog's verdicts are asked of the process that answers now. A
-  // reload still owed stays owed (design §8, 2026-10-06 amendment).
-  const [restarts, setRestarts] = useState(0)
-  const resetSelfUpdate = selfUpdate.resetWhere
-  const resetInstalls = flows.resetWhere
-  const resetUninstalls = uninstallFlows.resetWhere
+  // nothing: the row shows the version the NEW process runs. What the
+  // restart settled — receipts, owed notices, verdicts — is the store's to
+  // clear: index.ts tells the page's store, and a store this tab built for
+  // itself is told here (design §8, 2026-10-06 amendment).
   useEffect(() => onRestarted?.(fresh => {
     setSelfVersion(fresh)
-    resetSelfUpdate(settledByRestart)
-    resetInstalls(settledByRestart)
-    resetUninstalls(settledByRestart)
-    setRestarts(current => current + 1)
-    noteMutation()
-    setRequest({ kind: 'reverdict' })
-  }), [onRestarted, resetSelfUpdate, resetInstalls, resetUninstalls, noteMutation])
+    if (injectedPage === undefined) page.noteRestarted()
+  }), [onRestarted, page, injectedPage])
   // A refresh deliberately leaves the current shelf on screen (§10), so the
   // reload control carries the only sign that the click did anything.
   const [reloading, setReloading] = useState(false)
   const [reloadFailed, setReloadFailed] = useState(false)
-  const [query, setQuery] = useState('')
-  // `installed` is a filter mode alongside the six catalog categories, not a
-  // seventh category: it selects by installed state, not by `catalog.category`.
-  const [category, setCategory] = useState<Category | 'installed' | null>(null)
-  // Which order the shelf is in (design 2026-10-12-shelf-orders §4). In-memory
-  // like every other control here: a reload starts at the star order.
-  const [order, setOrder] = useState<ShelfOrder>('stars')
-  // Whether the shelf leaves out entries badged "Incompatible" — components
-  // missing here, or an author's declaration this dsh does not meet. Off by
-  // default: a filter nobody asked for must not hide listings on
-  // first open, and the count on the button is what tells a reader there is
-  // anything to hide. Independent of `category`, because it subtracts from
-  // whatever the categories selected rather than competing with them.
-  const [hideIncompatible, setHideIncompatible] = useState(false)
 
   // The shelf renders in batches (§A1): ~1900 cards in one commit is ~28k
   // DOM nodes. `incremental` stays off where IntersectionObserver does not
   // exist (jsdom without a stub, ancient engines) and the whole list renders —
   // which is also what every test above the batching block relies on.
   const incremental = typeof IntersectionObserver !== 'undefined'
-  const [visibleCount, setVisibleCount] = useState(SHOP_VISIBLE_BATCH)
   const sentinelRef = useRef<HTMLLIElement>(null)
   const filteredLenRef = useRef(0)
   const sortLabelId = useId()
@@ -1528,17 +1589,13 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
     // background re-fetch (§10); a retry leaves the error state and starts
     // from loading.
     //
-    // Both halves of this guard are unreachable as distinguishing conditions
-    // TODAY, because neither request can arrive before the shelf is ready. A
-    // refresh has one dispatcher, the ready view's Refresh button, and the
-    // loading and error views return before that button renders. A reverdict
-    // fires only from `installSettled`/`uninstallSettled` above, whose flows
-    // start from buttons that are only clickable once the shelf has rendered.
-    // So the ternary already returns `current` unchanged on either request
-    // with or without this clause. Kept anyway as a defensive invariant rather
-    // than trimmed as dead code: a future refresh or reverdict fired before
-    // the shelf is ready must still keep the stale state, not flash to
-    // loading.
+    // A refresh cannot arrive before the shelf is ready: its one dispatcher
+    // is the ready view's Refresh button. A reverdict can, since
+    // 2026-10-16: a mount whose page store holds a pending reverdict makes
+    // it the first request (above), which then starts from the loading
+    // state the tab mounted in, and this guard leaves that alone. Kept as
+    // an invariant rather than trimmed: a refresh or a reverdict fired
+    // while a shelf IS on screen must keep it there, not flash to loading.
     if (request.kind !== 'refresh' && request.kind !== 'reverdict') {
       setCatalogState(current => (current.kind === 'ready' ? current : { kind: 'loading' }))
     }
@@ -1558,7 +1615,12 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
         // the reverdict's answer carries the refreshed snapshot without a
         // second network load (design 2026-09-01-harness-compatibility
         // section 9.1).
-        if (!cancelled) setCatalogState({ kind: 'ready', result })
+        if (!cancelled) {
+          setCatalogState({ kind: 'ready', result })
+          // The answer the pending reverdict waited for (above): its own
+          // request's, or that of a Refresh or Retry that superseded it.
+          if (request.kind !== 'initial' && request.reverdicts !== null) page.clearReverdict(request.reverdicts)
+        }
       } catch {
         // The transport detail is private (it can name hosts and ports) and
         // never rendered; the error state is the author- and user-readable
@@ -1582,7 +1644,16 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
           return
         }
         setCatalogState(current => (current.kind === 'ready' ? current : { kind: 'error' }))
-        if (request.kind !== 'reverdict') setReloadFailed(true)
+        // A failure is an answer too: the client half drops the stash before
+        // a reverdict asks (index.ts), so no verdict from before the mutation
+        // is left for the next plain open to replay.
+        if (request.kind === 'reverdict') page.clearReverdict(request.reverdicts)
+        else {
+          setReloadFailed(true)
+          // A failed Refresh or Retry answered nothing about the reverdict
+          // whose request it superseded, which is still pending: ask again.
+          if (request.kind !== 'initial' && request.reverdicts !== null) setRequest({ kind: 'reverdict', reverdicts: request.reverdicts })
+        }
       } finally {
         if (pendingRefreshRef.current === request) pendingRefreshRef.current = null
         // Released on both outcomes: a reload that failed must hand the
@@ -1592,14 +1663,15 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
     }
     void load()
     return () => { cancelled = true }
-  }, [catalog, request])
+  }, [catalog, request, page])
 
   // The shop's own version check reloads on an explicit Retry/Refresh click
-  // (`versionReload`, bumped only by those two buttons) but NOT on a
-  // reverdict: a reverdict answers "what would the host judge about the
-  // installation right now," which has nothing to do with whether a newer
-  // dsh-plugin-shop build exists, so a mutation settling must never restart
-  // this check (design 2026-09-01-harness-compatibility section 9.1).
+  // (`versionReload`, bumped only by those two buttons, which the
+  // installed-list read below keys on too) but NOT on a reverdict: a
+  // reverdict answers "what would the host judge about the installation
+  // right now," which has nothing to do with whether a newer dsh-plugin-shop
+  // build exists, so a mutation settling must never restart this check
+  // (design 2026-09-01-harness-compatibility section 9.1).
   useEffect(() => {
     let cancelled = false
     const load = async (): Promise<void> => {
@@ -1643,6 +1715,15 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
 
   // The installed list runs against the same snapshot the catalog serves, so it
   // reloads on refresh/retry too — the host keeps `lastSnapshot` between calls.
+  // It keys on those two clicks (`versionReload`, which the version check
+  // above keys on too) and on the store's settles, never on `request`. A
+  // reverdict raised while this tab is mounted follows a settle that has
+  // already re-read the list, and arrives a commit later, raised by the
+  // effect above from the store's snapshot; a mount's own first reverdict
+  // follows a settle no tab saw, and this effect's first run on that mount
+  // reads the list for it. While the settle and its reverdict were set in one
+  // callback they landed in one render; keyed on `request` now, each settle
+  // would read the list twice.
   useEffect(() => {
     let cancelled = false
     const load = async (): Promise<void> => {
@@ -1653,6 +1734,11 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
         if (cancelled) return
         setInstalledState({ kind: 'ready', entries })
         setSpecs(held ?? undefined)
+        // The one witness of a plugin removed outside the shop, through dsh's
+        // Plugins page or `dsh plugin remove`: no uninstall of this page
+        // settles for it, so its switches' notices go here (design
+        // 2026-10-16-shop-sidebar-page §5.4).
+        page.noteInstalled(entries.map(identityKey))
       } catch {
         // Same privacy rule as the catalog: the transport detail is never
         // rendered; the error line is the readable face of a failed load.
@@ -1663,7 +1749,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
     }
     void load()
     return () => { cancelled = true }
-  }, [installed, installedSpecs, request, mutations])
+  }, [installed, installedSpecs, versionReload, settled, page])
 
   // Each shelf card looks its installed state up by install identity; the
   // Installed filter below selects on the same map.
@@ -1901,12 +1987,12 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
     if (node === null) return
     const observer = new IntersectionObserver((entries) => {
       if (entries.some(entry => entry.isIntersecting)) {
-        setVisibleCount(current => nextVisibleCount(current, filteredLenRef.current, SHOP_VISIBLE_BATCH))
+        page.updateView(view => ({ visibleCount: nextVisibleCount(view.visibleCount, filteredLenRef.current, SHOP_VISIBLE_BATCH) }))
       }
     }, { rootMargin: '0px 0px 1200px 0px' })
     observer.observe(node)
     return () => observer.disconnect()
-  }, [incremental, visibleCount, filtered.length])
+  }, [incremental, visibleCount, filtered.length, page])
 
   const visible = incremental ? filtered.slice(0, visibleCount) : filtered
 
@@ -1987,7 +2073,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
     return (
       <div className={PANEL_ROOT} translate="no" data-shop-tab>
         <p className={css.stateLine}>{t('error')}</p>
-        <button type="button" className={css.actionButton} onClick={() => { setRequest({ kind: 'retry' }); setVersionReload(current => current + 1) }}>
+        <button type="button" className={css.actionButton} onClick={() => { setRequest({ kind: 'retry', reverdicts: pendingReverdict() }); setVersionReload(current => current + 1) }}>
           {t('retry')}
         </button>
       </div>
@@ -2003,10 +2089,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
           aria-label={t('search')}
           placeholder={t('search')}
           value={query}
-          onChange={event => {
-            setQuery(event.target.value)
-            setVisibleCount(SHOP_VISIBLE_BATCH)
-          }}
+          onChange={event => { page.setView({ query: event.target.value, visibleCount: SHOP_VISIBLE_BATCH }) }}
         />
         {expansionMemo.intents.length > 0 && (
           <p data-shop-expansion-note className={css.expansionNote}>
@@ -2147,6 +2230,14 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
               TRANSPORT failure and falls back to the localized line; a
               non-empty detail is the host's published copy. */}
           <p className={css.failedDetail}>{selfUpdate.view.detail === '' ? t('updateTransportFailed') : selfUpdate.view.detail}</p>
+          {/* The version row offers Update only from idle, and the page store
+              keeps this view for the page's life (design
+              2026-10-16-shop-sidebar-page §5.2). Dismissing it resets a failed
+              update and nothing else, so the row's own Check and Update
+              decide again. */}
+          <button type="button" className={css.cancelButton} data-shop-update-self-dismiss onClick={() => { selfUpdate.resetWhere(current => current.kind === 'failed') }}>
+            {t('dismiss')}
+          </button>
         </div>
       )}
       <div className={css.categoryBar} role="group" aria-label={t('catalog')}>
@@ -2154,7 +2245,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
           type="button"
           className={category === null ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
           aria-pressed={category === null}
-          onClick={() => { setCategory(null); setVisibleCount(SHOP_VISIBLE_BATCH) }}
+          onClick={() => { page.setView({ category: null, visibleCount: SHOP_VISIBLE_BATCH }) }}
           data-shop-category-all
         >
           {/* browsable.length, not the sum of the per-category counts: an
@@ -2182,7 +2273,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
              * either side of this loop. */
             data-category={key}
             data-shop-category-tab={key}
-            onClick={() => { setCategory(key); setVisibleCount(SHOP_VISIBLE_BATCH) }}
+            onClick={() => { page.setView({ category: key, visibleCount: SHOP_VISIBLE_BATCH }) }}
           >
             {t(categoryLocaleKey(key))} {categoryCounts.get(key) ?? 0}
           </button>
@@ -2195,7 +2286,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
           className={category === 'installed' ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
           aria-pressed={category === 'installed'}
           data-shop-category-installed
-          onClick={() => { setCategory('installed'); setVisibleCount(SHOP_VISIBLE_BATCH) }}
+          onClick={() => { page.setView({ category: 'installed', visibleCount: SHOP_VISIBLE_BATCH }) }}
         >
           {t('installed')} {installedCount}
         </button>
@@ -2240,7 +2331,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
             className={hideIncompatible ? `${css.incompatibleFilter} ${css.incompatibleFilterOn}` : css.incompatibleFilter}
             title={t(hideIncompatible ? 'showIncompatibleTitle' : 'incompatibleFilterTitle')}
             data-shop-hide-incompatible
-            onClick={() => { setHideIncompatible(current => !current); setVisibleCount(SHOP_VISIBLE_BATCH) }}
+            onClick={() => { page.updateView(view => ({ hideIncompatible: !view.hideIncompatible, visibleCount: SHOP_VISIBLE_BATCH })) }}
           >
             {/* Decoration, not content: the button already carries the name
               * and `aria-checked` already carries the state, so an exposed
@@ -2259,7 +2350,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
           className={css.catalogRefreshButton}
           data-shop-catalog-refresh
           disabled={reloading}
-          onClick={() => { setReloading(true); setReloadFailed(false); setRequest({ kind: 'refresh' }); setVersionReload(current => current + 1) }}
+          onClick={() => { setReloading(true); setReloadFailed(false); setRequest({ kind: 'refresh', reverdicts: pendingReverdict() }); setVersionReload(current => current + 1) }}
         >
           {reloading ? t('refreshing') : t('refresh')}
         </button>
@@ -2281,7 +2372,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
               className={order === name ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
               aria-pressed={order === name}
               data-shop-order={name}
-              onClick={() => { setOrder(name); setVisibleCount(SHOP_VISIBLE_BATCH) }}
+              onClick={() => { page.setView({ order: name, visibleCount: SHOP_VISIBLE_BATCH }) }}
             >
               {t(shelfOrderLocaleKey(name))}
             </button>
@@ -2297,10 +2388,23 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
          * reader has to be told, because the search box they would look at is
          * empty and the modifier's own state survives category switches. The
          * generic search-miss line said "No matching plugins" over a shelf
-         * their own toggle had cleared. */
-        <p className={css.emptyLine} data-shop-empty>
-          {matched.length > 0 ? t('emptyIncompatibleFiltered') : t('emptySearch')}
-        </p>
+         * their own toggle had cleared.
+         *
+         * The Installed view selects by the installed list, so until that
+         * list answers it is empty for want of an answer, not of a match: a
+         * page store keeps the filter, so a return can open on this view
+         * before the list does. It says it is reading the list then; a
+         * failed list says so on its own line (`OutdatedSection`), and the
+         * shelf adds nothing to it. */
+        category === 'installed' && installedState.kind !== 'ready' ? (
+          installedState.kind === 'loading' ? (
+            <p className={css.emptyLine} data-shop-installed-loading>{t('installedLoading')}</p>
+          ) : null
+        ) : (
+          <p className={css.emptyLine} data-shop-empty>
+            {matched.length > 0 ? t('emptyIncompatibleFiltered') : t('emptySearch')}
+          </p>
+        )
       ) : (
         <>
           <ul className={css.cards}>
@@ -2315,7 +2419,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
               const key = entryKey(entry)
               return (
                 <li key={key}>
-                  <EntryCard entry={entry} stars={starsOf(entry, stars)} order={order} shelfDay={shelfDayOf(entry)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} harness={harnessVerdictOf(harnessVerdicts, key)} nameTakenBy={nameTakenByKey.get(key)} t={t} flow={flows.flowFor(key)} uninstallFlow={uninstallFlows.flowFor(key)} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} restarts={restarts} />
+                  <EntryCard entry={entry} stars={starsOf(entry, stars)} order={order} shelfDay={shelfDayOf(entry)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} harness={harnessVerdictOf(harnessVerdicts, key)} nameTakenBy={nameTakenByKey.get(key)} t={t} flow={flows.flowFor(key)} uninstallFlow={uninstallFlows.flowFor(key)} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} page={page} />
                 </li>
               )
             })}
@@ -2341,7 +2445,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
         restart={restart}
         restartBlocked={restartBlocked}
         reload={reload}
-        restarts={restarts}
+        page={page}
       />
       {/* Shadowed rows (§C10) sit only in the Installed view: that view is
         * management, not shelf, and management is exactly what these entries

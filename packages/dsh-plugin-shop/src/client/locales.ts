@@ -10,6 +10,7 @@ export const zh = {
   intro: '浏览、安装和更新目录中的插件。',
   loading: '正在读取目录…',
   error: '暂时无法读取目录。',
+  installedLoading: '正在读取已安装列表…',
   installedError: '暂时无法读取已安装列表。',
   retry: '重试',
   /** The shop's own error boundary caught a render error; the error's message
@@ -210,6 +211,7 @@ export const en = {
   intro: 'Browse, install, and update plugins from the catalog.',
   loading: 'Reading the catalog…',
   error: 'The catalog is temporarily unavailable.',
+  installedLoading: 'Reading the installed list…',
   installedError: 'The installed list is temporarily unavailable.',
   retry: 'Retry',
   tabCrashed: 'The plugin shop hit an error while showing this page.',
