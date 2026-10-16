@@ -12,11 +12,13 @@
  */
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { useKeyedFlows } from '../../src/client/useFlows.ts'
-import type { InstallView } from '../../src/client/present.ts'
+import { useKeyedFlows, useRegistryFlows } from '../../src/client/useFlows.ts'
+import { createFlowRegistry } from '../../src/client/flow-registry.ts'
+import { INSTALL_POLL_MS, type InstallView } from '../../src/client/present.ts'
 import type { ShopInstallStatusResult } from '../../src/host/index.ts'
 
 afterEach(cleanup)
+afterEach(() => { vi.useRealTimers() })
 
 type Args = { installId: string }
 
@@ -183,5 +185,36 @@ describe('useKeyedFlows: resetting by what a flow holds', () => {
     expect(first).toBeTypeOf('function')
     rerender()
     expect(result.current.resetWhere).toBe(first)
+  })
+})
+
+describe('useKeyedFlows: polling belongs to the component that owns the registry', () => {
+  it('stops polling when the component unmounts', async () => {
+    vi.useFakeTimers()
+    const { result, unmount, installStatus } = bench()
+    await act(async () => { await result.current.flowFor('npm:busy').start({ installId: 'i1' }) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(INSTALL_POLL_MS) })
+    expect(installStatus).toHaveBeenCalledTimes(1)
+    unmount()
+    await vi.advanceTimersByTimeAsync(5 * INSTALL_POLL_MS)
+    expect(installStatus).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('useRegistryFlows: a registry the page owns', () => {
+  // `renderHook` outside `act`, as this file's other cases call it: the assertions
+  // read the snapshot `useSyncExternalStore` already holds, so a batched wrapper
+  // could only hide a re-subscribe that failed to happen.
+  it('keeps a flow across an unmount and a remount', async () => {
+    const begin = vi.fn(async (args: Args): Promise<InstallView> => ({ kind: 'running', installId: args.installId, log: [], phase: 'installing' }))
+    const installStatus = vi.fn(async (): Promise<ShopInstallStatusResult> => ({ found: true, state: 'running', log: [] }))
+    const registry = createFlowRegistry<Args>(() => ({ begin, installStatus }), { pollUnwatched: true })
+    const first = renderHook(() => useRegistryFlows(registry))
+    await act(async () => { await first.result.current.flowFor('npm:busy').start({ installId: 'i1' }) })
+    first.unmount()
+    const second = renderHook(() => useRegistryFlows(registry))
+    expect(second.result.current.flowFor('npm:busy').view).toMatchObject({ kind: 'running', installId: 'i1' })
+    expect([...second.result.current.pending]).toEqual(['npm:busy'])
+    registry.dispose()
   })
 })
