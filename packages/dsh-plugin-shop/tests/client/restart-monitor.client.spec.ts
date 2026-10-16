@@ -7,7 +7,7 @@
  * instance, or nothing reloads the page into the restarted server.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { RESTART_GRACE_MS, RESTART_STABLE_MS, RESTART_WAIT_MS, INSTALL_POLL_MS } from '../../src/client/present.ts'
 import {
   noteBoot,
@@ -323,6 +323,33 @@ describe('a restart request belongs to the page too', () => {
     registerRestartCarrier(carrier)
     await expect(requestRestart({ reload: vi.fn(), restart: vi.fn() })).resolves.toEqual({ kind: 'started' })
     expect(carrier).toHaveBeenCalledTimes(1)
+  })
+
+  it('tells the listeners a 0.8.x store holds, and subscribes into the very Set it holds them in', () => {
+    // 0.8.4 to 0.8.7 created the store as { state, listeners, stop, carriers,
+    // attempt }, `listeners` a plain Set. Their code, still loaded after the
+    // swap, adds to that Set, deletes from it and iterates it, so this module
+    // has to work on that Set as it is, never on an object of its own kept in
+    // its place (design 2026-10-16-shop-sidebar-page §6).
+    vi.useFakeTimers()
+    const predecessors = vi.fn()
+    const listeners = new Set<() => void>([predecessors])
+    const page = globalThis as unknown as Record<symbol, unknown>
+    const key = Symbol.for('dsh-plugin-shop.restart-monitor')
+    page[key] = { state: null, listeners, stop: null, carriers: [], attempt: null }
+    onTestFinished(() => { delete page[key] })
+    const ours = vi.fn()
+    const unsubscribe = subscribeRestartMonitor(ours)
+    expect(listeners.has(ours)).toBe(true)
+    startRestartMonitor({ reload: vi.fn() })
+    expect(predecessors).toHaveBeenCalledTimes(1)
+    expect(ours).toHaveBeenCalledTimes(1)
+    // The predecessor's own notify, as 0.8.7 spells it, reaches ours too.
+    for (const listener of [...listeners]) listener()
+    expect(ours).toHaveBeenCalledTimes(2)
+    unsubscribe()
+    expect(listeners.has(ours)).toBe(false)
+    expect(listeners.has(predecessors)).toBe(true)
   })
 
   it('forgets its paths and its request once reset', async () => {
