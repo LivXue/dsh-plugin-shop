@@ -100,7 +100,17 @@ LivXue's, in the order taken:
   the conversation.
 - **`ctx.layout`**: `selectPanel(id)` throws when `id` is not a registered
   `main` key and otherwise selects it, and `panelInfo` is an observable of
-  `{ activePanelId }`.
+  `{ activePanelId }`. **Measured 2026-10-16 (plan Task 1): this shape is not
+  the same on all three harnesses.** 0.1.5-rc.3's `ILayout` is a command
+  facade (`selectPanel`, `beginNavigation`, `toggleSidebar`,
+  `openRightbar`, `closeRightbar`) and the observable reaches the client only
+  as a root slot hook behind a private field of `ctx.slots`;
+  0.1.7-rc.2 and 0.2.0-rc.2 carry `panelInfo` on `ILayout` as well. So the
+  shop calls `selectPanel` and never reads the observable: a read of
+  `ctx.layout.panelInfo` is `undefined` on 0.1.5-rc.3, and an unguarded
+  `getSnapshot()` throws during `apply` (observed: the shop's entry failed to
+  apply and dsh drew its "Failed to load plugins" page). What the shop needs
+  to know about the selection it records itself — see §6's rule 1.
 
 ### 3.2 The Plugins page (0.1.7-rc.2 and 0.2.0-rc.2)
 
@@ -346,14 +356,43 @@ Without a layout service, neither rule does anything.
   teardown began. The record is taken by the `main` injection itself: its
   factory returns `[unregister, record]`, and cordis disposes the disposers an
   effect collected in reverse order of collection, so `record` runs while the
-  entry still holds the selection. Measured 2026-10-16 on 0.1.5-rc.3,
-  0.1.7-rc.2 and 0.2.0-rc.2: `record` read the page as showing on all three,
-  and the new `apply` found the selection already `null` on all three — dsh
-  unregisters the old `main` entry before the new one registers, so the
-  selection does not survive and rule 1 is needed on every leg. The same three
-  legs also measured `selectPanel('shop')` under an open Settings dialog: the
-  dialog **stayed open** on all three while the page became selected behind it,
-  which is what rule 2 accepts (Task 14's hand check reads the same thing).
+  entry still holds the selection. **What it records is the page's own mount,
+  not dsh's selection** (§3.1: the selection observable is not readable
+  through `ctx.layout` on every leg — on 0.1.5-rc.3 it reaches the client only
+  as a root slot hook behind a private field — and `main` mounts a selected
+  key's panel and nothing else, so the
+  page knows it is on screen without asking dsh).
+
+  What the probe measured on 0.1.5-rc.3, 0.1.7-rc.2 and 0.2.0-rc.2, all three
+  agreeing, is the register order and the timing of the record, not the
+  mount-based witness itself: the probe's own record asked dsh for the
+  selection (`selectionReader()?.read() === 'shop'`) and read `showing=true` on
+  all three, which establishes that a record placed as the factory's second
+  disposer runs while the page is still mounted and the selection still stands.
+  The mount is an equivalent witness by argument: `main` mounts a selected
+  key's panel and nothing else, and the probe's record ran at the one moment
+  the page was mounted and selected, so a page that watches its own mount sees
+  the same thing without reading the observable (§9.1).
+
+  The evidence for the fallback is the page itself: after the swap the DOM read
+  `probe page showing false, row aria-current null` on all three — the shop's
+  page was gone and the conversation held the column, so the selection does not
+  survive the swap and rule 1 is needed on every leg. The new `apply`'s own
+  reading of the selection is the corroborating second witness on 0.1.7-rc.2 and
+  0.2.0-rc.2 (`selection at apply: null`). 0.1.5-rc.3 also prints a
+  `selection at apply` line, but it is not a witness: that leg's root-hook
+  reader printed `null` at its first `apply` too, while the page was in fact
+  selected (`selection -> null` twice, never `shop`, then `page mounted`, DOM
+  `aria-current page`) — it demonstrably misses transitions. That leg's
+  evidence is its `record` reading `showing=true` and the DOM reading. dsh unregisters the old `main` entry
+  before the new one registers, and the reader saw the conversation for 1255 ms
+  (0.1.5-rc.3), 1755 ms (0.1.7-rc.2) and 1005 ms (0.2.0-rc.2) — the gap between
+  the swap and the second `apply` that rule 1's own `selectPanel` closes.
+
+  The same three legs also measured `selectPanel('shop')` under an open Settings
+  dialog: the dialog **stayed open** on all three while the page became selected
+  behind it, which is what rule 2 accepts (Task 14's hand check reads the same
+  thing).
 - **Rule 2, a 0.8.x predecessor.** The new `apply` selects the page. The
   Settings dialog, which has lost the shop's section, falls back to its first
   section. When the reader closes it, the shop page and its restart offer are
@@ -420,7 +459,10 @@ Record:
    rule 1's record can be read.
 
 The findings amend §6 before any code depends on them. Measured 2026-10-16; the
-findings are in §6.
+findings are in §6, which also says which of them the probe's own record
+established and which follow by argument from it. The probe's record read the
+selection itself rather than watching its own mount, so the mount-based witness
+§6 adopts is the argued half.
 
 ### 9.2 Unit
 
