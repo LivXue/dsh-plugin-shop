@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { RESTART_GRACE_MS, RESTART_STABLE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
 import { en, zh, type ShopLocaleKey } from '../../src/client/locales.ts'
 import { ShopTab, type ShopTabInjected, type ShopTabProps } from '../../src/client/ShopTab.tsx'
+import { createPageStore } from '../../src/client/page-store.ts'
 import { noteBoot, registerRestartCarrier, resetRestartMonitor, startRestartMonitor } from '../../src/client/restart-monitor.ts'
 import type { HarnessVerdict, ShopCatalogResult, ShopInstalledEntry, ShopVersionResult } from '../../src/host/index.ts'
 import { installFoldGeometry, StubResizeObserver } from '../fixtures/fold-geometry.ts'
@@ -1248,9 +1249,10 @@ describe('ShopTab', () => {
 
   it('shows the download phase for a self-update still waiting on the mutex', async () => {
     // The self-update panel is the SECOND site that renders a phase label, and
-    // it is driven by its own flow (`useUpdateSelf`), so the entry-panel case
-    // in this file leaves this one revertible to `t('installing')` — which is
-    // exactly the hole this pair closes.
+    // it is driven by its own flow (the page store's `self` registry, rendered
+    // through `useRegistrySelf`), so the entry-panel case in this file leaves
+    // this one revertible to `t('installing')` — which is exactly the hole
+    // this pair closes.
     const { injected, version, updateStart, installStatus } = bench(snapshot())
     version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: null })
     updateStart.mockResolvedValue({ ok: true, installId: 's1', state: 'downloading' })
@@ -2007,6 +2009,35 @@ describe('ShopTab', () => {
     await waitFor(() => expect(row.querySelector('[data-shop-toggle-error]')?.textContent).toBe('dsh-plugin-shop: dsh refused to switch dsh-hello-plugin (unknown-plugin).'))
     expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy()
     expect(row.querySelector('[data-shop-restart]')).toBeTruthy()
+  })
+
+  it('owes a restart only on the switch that was toggled: the Updatable row\'s, not the card\'s', async () => {
+    // An outdated plugin draws two switches, its card's and its Updatable
+    // row's, and each owes only what was done to it: the page store's owed
+    // map is keyed by the switch's surface as well as the plugin's identity.
+    const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
+    setEnabled.mockResolvedValue({ ok: true, activation: 'restart' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
+    const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')!
+    expect(card.querySelector('[data-shop-toggle]')).toBeTruthy()
+    fireEvent.click(row.querySelector('[data-shop-toggle]')!)
+    await waitFor(() => expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
+    expect(card.querySelector('[data-shop-toggle-restart]')).toBeNull()
+  })
+
+  it('owes a restart only on the switch that was toggled: the card\'s, not the Updatable row\'s', async () => {
+    const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
+    setEnabled.mockResolvedValue({ ok: true, activation: 'restart' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
+    const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')!
+    expect(row.querySelector('[data-shop-toggle]')).toBeTruthy()
+    fireEvent.click(card.querySelector('[data-shop-toggle]')!)
+    await waitFor(() => expect(card.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
+    expect(row.querySelector('[data-shop-toggle-restart]')).toBeNull()
   })
 
   it('renders a disabled installed plugin with its switch off', async () => {
@@ -3643,6 +3674,34 @@ describe('ShopTab catalog reload', () => {
     await waitFor(() => expect(screen.getByText(en.error)).toBeTruthy())
     expect(screen.queryByText(en.refreshFailed)).toBeNull()
   })
+
+  it('reads the installed list again, once, when the reader clicks Refresh', async () => {
+    // The installed list keys on the reader's two reload clicks and on the
+    // page store's settles, never on the catalog's request: a reverdict
+    // follows every settle a commit later, and keyed on the request each
+    // settle read the list twice (the installed-list effect in ShopTab.tsx).
+    // The settle cases pin the once; this and the next pin that the clicks
+    // still read it.
+    const { injected, installed } = bench(snapshot())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(installed).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: en.refresh }))
+    // The button gives its name back once the reload has settled.
+    await waitFor(() => expect(screen.getByRole('button', { name: en.refresh })).toBeTruthy())
+    expect(installed).toHaveBeenCalledTimes(2)
+  })
+
+  it('reads the installed list again, once, when the reader clicks Retry', async () => {
+    const { catalog, injected, installed } = bench(snapshot())
+    catalog.mockRejectedValueOnce(new Error('offline'))
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.error)).toBeTruthy())
+    expect(installed).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: en.retry }))
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(installed).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('ShopTab refresh failure across a superseding request', () => {
@@ -3947,8 +4006,9 @@ describe('ShopTab uninstall flow recovery', () => {
     // The prior update's reverdict is exactly the state a reverdict-on-failure
     // regression would be easiest to miss in: there is already a plausible
     // reason for the catalog to have been asked again. This failed uninstall
-    // must not add another — `uninstallSettled` returns before ever reaching
-    // the reverdict call for an outcome that changed nothing.
+    // must not add another — the uninstall registry's `onSettled`
+    // (page-store.ts) returns before ever reaching `settle(true)`, which
+    // raises the reverdict, for an outcome that changed nothing.
     expect(catalog).toHaveBeenCalledTimes(callsAfterUpdate)
   })
 })
@@ -4089,13 +4149,14 @@ describe('ShopTab reverdicts after a mutation settles, and feeds the page-remove
   })
 
   it('does not reverdict the catalog when an install settles failed', async () => {
-    // `installSettled`'s done-only guard (`if (outcome === 'done')
-    // setRequest({kind:'reverdict'})`): a failed install installed nothing,
-    // so nothing any badge depends on could have changed. Only the polled
-    // path reaches `installSettled` at all — a synchronous refusal from
-    // `install` itself resolves a `rejected` view directly in `useInstall.ts`
-    // and never calls it — so the failure here has to come from
-    // `installStatus` polling to a terminal `failed` state instead.
+    // The install registry's done-only guard in page-store.ts
+    // (`settle(outcome === 'done')`): a failed install installed nothing, so
+    // nothing any badge depends on could have changed. Only the polled path
+    // reaches the registry's `onSettled` at all — a refusal from `install`
+    // itself is a `rejected` view that `beginInstall` (flow-registry.ts) maps
+    // from the start's own answer, and no poll ever hands it to `onSettled` —
+    // so the failure here has to come from `installStatus` polling to a
+    // terminal `failed` state instead.
     const { injected, catalog, installStatus, installed } = bench(snapshot({ tier: 'verified' }))
     installStatus.mockResolvedValue({ found: true, state: 'failed', log: [], detail: 'boom' })
     const { container } = renderTab(injected)
@@ -4103,22 +4164,30 @@ describe('ShopTab reverdicts after a mutation settles, and feeds the page-remove
     expect(installed).toHaveBeenCalledTimes(1)
 
     fireEvent.click(container.querySelector('[data-shop-install]')!)
-    // `noteMutation()` runs on EITHER outcome (ShopTab.tsx's comment on
-    // `mutations` says so), so waiting for the installed projection's second
-    // read is proof `installSettled` already ran past that line — including,
-    // were the guard on the next line removed, the reverdict call right after
-    // it, since nothing awaits between the two.
+    // `settle()` runs on EITHER outcome (page-store.ts's comment on the
+    // install registry's `onSettled` says so), and the one publish that bumps
+    // `settled` is the one that would raise `reverdictPending`. So waiting for
+    // the installed projection's second read is proof the settle already
+    // landed — including, were the guard removed (`settle(true)`), the
+    // reverdict: the commit that re-reads the list asks for it too, and the
+    // catalog call follows a render later. In practice that lands before
+    // this wait returns (a probe of that mutant failed here), but React's
+    // scheduler does not promise the order, so this is the tab's weaker net;
+    // page-store.test.ts's "re-reads the installed list after a failed
+    // install, and asks for no reverdict" pins the guard directly.
     await waitFor(() => expect(installed).toHaveBeenCalledTimes(2), { timeout: 3000 })
     expect(catalog).not.toHaveBeenCalledWith({ reverdict: true })
   })
 
   it('does not reverdict the catalog or call noteUninstalled when an uninstall settles failed', async () => {
-    // The mirror guard in `uninstallSettled` (`if (outcome !== 'done')
-    // return`) is stronger than the install one above: a failed uninstall
-    // removed nothing, so it returns before `noteMutation`, the
-    // `noteUninstalled` lookup and the reverdict all run — none of them leave
-    // a trace to synchronize on. As above, only the polled path reaches this,
-    // never a synchronous refusal (that path never calls `uninstallSettled`).
+    // The mirror guard in the uninstall registry's `onSettled` (page-store.ts,
+    // `if (outcome !== 'done') return`) is stronger than the install one
+    // above: a failed uninstall removed nothing, so it returns before
+    // `installs.reset`, the `noteUninstalled` call and `settle(true)` all run
+    // — none of them leave a trace to synchronize on. As above, only the
+    // polled path reaches this, never a refusal from `uninstall` itself
+    // (`beginUninstall` maps that to a `failed` view no poll ever hands to
+    // `onSettled`).
     const { injected, catalog, installStatus } = bench(snapshot(), [installedRow])
     installStatus.mockResolvedValue({ found: true, state: 'failed', log: [], detail: 'still present' })
     const noteUninstalled = vi.fn()
@@ -4129,8 +4198,11 @@ describe('ShopTab reverdicts after a mutation settles, and feeds the page-remove
     // The rendered failed view is the only thing the guarded branch and its
     // mutant share to synchronize on, since correct code leaves nothing else
     // downstream of the guard to wait for. The polling tick that produces
-    // this view is the same synchronous tick that would have run the
-    // reverdict and noteUninstalled calls, had the guard been removed.
+    // this view is the same synchronous tick that would have called
+    // noteUninstalled, had the guard been removed, so that assertion is the
+    // one that kills the mutant; the reverdict it would raise reaches the
+    // catalog only a render later (the store's pending reverdict, raised by
+    // the tab's effect), so the catalog assertion is a second, weaker net.
     await waitFor(() => expect(screen.getByText(en.uninstallFailed)).toBeTruthy(), { timeout: 3000 })
     expect(catalog).not.toHaveBeenCalledWith({ reverdict: true })
     expect(noteUninstalled).not.toHaveBeenCalled()
@@ -4671,5 +4743,213 @@ describe('ShopTab red fold', () => {
     await waitFor(() => expect(cardOf(container).querySelector('[data-shop-incompatible-detail="harness-peers"]')).toBeTruthy())
     await settle()
     await waitFor(() => expect(cardOf(container).querySelector('[data-shop-fold]'), 'a third line arrived and no toggle was offered').toBeTruthy(), { timeout: 3000 })
+  })
+})
+
+describe('the page keeps the reader\'s place across leaving and returning (design 2026-10-16-shop-sidebar-page §5)', () => {
+  /** A store as index.ts builds one, over the bench's own RPCs. Disposed when
+   * the case finishes, a red one included: it polls with no tab mounted, so a
+   * store a failed assertion left behind would poll on into later cases. */
+  function pageFor(b: ReturnType<typeof bench>) {
+    const page = createPageStore(() => ({ install: b.install, uninstall: b.uninstall, updateStart: b.updateStart, installStatus: b.installStatus }), { pollUnwatched: true })
+    onTestFinished(() => { page.dispose() })
+    return page
+  }
+  const installedRow: InstalledFixture = { name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }
+
+  it('keeps the search text, the category, the order and the filter across a remount', async () => {
+    const b = bench(snapshot())
+    const page = pageFor(b)
+    const first = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.change(first.container.querySelector('input[type="search"]')!, { target: { value: 'hello' } })
+    fireEvent.click(first.container.querySelector('[data-shop-category-tab="tool"]')!)
+    fireEvent.click(first.container.querySelector('[data-shop-order="added"]')!)
+    fireEvent.click(first.container.querySelector('[data-shop-hide-incompatible]')!)
+    first.unmount()
+    const second = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(second.container.querySelector('[data-shop-category-tab="tool"]')).toBeTruthy())
+    expect((second.container.querySelector('input[type="search"]') as HTMLInputElement).value).toBe('hello')
+    expect(second.container.querySelector('[data-shop-category-tab="tool"]')?.getAttribute('aria-pressed')).toBe('true')
+    expect(second.container.querySelector('[data-shop-order="added"]')?.getAttribute('aria-pressed')).toBe('true')
+    expect(second.container.querySelector('[data-shop-hide-incompatible]')?.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('keeps an expanded card expanded across a remount', async () => {
+    const b = bench(snapshot())
+    const page = pageFor(b)
+    const first = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(first.container.querySelector('[data-shop-entry="dsh-hello-plugin"] button[aria-expanded]')!)
+    first.unmount()
+    const second = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(second.container.querySelector('[data-shop-entry="dsh-hello-plugin"]')).toBeTruthy())
+    expect(second.container.querySelector('[data-shop-entry="dsh-hello-plugin"] button[aria-expanded]')?.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('shows a running install\'s progress on a tab mounted while it runs', async () => {
+    const b = bench(snapshot({ tier: 'verified' }))
+    b.installStatus.mockResolvedValue({ found: true, state: 'running', log: ['resolving dsh-hello-plugin'] })
+    const page = pageFor(b)
+    const first = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(first.container.querySelector('[data-shop-install]')).toBeTruthy())
+    fireEvent.click(first.container.querySelector('[data-shop-install]')!)
+    await waitFor(() => expect(b.install).toHaveBeenCalledTimes(1))
+    first.unmount()
+    const second = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(second.container.querySelector('[data-shop-log-line]')?.textContent).toBe('resolving dsh-hello-plugin'), { timeout: 3000 })
+    expect(second.container.querySelector('[data-shop-install]')).toBeNull()
+  })
+
+  it('finishes an install with no tab mounted, and the next mount judges the catalog again before it shows a badge', async () => {
+    const b = bench(snapshot({ tier: 'verified' }))
+    b.installStatus.mockResolvedValue({ found: true, state: 'done', log: ['added'], activation: 'restart' })
+    const page = pageFor(b)
+    const first = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(first.container.querySelector('[data-shop-install]')).toBeTruthy())
+    fireEvent.click(first.container.querySelector('[data-shop-install]')!)
+    await waitFor(() => expect(b.install).toHaveBeenCalledTimes(1))
+    first.unmount()
+    // The store polls with no tab mounted, so the receipt is written while
+    // nobody looks.
+    await waitFor(() => expect(page.installs.getSnapshot().views.get('npm:dsh-hello-plugin')?.kind).toBe('done'), { timeout: 3000 })
+    expect(page.getSnapshot().reverdictPending).toBe(true)
+    b.catalog.mockClear()
+    const second = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(second.container.querySelector('[data-shop-restart-notice]')).toBeTruthy())
+    // The mount's FIRST request is the reverdict — a plain open could be
+    // answered from a stash taken while the install ran — and it is the only
+    // one.
+    expect(b.catalog.mock.calls[0]?.[0]).toEqual({ reverdict: true })
+    expect(b.catalog).toHaveBeenCalledTimes(1)
+    expect(page.getSnapshot().reverdictPending).toBe(false)
+  })
+
+  it('keeps a switch\'s owed restart across a remount, and dsh restarting under the page settles it', async () => {
+    const b = bench(snapshot(), [installedRow])
+    b.setEnabled.mockResolvedValue({ ok: true, activation: 'restart' })
+    const page = pageFor(b)
+    const first = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(first.container.querySelector('[data-shop-toggle]')).toBeTruthy())
+    fireEvent.click(first.container.querySelector('[data-shop-toggle]')!)
+    await waitFor(() => expect(first.container.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
+    first.unmount()
+    const second = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(second.container.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
+    act(() => { page.noteRestarted() })
+    await waitFor(() => expect(second.container.querySelector('[data-shop-toggle-restart]')).toBeNull())
+  })
+
+  it('never commits "applied without a restart" when dsh restarting under the page settles a switch', async () => {
+    const b = bench(snapshot(), [installedRow])
+    b.setEnabled.mockResolvedValue({ ok: true, activation: 'restart' })
+    const page = pageFor(b)
+    const { container } = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(container.querySelector('[data-shop-toggle]')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-toggle]')!)
+    await waitFor(() => expect(container.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
+    const inserted: Element[] = []
+    const collect = (records: MutationRecord[]): void => {
+      for (const record of records) for (const node of record.addedNodes) {
+        if (node instanceof Element && (node.matches('[data-shop-hot-apply]') || node.querySelector('[data-shop-hot-apply]') !== null)) inserted.push(node)
+      }
+    }
+    const observer = new MutationObserver(collect)
+    observer.observe(container, { childList: true, subtree: true })
+    await act(async () => { page.noteRestarted() })
+    collect(observer.takeRecords())
+    observer.disconnect()
+    expect(container.querySelector('[data-shop-toggle-restart]')).toBeNull()
+    expect(inserted).toEqual([])
+  })
+
+  // The store keeps every view for the page's life, so the remount that once
+  // cleared a failure and put the button back is gone (§5.2). Each of these
+  // views carries its own way forward instead (§8's one exception).
+  it('offers Retry on a failed install it finds on a remount, and the retry asks the host again with the same request', async () => {
+    const b = bench(snapshot())
+    b.installStatus.mockResolvedValue({ found: true, state: 'failed', log: ['ERR_PNPM_FETCH_404'], detail: 'the registry answered 404' })
+    const page = pageFor(b)
+    const first = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(first.container.querySelector('[data-shop-install]')).toBeTruthy())
+    fireEvent.click(first.container.querySelector('[data-shop-install]')!)
+    await waitFor(() => expect(b.install).toHaveBeenCalledTimes(1))
+    first.unmount()
+    // The failure lands while nobody looks.
+    await waitFor(() => expect(page.installs.getSnapshot().views.get('npm:dsh-hello-plugin')?.kind).toBe('failed'), { timeout: 3000 })
+    const second = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(second.container.querySelector('[data-shop-install-retry]')).toBeTruthy())
+    // The receipt is the card's story until the reader acts on it.
+    expect(second.container.querySelector('[data-shop-install]')).toBeNull()
+    fireEvent.click(second.container.querySelector('[data-shop-install-retry]')!)
+    await waitFor(() => expect(b.install).toHaveBeenCalledTimes(2))
+    // A community entry: the retry carries the click's acknowledgement too,
+    // or the host would refuse it.
+    expect(b.install.mock.calls[1]?.[0]).toEqual(b.install.mock.calls[0]?.[0])
+    expect(b.install.mock.calls[1]?.[0]).toMatchObject({ acknowledged: true })
+  })
+
+  it('offers Dismiss, not Retry, on a failed install whose entry the catalog now refuses, and dismissing it shows the refused label', async () => {
+    // The catalog a later mount reads refuses the entry: here dsh's own peer
+    // check, which a refresh or a reverdict since the failure can bring. A
+    // refusal the client already holds gets no install button, and a Retry is
+    // one; no retry can help, so the failure is dismissed instead.
+    const PEERS: HarnessVerdict = { peers: { refused: { '@deepseek-ai/dsh': '0.1.5-rc.3' }, running: '0.1.7-rc.2', allowCommand: null } }
+    const b = bench({ ...snapshot(), incompatibleHarness: { 'npm:dsh-hello-plugin': PEERS } })
+    b.installStatus.mockResolvedValue({ found: true, state: 'failed', log: ['ERR_PNPM_FETCH_404'], detail: 'the registry answered 404' })
+    const page = pageFor(b)
+    // The failure lands in the page store while no tab is mounted.
+    await page.installs.start('npm:dsh-hello-plugin', { name: 'dsh-hello-plugin', version: '1.2.0', source: 'npm', acknowledged: true })
+    await waitFor(() => expect(page.installs.getSnapshot().views.get('npm:dsh-hello-plugin')?.kind).toBe('failed'), { timeout: 3000 })
+    const { container } = renderTab({ ...b.injected, page })
+    const card = (): Element | null => container.querySelector('[data-shop-entry="dsh-hello-plugin"]')
+    // The card states the refusal, and the failure is still its story.
+    await waitFor(() => expect(card()?.querySelector('[data-shop-incompatible-detail="harness-peers"]')).toBeTruthy())
+    expect(card()?.textContent).toContain(en.installFailed)
+    expect(card()?.querySelector('[data-shop-install-retry]')).toBeNull()
+    expect(card()?.querySelector('[data-shop-install-dismiss]')).toBeTruthy()
+    fireEvent.click(card()!.querySelector('[data-shop-install-dismiss]')!)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-refused]')).toBeTruthy())
+    expect(card()?.querySelector('[data-shop-install]')).toBeNull()
+    expect(page.installs.getSnapshot().views.has('npm:dsh-hello-plugin')).toBe(false)
+  })
+
+  it('lets a refused install be dismissed after a remount, and the card offers Install again', async () => {
+    const b = bench(snapshot())
+    b.install.mockResolvedValue({ ok: false, code: 'version-mismatch', detail: 'the catalog has moved past 1.2.0' })
+    const page = pageFor(b)
+    const first = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(first.container.querySelector('[data-shop-install]')).toBeTruthy())
+    fireEvent.click(first.container.querySelector('[data-shop-install]')!)
+    await waitFor(() => expect(page.installs.getSnapshot().views.get('npm:dsh-hello-plugin')?.kind).toBe('rejected'))
+    first.unmount()
+    const second = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(second.container.querySelector('[data-shop-install-dismiss]')).toBeTruthy())
+    expect(second.container.querySelector('[data-shop-install]')).toBeNull()
+    fireEvent.click(second.container.querySelector('[data-shop-install-dismiss]')!)
+    await waitFor(() => expect(second.container.querySelector('[data-shop-install]')).toBeTruthy())
+    expect(second.container.querySelector('[data-shop-install-dismiss]')).toBeNull()
+    expect(page.installs.getSnapshot().views.has('npm:dsh-hello-plugin')).toBe(false)
+  })
+
+  it('lets a failed self-update be dismissed after a remount, and the version row offers Update again', async () => {
+    const b = bench(snapshot())
+    b.version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: null })
+    b.installStatus.mockResolvedValue({ found: true, state: 'failed', log: ['npm ERR! network'], detail: 'the registry could not be reached' })
+    const page = pageFor(b)
+    const first = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(first.container.querySelector('[data-shop-update-self]')).toBeTruthy())
+    fireEvent.click(first.container.querySelector('[data-shop-update-self]')!)
+    await waitFor(() => expect(first.container.querySelector('[data-shop-self-update-failed]')).toBeTruthy(), { timeout: 3000 })
+    first.unmount()
+    const second = renderTab({ ...b.injected, page })
+    await waitFor(() => expect(second.container.querySelector('[data-shop-update-self-dismiss]')).toBeTruthy())
+    // The version row answered, and still offers no Update: the failure holds
+    // the row until it is dismissed.
+    await waitFor(() => expect(second.container.querySelector('[data-shop-version]')?.textContent).toBe('v0.4.3'))
+    expect(second.container.querySelector('[data-shop-update-self]')).toBeNull()
+    fireEvent.click(second.container.querySelector('[data-shop-update-self-dismiss]')!)
+    await waitFor(() => expect(second.container.querySelector('[data-shop-update-self]')).toBeTruthy())
+    expect(second.container.querySelector('[data-shop-self-update-failed]')).toBeNull()
   })
 })

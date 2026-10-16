@@ -439,7 +439,10 @@ in the shop's button would reach dsh's page.
 - The catalog, the install gates and the install mechanics.
 - The restart handoff: `restart-monitor.ts`, its store's shape and its
   `sessionStorage` verdict.
-- What the shop body renders.
+- What the shop body renders, with one exception: a failed or rejected install
+  or update, and a failed self-update, offer Retry or Dismiss. The remount
+  that once cleared those views is gone (§5.2), so without them a failure
+  would stand until a page reload.
 
 ## 9. Testing
 
