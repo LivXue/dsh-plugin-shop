@@ -16,6 +16,7 @@ import type { ShopCatalogResult, ShopRestartResult, ShopVersionResult } from '..
 import type { ShopLocaleKey } from './locales.ts'
 import { en, zh } from './locales.ts'
 import { refineAgainstModuleTable } from './module-table.ts'
+import { createPageStore, disposeOccupant, installPageStore } from './page-store.ts'
 import { answeredByAnotherProcess } from './present.ts'
 import { noteBoot, registerRestartCarrier } from './restart-monitor.ts'
 import { ShopSection } from './ShopSection.tsx'
@@ -250,33 +251,56 @@ export async function apply(ctx: ClientContext): Promise<void> {
   const restart = async (): Promise<ShopRestartResult> => unwrap(await ns.restart())
   withdrawRestart = registerRestartCarrier(restart)
 
+  // The face's mutators, named because the page store runs its flows on them
+  // too. Each drops the stash the MOMENT it starts, not when it settles
+  // (design 2026-09-01-harness-compatibility section 9.1): a mutation always
+  // changes what a reverdict would say, and the next plain open, on this tab
+  // or a fresh one, must ask the host rather than replay a stash from before
+  // the mutation. Residual: a mount DURING the mutation refills the stash
+  // before the mutation settles. The page store covers that case: a settle
+  // leaves it a pending reverdict, and the next mount asks for that first
+  // (design 2026-10-16-shop-sidebar-page §5.4).
+  const install: ShopTabInjected['install'] = async args => { warmCatalog = null; return unwrap(await ns.installStart(args)) }
+  const installStatus: ShopTabInjected['installStatus'] = async args => unwrap(await ns.installStatus(args))
+  const uninstall: ShopTabInjected['uninstall'] = async args => { warmCatalog = null; return unwrap(await ns.uninstallStart(args)) }
+  const updateStart: ShopTabInjected['updateStart'] = async args => { warmCatalog = null; return unwrap(await ns.updateStart(args)) }
+  const noteUninstalled = (name: string): void => { pageRemoved.add(name) }
+
+  // The page's store (page-store.ts): the reader's place on the shelf and
+  // every flow, kept across leaving and returning (design
+  // 2026-10-16-shop-sidebar-page §5). Built per apply, since a re-applied
+  // bundle is a new page, and disposed with this instance, so its polling
+  // never outlives the code that started it. It hears every restart under
+  // the page, whether or not a tab is mounted to hear it.
+  const page = createPageStore(() => ({ install, uninstall, updateStart, installStatus, noteUninstalled }), { pollUnwatched: true })
+  // The store this one replaces is disposed with its own instance; disposing
+  // it here as well covers an instance whose teardown never ran. Disposal is
+  // idempotent, and its hand-over stays readable (design
+  // 2026-10-16-shop-sidebar-page §5.1). A later shop's store, met after a
+  // downgrade, need not share this shape: it is read as another schema's,
+  // and only a `dispose` it has is called (`disposeOccupant`), so a missing
+  // one cannot throw the shop off the page.
+  disposeOccupant(installPageStore(page))
+  ctx.effect(() => () => { page.dispose() }, 'dsh-plugin-shop: page store')
+  restartListeners.add(() => { page.noteRestarted() })
+
   const injected = (): ShopTabInjected => ({
     catalog: async args => handOver(await hostCatalog(args)),
-    // Each mutator drops the stash the MOMENT it starts, not when it settles
-    // (design 2026-09-01-harness-compatibility section 9.1): a mutation
-    // always changes what a reverdict would say, and if this tab unmounts
-    // before the mutation settles, no reverdict is ever
-    // requested (ShopTab's settle callbacks live in state that unmounted with
-    // it) — so the next plain open, on this tab or a fresh one, must ask the
-    // host rather than replay a stash from before the mutation. Residual: a
-    // re-mount DURING the mutation runs its own boot-time warm fetch (above)
-    // and can refill the stash before this call's own mutation settles, in
-    // which case that later boot's fetch — not this one — decides what the
-    // next plain open serves.
-    install: async args => { warmCatalog = null; return unwrap(await ns.installStart(args)) },
-    installStatus: async args => unwrap(await ns.installStatus(args)),
+    install,
+    installStatus,
     setEnabled: async args => unwrap(await ns.setEnabled(args)),
     installed: async () => unwrap(await ns.installed()),
     installedSpecs: async () => unwrap(await ns.installedSpecs()),
-    uninstall: async args => { warmCatalog = null; return unwrap(await ns.uninstallStart(args)) },
-    noteUninstalled: name => { pageRemoved.add(name) },
+    uninstall,
+    noteUninstalled,
     restart,
     version,
     onRestarted: listener => {
       restartListeners.add(listener)
       return () => { restartListeners.delete(listener) }
     },
-    updateStart: async args => { warmCatalog = null; return unwrap(await ns.updateStart(args)) },
+    updateStart,
+    page,
   })
 
   // Its own Settings section, directly after Built-in plugins (design §5.1,

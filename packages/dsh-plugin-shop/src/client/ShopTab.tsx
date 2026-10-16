@@ -10,9 +10,7 @@ import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, S
 import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, utcDay, versionLabel, versionLabelKey } from './present.ts'
 import { createPageStore, switchKey, type OwedNotice, type ShopPageStore, type SwitchSurface } from './page-store.ts'
 import { readRestartMonitor, requestRestart, subscribeRestartMonitor, type RestartMonitorState } from './restart-monitor.ts'
-import { useRegistryFlows } from './useFlows.ts'
-import type { InstallFlow } from './useInstall.ts'
-import type { UninstallFlow, UseUninstallFlows } from './useUninstall.ts'
+import { useRegistryFlows, type InstallFlow, type UninstallFlow, type UseUninstallFlows } from './useFlows.ts'
 import { useRegistrySelf } from './useUpdateSelf.ts'
 import { en, type ShopLocaleKey } from './locales.ts'
 import { expandZhQuery, tokenInText } from '../shared/zh-intents.ts'
@@ -1952,7 +1950,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
     // `views` changes on every poll response, so depending on it re-ran this
     // pass over ~9,300 entries once a second while any uninstall ran, in
     // every view, and allocated a flow object plus two closures per entry
-    // while doing it. See `pending`'s own comment in useUninstall.ts.
+    // while doing it. See `pending`'s own comment in useFlows.ts.
   }, [sortedCatalog, browsable, expansionMemo, category, installedByKey, uninstallFlows.pending])
 
   // Never in the Installed view. That view is management, not shelf: an

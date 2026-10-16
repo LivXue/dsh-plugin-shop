@@ -6,9 +6,9 @@
  * is on screen, and a flow held in a component's state — the poll loop an
  * effect of that component — stopped the moment the reader looked elsewhere:
  * the install ran on in the host, and nothing was left to fold its status or
- * write its receipt. `useKeyedFlows` (useFlows.ts) renders a registry a
- * component owns; the page store (page-store.ts) owns three that outlive
- * every component showing them.
+ * write its receipt. The page store (page-store.ts) owns three that outlive
+ * every component showing them, and `useRegistryFlows` (useFlows.ts) renders
+ * one for React.
  *
  * Install and uninstall are the same machine, and so is the shop's own
  * update: they differ only in what the STARTING RPC's answer means, which is

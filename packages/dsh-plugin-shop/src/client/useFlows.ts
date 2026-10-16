@@ -13,8 +13,8 @@
  * install refusal is a `rejected` view carrying the gate's code; an uninstall
  * refusal is a `failed` view carrying the host's published detail, because
  * `ShopUninstallResult`'s failure variant has no code to populate and those
- * codes belong to the install gate. That difference is the `begin` parameter,
- * and it is the whole of it.
+ * codes belong to the install gate. That difference is the registry's
+ * `begin`, and it is the whole of it.
  *
  * The two used to be hand-synced copies — 71 of 84 lines identical. The cost
  * was not theoretical: a single review round had to make the same edit twice
@@ -23,12 +23,13 @@
  *
  * Since 2026-10-16 the registry is its own module, framework-free, and the
  * polling belongs to it: a component's effect stopped the moment the shop left
- * the screen (design 2026-10-16-shop-sidebar-page §5).
+ * the screen (design 2026-10-16-shop-sidebar-page §5). This module only
+ * renders one, through `useRegistryFlows`.
  */
 
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import type { ShopInstallStatusResult } from '../host/index.ts'
-import { createFlowRegistry, IDLE_VIEW, type FlowRegistry, type FlowRegistryDeps } from './flow-registry.ts'
+import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
+import type { InstallArgs } from '../host/index.ts'
+import { IDLE_VIEW, type FlowRegistry } from './flow-registry.ts'
 import type { InstallView } from './present.ts'
 
 /** One identity's flow, as the tab hands it to a panel. */
@@ -49,13 +50,8 @@ export interface UseKeyedFlows<TArgs> {
    * moves. The accessor's identity still tracks `views`; the result's does
    * not, and the result is what a card should be given. */
   flowFor: (key: string) => KeyedFlow<TArgs>
-  /** Return one identity to `idle` without building a flow for it. Stable
-   * across renders (unlike `flowFor`, whose identity tracks `views`), so one
-   * registry's settle callback can supersede the other's receipt for the same
-   * key without taking a dependency on that registry's output. */
-  resetFlow: (key: string) => void
   /** Return every identity whose view `predicate` selects to `idle`, and
-   * nothing else. Stable across renders like `resetFlow`; a call selecting
+   * nothing else. Stable across renders, unlike `flowFor`; a call selecting
    * nothing leaves the registry — and so every flow and `pending` — exactly
    * as it was. The receipts dsh restarting under the page settled are
    * cleared the same way at the store, through each registry's own
@@ -78,37 +74,24 @@ export interface UseKeyedFlows<TArgs> {
   pending: ReadonlySet<string>
 }
 
+/** One entry's install flow, as the tab hands it to a panel: the page
+ * store's install registry (page-store.ts), begun through flow-registry.ts's
+ * `beginInstall`. */
+export type InstallFlow = KeyedFlow<InstallArgs>
+
+/** One entry's uninstall flow, as the tab hands it to a panel: the page
+ * store's uninstall registry, begun through `beginUninstall`. */
+export type UninstallFlow = KeyedFlow<{ name: string }>
+
+/** The uninstall flows as the tab hands them to the shadowed rows. */
+export type UseUninstallFlows = UseKeyedFlows<{ name: string }>
+
 /** Shared empty set, so an idle registry hands out one stable identity. */
 const NO_PENDING: ReadonlySet<string> = new Set()
 
-/**
- * A component's own registry: built once, handed the latest functions on
- * every render, and polling only while the component is mounted —
- * `pollUnwatched` is off, so unmounting stops it, as the effect that used to
- * poll did, and a second mount (React StrictMode's included) resumes it.
- *
- * @param begin the starting RPC and its answer, mapped to the first view.
- *   Never rejects: a transport throw is the caller's to fold into a view,
- *   because only the caller knows which localized line stands in for a
- *   detail too private to render.
- * @param onSettled called once per identity that reaches a terminal state,
- *   with WHICH terminal state. The outcome is load-bearing: a failed flow
- *   changed nothing on the server, so a caller acting on "settled" alone
- *   discards outcomes that are still true.
- */
-export function useKeyedFlows<TArgs>(
-  begin: (args: TArgs) => Promise<InstallView>,
-  installStatus: (args: { installId: string }) => Promise<ShopInstallStatusResult>,
-  onSettled?: (key: string, outcome: 'done' | 'failed') => void,
-): UseKeyedFlows<TArgs> {
-  const deps = useRef<FlowRegistryDeps<TArgs>>({ begin, installStatus, onSettled })
-  deps.current = { begin, installStatus, onSettled }
-  const [registry] = useState(() => createFlowRegistry<TArgs>(() => deps.current, { pollUnwatched: false }))
-  return useRegistryFlows(registry)
-}
-
-/** The keyed-flow face over any registry: a component's own, or one of the
- * page store's, which outlives the component. */
+/** The keyed-flow face over any registry: one of the page store's, which
+ * outlives the component, or one of the store a tab builds for itself when
+ * none is handed over (ShopTab). */
 export function useRegistryFlows<TArgs>(registry: FlowRegistry<TArgs>): UseKeyedFlows<TArgs> {
   const { views, starting } = useSyncExternalStore(registry.subscribe, registry.getSnapshot)
   const start = useCallback((key: string, args: TArgs) => registry.start(key, args), [registry])
@@ -146,8 +129,10 @@ export function useRegistryFlows<TArgs>(registry: FlowRegistry<TArgs>): UseKeyed
   //
   // The cache holds one small object per key ever asked — bounded by how far
   // the reader scrolls, since `visibleCount` only grows — and is dropped
-  // whole when `start` or `reset` change identity, because a retained flow
-  // would go on calling the superseded closure.
+  // whole when `start` or `reset` change identity, which is the hook being
+  // handed another registry: a retained flow would go on calling the
+  // superseded registry. An idle key's view is the one shared `IDLE_VIEW` in
+  // every registry, so the view alone cannot tell the two flows apart.
   const flowCache = useRef(new Map<string, KeyedFlow<TArgs>>())
   const flowClosures = useRef({ start, reset })
   const flowFor = useCallback((key: string): KeyedFlow<TArgs> => {
@@ -173,5 +158,5 @@ export function useRegistryFlows<TArgs>(registry: FlowRegistry<TArgs>): UseKeyed
     return flow
   }, [views, starting, start, reset])
 
-  return { flowFor, resetFlow: reset, resetWhere, pending }
+  return { flowFor, resetWhere, pending }
 }
