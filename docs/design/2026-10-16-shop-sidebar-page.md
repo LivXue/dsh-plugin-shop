@@ -343,9 +343,17 @@ Without a layout service, neither rule does anything.
   `main` entry before the new one registers, `retainMainPanels` drops the
   selection to the conversation, so the new `apply` selects the page again
   whenever the predecessor's store recorded the page as showing when its
-  teardown began. How that record is taken depends on the order of teardown,
-  which Task 1 measures (§9.1). If the measurement shows the selection
-  survives, rule 1 is deleted.
+  teardown began. The record is taken by the `main` injection itself: its
+  factory returns `[unregister, record]`, and cordis disposes the disposers an
+  effect collected in reverse order of collection, so `record` runs while the
+  entry still holds the selection. Measured 2026-10-16 on 0.1.5-rc.3,
+  0.1.7-rc.2 and 0.2.0-rc.2: `record` read the page as showing on all three,
+  and the new `apply` found the selection already `null` on all three — dsh
+  unregisters the old `main` entry before the new one registers, so the
+  selection does not survive and rule 1 is needed on every leg. The same three
+  legs also measured `selectPanel('shop')` under an open Settings dialog: the
+  dialog **stayed open** on all three while the page became selected behind it,
+  which is what rule 2 accepts (Task 14's hand check reads the same thing).
 - **Rule 2, a 0.8.x predecessor.** The new `apply` selects the page. The
   Settings dialog, which has lost the shop's section, falls back to its first
   section. When the reader closes it, the shop page and its restart offer are
@@ -411,7 +419,8 @@ Record:
 3. The order in which cordis disposes a fiber's effects, which decides when
    rule 1's record can be read.
 
-The findings amend §6 before any code depends on them.
+The findings amend §6 before any code depends on them. Measured 2026-10-16; the
+findings are in §6.
 
 ### 9.2 Unit
 
