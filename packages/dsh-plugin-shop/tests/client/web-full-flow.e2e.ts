@@ -3,8 +3,8 @@
  * The P2 exit criterion (spec §12): the full flow in a web profile. A REAL
  * `dsh --profile web` boots against a temporary DSH_HOME, the shop package
  * and the hello fixture are installed with the REAL `dsh plugin --profile web
- * add file:…` path, and a real chromium walks the settings modal to the shop
- * tab: the fixture entry renders unclaimed, every install (community or
+ * add file:…` path, and a real chromium walks dsh's sidebar to the shop's
+ * page: the fixture entry renders unclaimed, every install (community or
  * verified) starts on the first click with no dialog and no disclosure line,
  * and the install runs to its terminal state through the once-per-second
  * status poll.
@@ -112,10 +112,17 @@
  * - settings modal: `page.getByRole('dialog', { name: '设置' })`
  * - plugins section: `dialog.getByRole('button', { name: PLUGINS_SECTION })` —
  *   插件 on 0.1.5-rc.3, 内置插件 from 0.1.7-rc.2 on (see the constant)
- * - shop section: `openShopSection` (`dialog.getByRole('button', { name:
- *   '插件商店', exact: true })`), its own nav entry since 2026-10-15 — the
- *   panel renders lazily, only once the section is selected; its title
- *   `[data-shop-section-title]` and intro `[data-shop-section-intro]`
+ * - shop page: `openShopPage` presses the sidebar row
+ *   (`page.getByRole('button', { name: '插件商店', exact: true })`, glyph
+ *   `[data-shop-glyph]`), its own row since 0.9.0, directly under dsh's
+ *   插件 row from 0.1.7-rc.1 on (that row measured on 0.1.7-rc.2). The page
+ *   is `[data-shop-page]`, its title `[data-shop-page-title]` and its intro
+ *   `[data-shop-page-intro]`; Settings has no shop section. `leaveShopPage`
+ *   leaves it.
+ * - dsh's own Plugins page: `openDshPluginsPage` presses that 插件 row and
+ *   waits for what the case reads there; a list dsh could not read whole is
+ *   its `role="alert"` (`DSH_PLUGINS_PARTIAL`) beside a button named 重试,
+ *   which it presses
  * - shop panel + entry: `[data-shop-tab]`, `[data-shop-entry=<name>]`
  * - install: `[data-shop-install]` (one click, no dialog; a refused install
  *   shows `[data-shop-refused]` instead of the button); failure view: 安装失败
@@ -174,12 +181,12 @@
  */
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { chromium, type Browser, type Locator, type Page } from 'playwright'
+import { chromium, errors, type Browser, type Locator, type Page } from 'playwright'
 import { gte } from 'semver'
 import { isSeq, parseDocument } from 'yaml'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -196,8 +203,9 @@ import { startInstall } from '../../src/host/executor.ts'
  * or, worse, passes vacuously. The two dialog-scoped `count()).toBe(0)`
  * "nothing is live" checks are exactly that hazard — an empty collapsed
  * section satisfies them for free. (The other `count()).toBe(0)` assertions in
- * this file are scoped to the shop's body, `[data-shop-tab]`, or a card in it,
- * which this disclosure cannot empty.)
+ * this file read the shop's body, `[data-shop-tab]`, or a card in it, or dsh's
+ * sidebar before Settings first opens, and this disclosure can empty none of
+ * them.)
  *
  * What it must NOT be guarded with is a bare dot or entry selector: the preset
  * plane is open by default and renders both, so `[data-plugin-entry]` and
@@ -224,12 +232,140 @@ async function expandGlobalPlane(dialog: Locator): Promise<void> {
     .waitFor({ state: 'visible', timeout: 15_000 })
 }
 
-/** Open the shop's own Settings section (design §5.1, amended 2026-10-15): a
- * nav entry directly after 插件/内置插件 since the shop stopped being a tab
- * inside that section. The panel renders lazily, only once it is selected. */
-async function openShopSection(dialog: Locator): Promise<void> {
-  await dialog.getByRole('button', { name: '插件商店', exact: true }).click()
-  await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+/** Open the shop's own page from its row in dsh's sidebar (design
+ * 2026-10-16-shop-sidebar-page §4): close Settings when a case left it open,
+ * press the row, and wait for the shop body. Returns the page's root, the
+ * scope every shop query in a case reads through. The row's accessible name
+ * is its label, and with Settings closed nothing else carries that name. */
+async function openShopPage(app: Page): Promise<Locator> {
+  await closeSettings(app)
+  await app.getByRole('button', { name: '插件商店', exact: true }).click({ timeout: 15_000 })
+  const shop = app.locator('[data-shop-page]')
+  await shop.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+  return shop
+}
+
+/** Leave the shop page for another page of dsh: dsh's own Plugins row from
+ * 0.1.7-rc.1 on; on 0.1.5-rc.3, which has no other global row, the new
+ * session button, which returns the main column to the conversation.
+ *
+ * Both names were read off live pages on all three harnesses on 2026-10-17.
+ * The Plugins row is `插件` on 0.1.7-rc.2 and 0.2.0-rc.2 and absent on
+ * 0.1.5-rc.3. The new session button's accessible name is its aria-label,
+ * `新建会话`, while its visible text is `新会话`, so the name is matched,
+ * never the text; two buttons carry it on every harness (the sidebar head's
+ * icon and the New Session row), and either starts a session. */
+async function leaveShopPage(app: Page, dshVersion: string): Promise<void> {
+  if (gte(dshVersion, '0.1.7-rc.1')) await app.getByRole('button', { name: '插件', exact: true }).click({ timeout: 15_000 })
+  else await app.getByRole('button', { name: '新建会话', exact: true }).first().click({ timeout: 15_000 })
+  await app.locator('[data-shop-page]').waitFor({ state: 'detached', timeout: 15_000 })
+}
+
+/** What dsh's own Plugins page says in a `role="alert"` beside its 重试 when
+ * a read of its plugin list failed (dsh-client-ui-plugin-manager, zh
+ * `error`), and what 0.2.0-rc.2 says there instead once a press of 重试
+ * failed as well (`refreshError`). */
+const DSH_PLUGINS_PARTIAL = /可能由于网络问题，无法读取全部插件|刷新失败，请重试/
+/** How long dsh's Plugins page may take to settle once its row is pressed:
+ * its first read of the list, or the list it already holds. */
+const DSH_PLUGINS_SETTLE_MS = 30_000
+/** How many times a case presses dsh's 重试 before it fails by name. */
+const DSH_PLUGINS_RETRIES = 3
+/** What one press of 重试 is given to bring the list back. */
+const DSH_PLUGINS_RETRY_MS = 15_000
+
+/**
+ * Open dsh's own Plugins page from its sidebar row and wait for it to settle
+ * on `needed`, the part of its list the case goes on to use. When dsh says
+ * instead that it could not read the whole list, press dsh's own 重试, at
+ * most DSH_PLUGINS_RETRIES times and each press given DSH_PLUGINS_RETRY_MS,
+ * and fail by name if the list never comes back.
+ *
+ * Why it is needed: the page reads its list with three requests —
+ * `pluginInventory.list`, then `pluginManager.listBundles` and
+ * `pluginManager.listPlugins` (`PluginManagerController.read` in
+ * dsh-client-ui-plugin-manager, the same on 0.1.7-rc.2 and 0.2.0-rc.2) — and
+ * when any of them fails, whether the request itself fails or the host
+ * answers it with an error, the page keeps the list it had and says
+ * 可能由于网络问题，无法读取全部插件 beside a 重试. Nothing reads the list
+ * again by itself: its store lives as long as the page load, showing the
+ * page again reads only a list never read, and otherwise only 重试, 刷新, a
+ * change made through the page or announced by the host, or a reconnect
+ * reads it. So the partial list stays, and 重试 is how a reader recovers.
+ * PR #99's Windows 0.1.7-rc.2 leg met one on 2026-10-18: the main page's
+ * first read after the bundle-switch case failed, only the four official
+ * entries were listed, and the case timed out waiting for the shop's card.
+ * Aborting that first `api/pluginInventory/list` request reproduces it
+ * exactly, and no second request followed in the 30 s the case then waited
+ * (0.1.7-rc.2, measured 2026-10-18).
+ *
+ * After a press, 0.1.7-rc.2 keeps the alert up until a read succeeds, so only
+ * the press's time running out tells a failed re-read there; 0.2.0-rc.2 takes
+ * the alert down while it reads and, when that read fails too, puts it back
+ * as 刷新失败，请重试 if it holds no list, which ends the press at once, or
+ * keeps the list it has and says so in a toast.
+ *
+ * Each press prints one line to the e2e's output, naming the attempt, the
+ * harness and the case, so a CI log counts how often dsh's read fails here;
+ * a run in which dsh never fails prints none.
+ *
+ * `leaveShopPage` presses the same row only to leave the shop page. It reads
+ * nothing on dsh's page, so a partial list cannot fail it, and it does not
+ * wait for one.
+ */
+async function openDshPluginsPage(app: Page, needed: Locator, dshVersion: string): Promise<void> {
+  await app.getByRole('button', { name: '插件', exact: true }).click({ timeout: 15_000 })
+  const partial = app.getByRole('alert').filter({ hasText: DSH_PLUGINS_PARTIAL })
+  try {
+    await needed.or(partial).first().waitFor({ state: 'visible', timeout: DSH_PLUGINS_SETTLE_MS })
+  } catch (error) {
+    throw new Error(
+      `dsh's Plugins page showed neither what the case needs nor its partial-list alert within ${DSH_PLUGINS_SETTLE_MS} ms (openDshPluginsPage)`,
+      { cause: error },
+    )
+  }
+  let lastTimeout: unknown
+  for (let presses = 0; await partial.isVisible() || !await needed.isVisible(); presses += 1) {
+    if (presses === DSH_PLUGINS_RETRIES) {
+      const shows = await partial.isVisible() ? `"${(await partial.textContent() ?? '').trim()}"` : 'no alert, and not what the case needs'
+      throw new Error(
+        `dsh's Plugins page did not bring its list back after ${presses} presses of its 重试, each given ${DSH_PLUGINS_RETRY_MS} ms; it shows ${shows} (openDshPluginsPage)`,
+        { cause: lastTimeout },
+      )
+    }
+    const caseName = expect.getState().currentTestName?.split(' > ').pop() ?? 'an unnamed case'
+    console.log(`dsh Plugins page reported a partial list; pressing 重试 (attempt ${presses + 1} of ${DSH_PLUGINS_RETRIES}, dsh ${dshVersion}) in "${caseName}"`)
+    const deadline = Date.now() + DSH_PLUGINS_RETRY_MS
+    // Never 0, which Playwright reads as no timeout at all.
+    const left = (): number => Math.max(1, deadline - Date.now())
+    try {
+      await app.getByRole('button', { name: '重试', exact: true }).click({ timeout: left() })
+      await partial.waitFor({ state: 'hidden', timeout: left() })
+      await needed.or(partial).first().waitFor({ state: 'visible', timeout: left() })
+    } catch (error) {
+      // Only this press's time running out is swallowed: the loop then reads
+      // the page again, and presses once more or fails by name above.
+      if (!(error instanceof errors.TimeoutError)) throw error
+      lastTimeout = error
+    }
+  }
+}
+
+/** Open Settings from the sidebar foot and return its dialog. */
+async function openSettings(app: Page): Promise<Locator> {
+  await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
+  const settings = app.getByRole('dialog', { name: '设置' })
+  await settings.waitFor({ state: 'visible', timeout: 10_000 })
+  return settings
+}
+
+/** Close Settings when it is open; nothing otherwise. Both steps are bounded,
+ * so a case can count what this costs it against its own timeout. */
+async function closeSettings(app: Page): Promise<void> {
+  const settings = app.getByRole('dialog', { name: '设置' })
+  if (!await settings.isVisible()) return
+  await settings.locator('.VOzbGW_close').click({ timeout: 10_000 })
+  await settings.waitFor({ state: 'hidden', timeout: 10_000 })
 }
 
 /** Open 插件/内置插件 on its plugin list. Without the shop, 0.1.7-rc.2 and
@@ -498,8 +634,8 @@ async function reservePort(): Promise<number> {
  * platform decides alone — which is the defect `ActivationOffer`'s own
  * docblock describes on the product side of the same rule.
  *
- * The version gate is load-bearing and is why this takes the dialog as well as
- * the card. The client treats the advisory version check as fail-open
+ * The version gate is load-bearing and is why this takes the shop's page as
+ * well as the card. The client treats the advisory version check as fail-open
  * (`selfVersion?.restartBlocked ?? null`), so a bare wait for
  * `[data-shop-restart]` is satisfied by that default whether the host answered
  * `null`, answered nothing, or threw. `[data-shop-version]` renders if and
@@ -511,8 +647,8 @@ async function reservePort(): Promise<number> {
  * that dsh runs as a systemd service and to set an override the platform gate
  * — first of the three and the only one with no override — could never reach.
  */
-async function expectRestartOffer(dialog: Locator, card: Locator): Promise<void> {
-  await dialog.locator('[data-shop-version]').waitFor({ state: 'visible', timeout: 30_000 })
+async function expectRestartOffer(shop: Locator, card: Locator): Promise<void> {
+  await shop.locator('[data-shop-version]').waitFor({ state: 'visible', timeout: 30_000 })
   if (process.platform === 'win32') {
     const blocked = card.locator('[data-shop-restart-disabled]')
     await blocked.waitFor({ state: 'visible', timeout: 10_000 })
@@ -613,14 +749,14 @@ async function readPill(pill: Locator) {
 }
 
 /** Exercise real hover/click states under both harness theme palettes. */
-async function checkCategoryBar(app: Page, dialog: Locator): Promise<void> {
-  const all = dialog.locator('[data-shop-category-all]')
-  const tool = dialog.locator('[data-shop-category-tab="tool"]')
+async function checkCategoryBar(app: Page, shop: Locator): Promise<void> {
+  const all = shop.locator('[data-shop-category-all]')
+  const tool = shop.locator('[data-shop-category-tab="tool"]')
   const categories = ['tool', 'provider', 'ui', 'workflow', 'integration', 'theme', 'other']
   const tabs = [
     { name: 'all', locator: all },
-    ...categories.map(name => ({ name, locator: dialog.locator(`[data-shop-category-tab="${name}"]`) })),
-    { name: 'installed', locator: dialog.locator('[data-shop-category-installed]') },
+    ...categories.map(name => ({ name, locator: shop.locator(`[data-shop-category-tab="${name}"]`) })),
+    { name: 'installed', locator: shop.locator('[data-shop-category-installed]') },
   ]
   const originalTheme = await app.evaluate(() => document.body.getAttribute('data-ds-dark-theme'))
   const check = async (pill: Locator, label: string, selected: boolean, width?: number): Promise<void> => {
@@ -669,7 +805,7 @@ async function checkCategoryBar(app: Page, dialog: Locator): Promise<void> {
       // invariance becomes assertable here, where the old flipping label made
       // it a documented exception.
       await all.click()
-      const filter = dialog.locator('[data-shop-hide-incompatible]')
+      const filter = shop.locator('[data-shop-hide-incompatible]')
       // `.switch` transitions its fill and border over 120ms and a click
       // returns long before that lands, so a read taken at t=0 still carries
       // the colour the track is LEAVING — for the on-hover read below, the
@@ -779,7 +915,7 @@ async function checkTextContrast(app: Page, targets: Array<{ label: string; loca
  * time — placed in the container the component renders it in, and read like
  * any other text. The rule, the tokens and the ground are the live ones; only
  * the element is not. */
-async function checkStandInText(app: Page, dialog: Locator, entry: string): Promise<void> {
+async function checkStandInText(app: Page, shop: Locator, entry: string): Promise<void> {
   type StandIn = { label: string; local: string; tag: 'span' | 'p'; container: string | null; tier?: string }
   // `container: null` is the card: the tier badges sit in its header and the
   // reviewed line in its detail, and neither of those has a fill of its own.
@@ -789,12 +925,14 @@ async function checkStandInText(app: Page, dialog: Locator, entry: string): Prom
     { label: 'verified tier', local: 'tierBadge', tag: 'span', container: null, tier: 'verified' },
     { label: 'verified-stale tier', local: 'tierBadge', tag: 'span', container: null, tier: 'verified-stale' },
     { label: 'reviewed line', local: 'reviewedLine', tag: 'p', container: null },
-    // The self-update panel has no fill of its own, so its heading reads on
-    // the panel's ground, where plain red is at its thinnest in the dark
-    // theme: #2c2c2e is lighter than a card's #232324.
+    // The self-update panel has no fill of its own, and neither has the page
+    // around it, so its heading reads on dsh's main column: #151517 in the
+    // dark theme, below a card's #232324. (Settings, the shop's home until
+    // 0.9.0, put it on #2c2c2e, above a card's, where plain red was at its
+    // thinnest.)
     { label: 'self-update failure heading', local: 'failedHeading', tag: 'p', container: 'panel' },
   ]
-  await dialog.evaluate((root, { items, entry }) => {
+  await shop.evaluate((root, { items, entry }) => {
     const classOf = (local: string): string => {
       const pattern = new RegExp(`\\.(s[0-9a-f]{6}_${local})(?![\\w-])`)
       for (const sheet of Array.from(document.styleSheets)) {
@@ -830,10 +968,10 @@ async function checkStandInText(app: Page, dialog: Locator, entry: string): Prom
   try {
     await checkTextContrast(app, standIns.map(({ label }) => ({
       label,
-      locator: dialog.locator(`[data-shop-e2e-stand-in="${label}"]`),
+      locator: shop.locator(`[data-shop-e2e-stand-in="${label}"]`),
     })))
   } finally {
-    await dialog.evaluate(root => {
+    await shop.evaluate(root => {
       for (const el of root.querySelectorAll('[data-shop-e2e-stand-in]')) el.remove()
     })
   }
@@ -871,9 +1009,9 @@ async function checkRestartOfferText(app: Page, card: Locator): Promise<void> {
  * shadow fades over 120ms, and a probe of the live catalog read one card at
  * alpha 0.0008 on its way out. Finite animations only — an infinite one, such
  * as a spinner, never finishes. */
-async function checkOneLine(app: Page, dialog: Locator): Promise<void> {
+async function checkOneLine(app: Page, shop: Locator): Promise<void> {
   await app.mouse.move(0, 0)
-  const tab = dialog.locator('[data-shop-tab]')
+  const tab = shop.locator('[data-shop-tab]')
   const offenders = await tab.evaluate(async root => {
     const active = document.activeElement
     if (active instanceof HTMLElement && root.contains(active)) active.blur()
@@ -1304,28 +1442,51 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         .waitFor({ state: 'visible', timeout: 30_000 })
       await expectNoDialog(app)
 
-      // Settings → 插件商店, its own section: the pinned live-app selectors.
-      await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
-      const dialog = app.getByRole('dialog', { name: '设置' })
-      await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-      // Directly after 插件/内置插件 and before Agent 预设 (design §5.1,
-      // amended 2026-10-15), in the order the shell draws its nav.
-      const navLabels = (await dialog.locator('nav button').allTextContents()).map(text => text.trim())
-      const shopAt = navLabels.indexOf('插件商店')
-      expect(shopAt, JSON.stringify(navLabels)).toBeGreaterThan(0)
-      expect(navLabels[shopAt - 1] ?? '', JSON.stringify(navLabels)).toMatch(PLUGINS_SECTION)
-      expect(navLabels[shopAt + 1] ?? '', JSON.stringify(navLabels)).toBe('Agent 预设')
-      await openShopSection(dialog)
-      expect(await dialog.getByRole('button', { name: '插件商店', exact: true }).getAttribute('aria-current')).toBe('true')
-      expect(await dialog.locator('[data-shop-section-title]').textContent()).toBe('插件商店')
-      expect(await dialog.locator('[data-shop-section-intro]').textContent()).toBe('浏览、安装和更新目录中的插件。')
+      // The shop's own page, from its row in dsh's sidebar (design
+      // 2026-10-16-shop-sidebar-page §4.1): directly under dsh's 插件 row from
+      // 0.1.7-rc.1 on, that row measured on 0.1.7-rc.2; on 0.1.5-rc.3, which
+      // has no Plugins page, the only global row.
+      const shopRow = app.getByRole('button', { name: '插件商店', exact: true })
+      await shopRow.waitFor({ state: 'visible', timeout: 30_000 })
+      expect(await shopRow.locator('[data-shop-glyph]').count()).toBe(1)
+      const pluginsRow = app.getByRole('button', { name: '插件', exact: true })
+      if (gte(launchedDshVersion, '0.1.7-rc.1')) {
+        const above = await pluginsRow.boundingBox()
+        const below = await shopRow.boundingBox()
+        expect(above, 'dsh\'s 插件 row has a box').not.toBeNull()
+        expect(below, 'the shop\'s row has a box').not.toBeNull()
+        if (above !== null && below !== null) {
+          // The next row down in the same column.
+          expect(below.y).toBeGreaterThan(above.y)
+          expect(below.y - above.y).toBeLessThan(2 * above.height)
+          expect(Math.abs(below.x - above.x)).toBeLessThan(2)
+        }
+      } else {
+        expect(await pluginsRow.count()).toBe(0)
+      }
+      // Settings has no shop section any more (design
+      // 2026-10-16-shop-sidebar-page §2).
+      const settings = await openSettings(app)
+      // Read once the dialog shows its plugins section, so each absence below
+      // is read off a drawn section list rather than an empty one.
+      await settings.getByRole('button', { name: PLUGINS_SECTION }).waitFor({ state: 'visible', timeout: 10_000 })
+      expect(await settings.getByRole('button', { name: '插件商店', exact: true }).count()).toBe(0)
+      // The nav's own labels as well, once they are shown to hold that section.
+      const navLabels = (await settings.locator('nav button').allTextContents()).map(text => text.trim())
+      expect(navLabels.some(label => PLUGINS_SECTION.test(label)), JSON.stringify(navLabels)).toBe(true)
+      expect(navLabels, JSON.stringify(navLabels)).not.toContain('插件商店')
+      await closeSettings(app)
+      const shop = await openShopPage(app)
+      expect(await shopRow.getAttribute('aria-current')).toBe('page')
+      expect(await shop.locator('[data-shop-page-title]').textContent()).toBe('插件商店')
+      expect(await shop.locator('[data-shop-page-intro]').textContent()).toBe('浏览、安装和更新目录中的插件。')
       await checkTextContrast(app, [
-        { label: 'section title', locator: dialog.locator('[data-shop-section-title]') },
-        { label: 'section intro', locator: dialog.locator('[data-shop-section-intro]') },
+        { label: 'page title', locator: shop.locator('[data-shop-page-title]') },
+        { label: 'page intro', locator: shop.locator('[data-shop-page-intro]') },
       ])
 
       // The fixture entry renders with the community tier badge (§6.1).
-      const card = dialog.locator('[data-shop-entry="dsh-e2e-fixture-plugin"]')
+      const card = shop.locator('[data-shop-entry="dsh-e2e-fixture-plugin"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
       // The community tier is NOT badged: every entry in the live catalog
       // carries it, so the label was on every card and said nothing. This
@@ -1421,7 +1582,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // a missing card fails as a missing CARD, a stripped key fails the
       // `attached` wait (the DOM question this actually asks), and a
       // mis-formatted figure fails one of the two assertions below.
-      const liveCard = dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]')
+      const liveCard = shop.locator('[data-shop-entry="dsh-shop-e2e-live"]')
       await liveCard.waitFor({ state: 'visible', timeout: 15_000 })
       const liveSize = liveCard.locator('[data-shop-size]')
       await liveSize.waitFor({ state: 'attached', timeout: 10_000 })
@@ -1430,11 +1591,38 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
 
       // Both themes and all three active states: readable text, the shared
       // category hue on the selected border, and exact category-tab widths.
-      await checkCategoryBar(app, dialog)
+      await checkCategoryBar(app, shop)
       // Then the whole tab: one 1px line per control, as the cascade resolves it.
-      await checkOneLine(app, dialog)
+      await checkOneLine(app, shop)
       // And the warn and success texts this run never stages, from their rules.
-      await checkStandInText(app, dialog, 'dsh-e2e-fixture-plugin')
+      await checkStandInText(app, shop, 'dsh-e2e-fixture-plugin')
+      // The page keeps its scroll position across leaving and returning
+      // (design 2026-10-16-shop-sidebar-page §5.7). Six cards fit the usual
+      // viewport, so a short one makes the page scroll; the usual one comes
+      // back even when a step here fails, so no later case runs short.
+      await app.setViewportSize({ width: 1680, height: 480 })
+      try {
+        await shop.locator('[data-shop-page-title]').hover()
+        await app.mouse.wheel(0, 4000)
+        // Settled, never slept for: two reads two frames apart agree. The
+        // page writes the position on every scroll event, at most one a
+        // frame, so the settled position is also the one its store holds.
+        const settledTop = (): Promise<number> => shop.evaluate(el => new Promise<number>(resolve => {
+          const first = el.scrollTop
+          requestAnimationFrame(() => requestAnimationFrame(() => { resolve(el.scrollTop === first ? first : -1) }))
+        }))
+        await expect.poll(settledTop, { timeout: 5_000 }).toBeGreaterThan(0)
+        const scrolled = await shop.evaluate(el => el.scrollTop)
+        await leaveShopPage(app, launchedDshVersion)
+        await openShopPage(app)
+        await expect.poll(() => shop.evaluate(el => el.scrollTop), { timeout: 10_000 }).toBe(scrolled)
+        // The reopen left the pointer on the sidebar row, where a wheel
+        // scrolls the sidebar: back over the page first.
+        await shop.hover()
+        await app.mouse.wheel(0, -4000)
+      } finally {
+        await app.setViewportSize({ width: 1680, height: 1000 })
+      }
 
       // The expanded detail's npm row: the link to the package's own npm page,
       // the other half of that same comparison.
@@ -1449,14 +1637,14 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
 
       // The starred fixture renders its badge through the real wire → host →
       // client path.
-      await dialog.getByText('★ 4.3k').waitFor({ state: 'visible', timeout: 15_000 })
+      await shop.getByText('★ 4.3k').waitFor({ state: 'visible', timeout: 15_000 })
 
       // Install → starts immediately: no §9.3 dialog, no confirm button, and
       // since 2026-10-15 no line on the page restates the dialog's facts. The
       // card and its star badge were waited for above, so these counts read a
       // rendered shelf, not an empty one.
-      expect(await dialog.locator('[data-shop-tab] [data-shop-disclosure]').count()).toBe(0)
-      expect(await dialog.locator('[data-shop-tab]').getByText('安装后，插件拥有与内置插件相同的权限').count()).toBe(0)
+      expect(await shop.locator('[data-shop-tab] [data-shop-disclosure]').count()).toBe(0)
+      expect(await shop.locator('[data-shop-tab]').getByText('安装后，插件拥有与内置插件相同的权限').count()).toBe(0)
       expect(await card.locator('[data-shop-confirm]').count()).toBe(0)
       await card.locator('[data-shop-install]').click()
       await card.getByText('安装失败').waitFor({ timeout: 60_000 })
@@ -1502,14 +1690,69 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(page).toBeDefined()
       const app = page!
 
-      // The settings dialog from the first spec is still open on the 插件商店
-      // section; the live fixture card renders alongside the failed-install card.
-      const dialog = app.getByRole('dialog', { name: '设置' })
-      const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]')
+      // The shop page case 1 leaves showing, the live fixture card beside the
+      // failed-install card. Pressing the row of a page that is showing
+      // changes nothing, and a case 1 that stopped early does not take this
+      // case down with it.
+      const shop = await openShopPage(app)
+      const card = shop.locator('[data-shop-entry="dsh-shop-e2e-live"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
 
-      // Install through the real wire: one click, then the poll to done.
+      // Leaving mid-install and coming back (design
+      // 2026-10-16-shop-sidebar-page §5): the search text and the category
+      // are kept, and the install, polled while no page showed it, has its
+      // receipt waiting.
+      await shop.locator('input[type="search"]').fill('e2e-live')
+      // A derived entry, as every fixture is, reads as `other` (present.ts
+      // `categoryKey`), so this category keeps the card on the shelf.
+      const other = shop.locator('[data-shop-category-tab="other"]')
+      await other.click()
+      // The store's own status poll coming back terminal. dsh carries the RPC
+      // as a POST to `api/shop/installStatus` and answers
+      // `{"type":"server-response","result":{"ok":true,"value":{"found":true,
+      // "state":"done",…}}}` once the install is done (read off live pages on
+      // all three harnesses, 2026-10-17). This case starts one install, so
+      // that is the only one the store polls; the wait is armed before the
+      // install starts, so no answer can land ahead of it.
+      const finished = app.waitForResponse(async response => {
+        if (response.request().method() !== 'POST' || !response.url().endsWith('/api/shop/installStatus')) return false
+        const body = await response.json().catch(() => null) as { result?: { ok?: boolean; value?: { found?: boolean; state?: string } } } | null
+        const status = body?.result?.ok === true ? body.result.value : undefined
+        // Terminal as the store folds it: done, failed, or a record lost.
+        return status !== undefined && (status.found === false || status.state === 'done' || status.state === 'failed')
+      }, { timeout: 60_000 })
+      // A step below that throws must not leave this to reject unheard.
+      void finished.catch(() => {})
       await card.locator('[data-shop-install]').click()
+      await leaveShopPage(app, launchedDshVersion)
+      // The install finishes with no page mounted, and the store hears it
+      // first: its poll comes back terminal while the column shows another
+      // page.
+      await finished
+      // Then the two witnesses that do not depend on the shop. The profile
+      // manifest lists the package,
+      const dependencies = (): string[] => Object.keys(
+        (JSON.parse(readFileSync(join(tmpHome, 'profiles', 'web', 'package.json'), 'utf8')) as { dependencies?: Record<string, string> }).dependencies ?? {},
+      )
+      expect(dependencies()).toContain('dsh-shop-e2e-live')
+      // and the loader inventory lists it live, the strict read of what is
+      // actually mounted. A route-based probe is unavailable: the harness
+      // bundles no plugin-side HTTP router for the fixture to register on
+      // (see the fixture's index.js comment). On the CLI path the hot entry
+      // carries the mkt- prefixed row id at the end of its inventory id chain
+      // (the shop registers the hot tree from its own context, so the tree
+      // is the subtree of the shop's own loader entry and the loader lists it
+      // as `include:shop:mkt-e2e-live`), plus the enabled tag and the active
+      // phase dot. It read `include:typert-gateway:…` until 2026-09-26,
+      // while the tree was still registered from whichever context made the
+      // RPC call (ShopGateway's `home` field). Through dsh's plugin manager,
+      // dsh composes the bundle itself, at the root of its plugin tree, so
+      // the entry is the fixture's own row, beside the boot-composed ones.
+      const liveId = managerPath ? 'include:e2e-live' : 'include:shop:mkt-e2e-live'
+      await expectLiveInInventory(liveId)
+      await openShopPage(app)
+      expect(await shop.locator('input[type="search"]').inputValue()).toBe('e2e-live')
+      expect(await other.getAttribute('aria-pressed')).toBe('true')
 
       // activation `live`: the done view renders the no-restart notice
       // (never a restart reason) and offers no restart. A hot-mount failure
@@ -1530,36 +1773,20 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
           .toBe("via dsh's plugin manager: install dsh-shop-e2e-live@1.0.0")
       }
 
-      // Liveness through the loader inventory — the strict read of what is
-      // actually mounted. A route-based probe is unavailable: the harness
-      // bundles no plugin-side HTTP router for the fixture to register on
-      // (see the fixture's index.js comment). On the CLI path the hot entry
-      // carries the mkt- prefixed row id at the end of its inventory id chain
-      // (the shop registers the hot tree from its own context, so the tree
-      // is the subtree of the shop's own loader entry and the loader lists it
-      // as `include:shop:mkt-e2e-live`), plus the enabled tag and the active
-      // phase dot. It read `include:typert-gateway:…` until 2026-09-26,
-      // while the tree was still registered from whichever context made the
-      // RPC call (ShopGateway's `home` field). Through dsh's plugin manager,
-      // dsh composes the bundle itself, at the root of its plugin tree, so
-      // the entry is the fixture's own row, beside the boot-composed ones.
-      const liveId = managerPath ? 'include:e2e-live' : 'include:shop:mkt-e2e-live'
-      await expectLiveInInventory(liveId)
-
-      // Switching to 插件/内置插件 and back must show the installed actions
-      // without closing Settings or pressing Refresh. Since 2026-10-15 the
-      // shop is its own section and the shell renders only the open one, so
-      // the return is a fresh mount; the in-place re-read itself (G-9) is the
-      // unit case in ShopTab.client.spec.tsx.
-      await openPluginList(dialog)
+      // Settings opens over the shop page, which stays mounted beneath it:
+      // Built-in plugins is read there, and Settings closes again. The
+      // in-place re-read itself (G-9) is the unit case in
+      // ShopTab.client.spec.tsx.
+      const settings = await openSettings(app)
+      await openPluginList(settings)
       // What Built-in plugins holds without the shop (design §5.1, amended
       // 2026-10-15), read on every leg: 0.1.7-rc.2 and later register
       // 插件列表 alone and draw its page with no tab bar; 0.1.5-rc.3 also
       // registers 插件配置, at order 0, so its bar keeps two tabs.
-      const pluginTabs = (await dialog.getByRole('tab').allTextContents()).map(text => text.trim())
+      const pluginTabs = (await settings.getByRole('tab').allTextContents()).map(text => text.trim())
       expect(pluginTabs).toEqual(gte(launchedDshVersion, '0.1.7-rc.2') ? [] : ['插件配置', '插件列表'])
-      await openShopSection(dialog)
-      const card2 = dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]')
+      await closeSettings(app)
+      const card2 = shop.locator('[data-shop-entry="dsh-shop-e2e-live"]')
       await card2.waitFor({ state: 'visible', timeout: 15_000 })
       const uninstall = card2.locator('[data-shop-uninstall]')
       await uninstall.waitFor({ state: 'visible', timeout: 15_000 })
@@ -1621,13 +1848,15 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // entry. What proves the snapshot rendered is `expandGlobalPlane`'s own
       // postcondition, a visible card whose id carries the `include:` prefix,
       // so the absence below is an absence and not an unrendered list.
-      await dialog.locator('.VOzbGW_close').click()
-      await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
-      const dialog3 = app.getByRole('dialog', { name: '设置' })
-      await dialog3.waitFor({ state: 'visible', timeout: 10_000 })
-      await openPluginList(dialog3)
-      await expandGlobalPlane(dialog3)
-      expect(await dialog3.locator(`[data-plugin-entry="${liveId}"]`).count()).toBe(0)
+      const settings3 = await openSettings(app)
+      await openPluginList(settings3)
+      await expandGlobalPlane(settings3)
+      expect(await settings3.locator(`[data-plugin-entry="${liveId}"]`).count()).toBe(0)
+      // The next case starts from an unfiltered shelf: the store kept this
+      // search and this category.
+      await closeSettings(app)
+      await shop.locator('input[type="search"]').fill('')
+      await shop.locator('[data-shop-category-all]').click()
     },
     120_000,
   )
@@ -1638,15 +1867,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(page).toBeDefined()
       const app = page!
 
-      // Close the dialog left open by the previous spec, then reopen on the
-      // shop section for the config fixture's card.
-      const dialog0 = app.getByRole('dialog', { name: '设置' })
-      await dialog0.locator('.VOzbGW_close').click()
-      await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
-      const dialog = app.getByRole('dialog', { name: '设置' })
-      await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-      await openShopSection(dialog)
-      const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-config"]')
+      const shop = await openShopPage(app)
+      const card = shop.locator('[data-shop-entry="dsh-shop-e2e-config"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
 
       // Install: the same one click and poll.
@@ -1673,19 +1895,16 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         expect(await notice.textContent()).toContain('该插件的补丁包含无法热挂载的配置；重启 dsh 后生效')
         // The section 8 restart offer for a restart-required install, as the
         // host allows it on THIS platform; see `expectRestartOffer`.
-        await expectRestartOffer(dialog, card)
+        await expectRestartOffer(shop, card)
 
         // Nothing is live: a fresh settings mount takes a fresh inventory
         // snapshot, and the config fixture has no hot entry in it.
         // `expandGlobalPlane`'s postcondition is again what separates that
         // from a Loader plane that simply has not rendered.
-        await dialog.locator('.VOzbGW_close').click()
-        await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
-        const dialog2 = app.getByRole('dialog', { name: '设置' })
-        await dialog2.waitFor({ state: 'visible', timeout: 10_000 })
-        await openPluginList(dialog2)
-        await expandGlobalPlane(dialog2)
-        expect(await dialog2.locator('[data-plugin-entry="include:shop:mkt-e2e-config"]').count()).toBe(0)
+        const settings = await openSettings(app)
+        await openPluginList(settings)
+        await expandGlobalPlane(settings)
+        expect(await settings.locator('[data-plugin-entry="include:shop:mkt-e2e-config"]').count()).toBe(0)
       }
     },
     120_000,
@@ -1697,17 +1916,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(page).toBeDefined()
       const app = page!
 
-      // Close the dialog left open by the previous spec, then reopen on the
-      // shop section for the peer fixture's card (same reopen sequence as the
-      // previous spec's start: the settings modal was left on 插件列表 on the
-      // CLI path, and on the shop section through the plugin manager).
-      const dialog0 = app.getByRole('dialog', { name: '设置' })
-      await dialog0.locator('.VOzbGW_close').click()
-      await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
-      const dialog = app.getByRole('dialog', { name: '设置' })
-      await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-      await openShopSection(dialog)
-      const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-peer"]')
+      const shop = await openShopPage(app)
+      const card = shop.locator('[data-shop-entry="dsh-shop-e2e-peer"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
 
       // The catalog entry declares two peers, and the verdict takes both stages
@@ -1823,7 +2033,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         const allow = dshCommand({ dshBin: 'dsh', args: argv, platform: process.platform, execPath: process.execPath, script: dshScript })
         const allowed = spawnSync(allow.command, allow.args, { encoding: 'utf8', env: { ...process.env, DSH_HOME: tmpHome } })
         expect(allowed.status, `the exemption command failed:\n${allowed.stderr}`).toBe(0)
-        await dialog.locator('[data-shop-catalog-refresh]').click()
+        await shop.locator('[data-shop-catalog-refresh]').click()
         await refusal.waitFor({ state: 'detached', timeout: 15_000 })
         await label.waitFor({ state: 'detached', timeout: 15_000 })
         await installButton.waitFor({ state: 'visible', timeout: 15_000 })
@@ -1892,7 +2102,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // badge it — the false alarm 755 live entries carried. The peer card's
       // badge above is rendered, so the refined verdict has arrived and this
       // count is final.
-      const liveCard = dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]')
+      const liveCard = shop.locator('[data-shop-entry="dsh-shop-e2e-live"]')
       expect(await liveCard.count()).toBe(1)
       expect(await liveCard.locator('[data-shop-blocker]').count(), 'a seed-only card was badged').toBe(0)
 
@@ -1913,7 +2123,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // module table formed: its count comes from their run, not from a
       // fixture that asserts the answer, and this fixture profile makes
       // exactly one of the six shelf entries incompatible.
-      const filter = dialog.locator('[data-shop-hide-incompatible]')
+      const filter = shop.locator('[data-shop-hide-incompatible]')
       await filter.waitFor({ state: 'visible', timeout: 10_000 })
       expect(await filter.textContent()).toBe(zh.hideIncompatible.replace('{count}', '1'))
       expect(await filter.getAttribute('aria-checked')).toBe('false')
@@ -1930,7 +2140,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // layouts, which is why it is the property and the other was an
       // accident of how one machine broke the line.
       const filterBox = await filter.boundingBox()
-      const barBox = await dialog.locator('[class*="categoryBar"]').boundingBox()
+      const barBox = await shop.locator('[class*="categoryBar"]').boundingBox()
       expect(filterBox).not.toBeNull()
       expect(barBox).not.toBeNull()
       if (filterBox !== null && barBox !== null) {
@@ -1950,7 +2160,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // The compatible fixtures stayed — the seed-only live card among them,
       // which the filter would have taken too if node resolution alone had
       // decided.
-      expect(await dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]').count()).toBe(1)
+      expect(await shop.locator('[data-shop-entry="dsh-shop-e2e-live"]').count()).toBe(1)
       await filter.click()
       await card.waitFor({ state: 'visible', timeout: 10_000 })
 
@@ -1982,16 +2192,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(page).toBeDefined()
       const app = page!
 
-      // Close the dialog left open by the previous spec, then reopen on the
-      // shop section for the client fixture's card (same reopen sequence as the
-      // previous two specs' start).
-      const dialog0 = app.getByRole('dialog', { name: '设置' })
-      await dialog0.locator('.VOzbGW_close').click()
-      await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
-      const dialog = app.getByRole('dialog', { name: '设置' })
-      await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-      await openShopSection(dialog)
-      const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-client"]')
+      const shop = await openShopPage(app)
+      const card = shop.locator('[data-shop-entry="dsh-shop-e2e-client"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
 
       // Install: the same one click and poll as every other hot-mount scenario.
@@ -2059,8 +2261,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(before.ids).not.toContain('dsh-shop-e2e-client')
       expect(before.ids).toContain('dsh-plugin-shop')
       await app.reload({ waitUntil: 'domcontentloaded' })
-      // The next case opens Settings on this page, so its first run is waited
-      // out here, while the toast that marks it is still up.
+      // Later cases use this page again, so its first run is waited out here,
+      // while the toast that marks it is still up.
       await waitForFirstRun(app, launchedDshVersion)
       await app.waitForFunction(
         () => (window as unknown as { __DSH_BOOT__?: unknown }).__DSH_BOOT__ !== undefined,
@@ -2091,24 +2293,21 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // reach its assertions.
       expect(browser).toBeDefined()
       const before = updateActivations().length
-      // A page of its own, as the bundle-switch case at the end has: the
-      // update case opens Settings on the main page next and expects that
-      // page as the client case's reload left it, with no dialog open and
-      // no shop holding this case's data or filter.
+      // A page of its own, as the bundle-switch case below has: the update
+      // case opens the shop on the main page next and expects that page as
+      // the client case's reload left it, with no dialog open and no shop
+      // holding this case's data or filter.
       const fresh = await browser!.newPage({ locale: 'zh-CN', viewport: { width: 1680, height: 1000 } })
       try {
         await fresh.goto(webUrl, { waitUntil: 'load' })
         await waitForFirstRun(fresh, launchedDshVersion)
         await fresh.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-        await fresh.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
-        const dialog = fresh.getByRole('dialog', { name: '设置' })
-        await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-        await openShopSection(dialog)
+        const shop = await openShopPage(fresh)
 
         // The package is outdated here (1.0.0 installed, 2.0.0 in the
         // catalog), so its switch is drawn twice, on its card and on its row
         // in the updatable section. This is the card's.
-        const row = dialog.locator('[data-shop-entry="dsh-shop-e2e-update"] [data-shop-enabled-switch="dsh-shop-e2e-update"]')
+        const row = shop.locator('[data-shop-entry="dsh-shop-e2e-update"] [data-shop-enabled-switch="dsh-shop-e2e-update"]')
         const toggle = row.locator('[data-shop-toggle]')
         await toggle.waitFor({ state: 'visible', timeout: 15_000 })
         expect(await toggle.getAttribute('aria-checked')).toBe('true')
@@ -2150,14 +2349,12 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(page).toBeDefined()
       const app = page!
 
-      // The previous spec ended on a page reload, so no dialog is open: wait
-      // for the app's own chrome, then open the shop section from scratch.
+      // The client case ended on a page reload, which leaves the main column
+      // on the conversation: wait for the app's own chrome, then open the
+      // shop page from its row.
       await app.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-      await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
-      const dialog = app.getByRole('dialog', { name: '设置' })
-      await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-      await openShopSection(dialog)
-      const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-update"]')
+      const shop = await openShopPage(app)
+      const card = shop.locator('[data-shop-entry="dsh-shop-e2e-update"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
 
       // The boot imported 1.0.0 and nothing else: the only code this process
@@ -2193,7 +2390,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
 
       // What the reader is told instead: restart, and why.
       expect(await notice.textContent()).toBe(zh.hotAlreadyLoadedNotice)
-      await expectRestartOffer(dialog, card)
+      await expectRestartOffer(shop, card)
       await checkRestartOfferText(app, card)
       expect(await card.locator('[data-shop-reload]').count()).toBe(0)
     },
@@ -2216,9 +2413,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(selected()).toContain('dsh-shop-e2e-update')
       const activationsBefore = updateActivations().length
 
-      // A page of its own: the previous case left Settings open on the main
-      // one, and 0.1.7 keeps a Settings tab it has shown mounted with the
-      // data it read then (see the hot-mount case's probe).
+      // A page of its own, as the toggle case has: its shop has a store of its
+      // own, so this case reads nothing the earlier cases left on the main
+      // page, and the cases after it do not inherit its Installed view.
       const fresh = await browser!.newPage({ locale: 'zh-CN', viewport: { width: 1680, height: 1000 } })
       try {
         await fresh.goto(webUrl, { waitUntil: 'load' })
@@ -2228,9 +2425,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         // Off, with the switch a person uses: the bundle switch on the card
         // dsh's own Plugins page shows for the package. dsh takes the package
         // out of the selection and leaves it installed.
-        await fresh.getByRole('button', { name: '插件', exact: true }).click({ timeout: 15_000 })
         const dshSwitch = fresh.getByRole('switch', { name: '启用 dsh-shop-e2e-update' })
-        await dshSwitch.waitFor({ state: 'visible', timeout: 15_000 })
+        await openDshPluginsPage(fresh, dshSwitch, launchedDshVersion)
         expect(await dshSwitch.getAttribute('aria-checked')).toBe('true')
         await dshSwitch.click()
         await expect.poll(selected, { timeout: 15_000 }).not.toContain('dsh-shop-e2e-update')
@@ -2240,12 +2436,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         // The shop reads it as off. dsh keeps no inventory entry for a
         // deselected bundle, and before 2026-09-27 the shop read that silence
         // as "enabled".
-        await fresh.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
-        const dialog = fresh.getByRole('dialog', { name: '设置' })
-        await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-        await openShopSection(dialog)
-        await dialog.locator('[data-shop-category-installed]').click()
-        const row = dialog.locator('[data-shop-enabled-switch="dsh-shop-e2e-update"]')
+        const shop = await openShopPage(fresh)
+        await shop.locator('[data-shop-category-installed]').click()
+        const row = shop.locator('[data-shop-enabled-switch="dsh-shop-e2e-update"]')
         const toggle = row.locator('[data-shop-toggle]')
         await toggle.waitFor({ state: 'visible', timeout: 15_000 })
         expect(await toggle.getAttribute('aria-checked')).toBe('false')
@@ -2269,5 +2462,161 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       }
     },
     120_000,
+  )
+
+  it(
+    "leads into the shop from dsh's Plugins page: from the shop's own bundle page, and from another bundle's",
+    async context => {
+      if (!gte(launchedDshVersion, '0.1.7-rc.1')) context.skip()
+      expect(page).toBeDefined()
+      const app = page!
+      // A shelf the reader set up and walked away from: a search, a category
+      // and the incompatible filter, none of them the default.
+      const shop = await openShopPage(app)
+      const search = shop.locator('input[type="search"]')
+      const other = shop.locator('[data-shop-category-tab="other"]')
+      const filter = shop.locator('[data-shop-hide-incompatible]')
+      await search.fill('e2e')
+      await other.click()
+      await filter.click()
+      expect(await filter.getAttribute('aria-checked')).toBe('true')
+      // dsh's Plugins page, then the shop's own card on its Installed list.
+      // A card opens from its title button, which dsh names `查看 <title>`
+      // (`openDetail`, the same on 0.1.7-rc.2 and 0.2.0-rc.2), and these
+      // packages declare no title, so it is their name.
+      const shopCard = app.getByRole('button', { name: '查看 dsh-plugin-shop', exact: true })
+      await openDshPluginsPage(app, shopCard, launchedDshVersion)
+      await shopCard.click({ timeout: 15_000 })
+      const openShop = app.locator('[data-shop-open-shop]')
+      await openShop.waitFor({ state: 'visible', timeout: 15_000 })
+      expect(await openShop.textContent()).toBe(zh.openShop)
+      await openShop.click()
+      await shop.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+      // Open Plugin shop selects the page as the reader left it (design
+      // 2026-10-16-shop-sidebar-page §7): all three are still set.
+      expect(await search.inputValue()).toBe('e2e')
+      expect(await other.getAttribute('aria-pressed')).toBe('true')
+      expect(await filter.getAttribute('aria-checked')).toBe('true')
+      // Another bundle the shelf lists: its page offers the shelf, and the
+      // shelf opens on that plugin alone, its card expanded. The search is
+      // replaced, and the category and the filter are cleared (design
+      // 2026-10-16-shop-sidebar-page §7).
+      const updateCard = app.getByRole('button', { name: '查看 dsh-shop-e2e-update', exact: true })
+      await openDshPluginsPage(app, updateCard, launchedDshVersion)
+      await updateCard.click({ timeout: 15_000 })
+      const viewInShop = app.locator('[data-shop-view-in-shop]')
+      await viewInShop.waitFor({ state: 'visible', timeout: 15_000 })
+      expect(await viewInShop.textContent()).toBe(zh.viewInShop)
+      await viewInShop.click()
+      await shop.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+      expect(await search.inputValue()).toBe('dsh-shop-e2e-update')
+      expect(await shop.locator('[data-shop-category-all]').getAttribute('aria-pressed')).toBe('true')
+      expect(await filter.getAttribute('aria-checked')).toBe('false')
+      const card = shop.locator('[data-shop-entry="dsh-shop-e2e-update"]')
+      await card.waitFor({ state: 'visible', timeout: 15_000 })
+      expect(await shop.locator('[data-shop-entry]').count()).toBe(1)
+      expect(await card.locator('button[aria-expanded]').getAttribute('aria-expanded')).toBe('true')
+      // What the next case expects: an unfiltered shelf. The page's store
+      // keeps the whole shelf, and View has already cleared the category and
+      // the filter.
+      await search.fill('')
+    },
+    // Above the named waits' sum, 335 s (each `openDshPluginsPage` counts
+    // 90 s: its row, its settle and three presses of 重试), so a slow run
+    // fails on the wait that ran out rather than on this.
+    360_000,
+  )
+
+  it(
+    'a hot swap of the shop with its page showing leaves the page showing and offers the restart',
+    async () => {
+      // Last in the file: it rewrites the installed shop, and nothing after
+      // it may read the copy it leaves.
+      expect(page).toBeDefined()
+      const app = page!
+      const shop = await openShopPage(app)
+      // The showing page's version answer is in, and names no waiting update.
+      // A call still out would read the manifest rewritten below, because the
+      // host asks npm before it reads the profile's copy, and put the panel on
+      // the old instance's page with no swap at all: the Plugins page case
+      // ends on a page it has just mounted (measured 2026-10-17 on 0.1.7-rc.2
+      // and 0.2.0-rc.2). From here, only a page mounted after the swap can
+      // show the panel.
+      await shop.locator('[data-shop-version]').waitFor({ state: 'visible', timeout: 30_000 })
+      expect(await shop.locator('[data-shop-self-update-done]').count()).toBe(0)
+      const installed = realpathSync(join(tmpHome, 'profiles', 'web', 'node_modules', 'dsh-plugin-shop'))
+      // The profile's own copy, never the package under test: its realpath
+      // must sit outside the source tree, or the writes below would land there.
+      expect(installed.startsWith(fileURLToPath(new URL('../../', import.meta.url)))).toBe(false)
+      // What a self-update leaves on disk: a newer manifest and a new client.
+      // Each file is replaced, never edited in place, since it can be a hard
+      // link into pnpm's content-addressed store. On Windows a refused rename
+      // is tried again a moment later: dsh's HMR polls and serves
+      // `lib/client.js`, and Windows refuses a rename over a file that another
+      // process or a scanner holds open (graceful-fs retries for the same
+      // reason).
+      const replace = async (file: string, text: string): Promise<void> => {
+        writeFileSync(`${file}.e2e-swap`, text)
+        for (let attempt = 1; ; attempt += 1) {
+          try {
+            renameSync(`${file}.e2e-swap`, file)
+            return
+          } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code ?? ''
+            if (process.platform !== 'win32' || !['EPERM', 'EBUSY', 'EACCES'].includes(code) || attempt >= 20) throw error
+            await new Promise(resolve => { setTimeout(resolve, 50) })
+          }
+        }
+      }
+      const manifestPath = join(installed, 'package.json')
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>
+      const client = join(installed, 'lib', 'client.js')
+      // Taken before the rewrite, so neither can be missed: the showing
+      // page's own root, which the swap must be seen to take away, and the
+      // swap's own witness, dsh fetching the new bundle. All three harnesses
+      // fetch it as `/plugins/??dsh-plugin-shop/client.js&rev=<rev>`, once per
+      // swap (read 2026-10-17).
+      const before = await shop.elementHandle()
+      try {
+        const fetched = app.waitForRequest(
+          request => request.url().includes('dsh-plugin-shop/') && request.url().includes('client.js'),
+          { timeout: 45_000 },
+        )
+        // A rename below that throws must not leave this to reject unheard.
+        void fetched.catch(() => {})
+        await replace(manifestPath, `${JSON.stringify({ ...manifest, version: '99.0.0' }, null, 2)}\n`)
+        await replace(client, `${readFileSync(client, 'utf8')}\n// e2e hot swap\n`)
+        // dsh's client HMR swaps the shop's client: it fetches the new bundle,
+        // the page leaves with the old instance, and the new one brings it
+        // back once its first version answer says an update waits for a
+        // restart (design 2026-10-16-shop-sidebar-page §6, rule 1, where the
+        // page was measured leaving on all three harnesses). The fetch
+        // witnesses the swap, and the old root's detach proves the panel
+        // below belongs to a page mounted after it; the guard above removes
+        // the cause measured.
+        await fetched
+        await app.waitForFunction(node => !node.isConnected, before, { timeout: 45_000 })
+      } finally {
+        await before.dispose()
+      }
+      await shop.locator('[data-shop-self-update-done]').waitFor({ state: 'visible', timeout: 45_000 })
+      expect(await app.getByRole('button', { name: '插件商店', exact: true }).getAttribute('aria-current')).toBe('page')
+      // The offer the host allows on this platform, read the way
+      // `expectRestartOffer` reads a card's: on Windows the refusal's notice
+      // in the panel and no Restart anywhere, elsewhere the version row's
+      // Restart and no refusal anywhere.
+      if (process.platform === 'win32') {
+        const blocked = shop.locator('[data-shop-self-update-done] [data-shop-restart-disabled]')
+        await blocked.waitFor({ state: 'visible', timeout: 10_000 })
+        expect(await blocked.textContent()).toBe(zh.restartBlockedWindowsNotice)
+        expect(await shop.locator('[data-shop-restart]').count()).toBe(0)
+      } else {
+        await shop.locator('[data-shop-version] ~ [data-shop-restart]').waitFor({ state: 'visible', timeout: 10_000 })
+        expect(await shop.locator('[data-shop-restart-disabled]').count()).toBe(0)
+      }
+    },
+    // Above the named waits' sum, 225 s, so a slow run fails on the wait that
+    // ran out rather than on this.
+    240_000,
   )
 })
