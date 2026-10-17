@@ -115,7 +115,7 @@ China-side reader at 0.03 MB/s against an npm mirror's 12.53 MB/s. See
 **S — `packages/dsh-plugin-shop/` (the npm package `dsh-plugin-shop`, two halves)**
 
 - **Host half**, `ShopGateway`: registers the `shop/*` Remote. It is the only place that touches the network or the profile directory.
-- **Client half**, `dsh-plugin-shop/client`: follows the `dsh.client` convention, mounts the shop's Remote through `ctx.remote.$mount()`, and contributes one Settings section to `settings.section` (a tab in `settings.plugins.tab` until 2026-10-15; see the amendment below). **It touches neither the network nor the filesystem.**
+- **Client half**, `dsh-plugin-shop/client`: follows the `dsh.client` convention, mounts the shop's Remote through `ctx.remote.$mount()`, and contributes the shop's own page to dsh's main column (`main`), its row in the left sidebar (`sidebar.panellist`), and two buttons on dsh's Plugins page (`plugins.detail.actions`). It was a tab in `settings.plugins.tab` until 2026-10-15 and a `settings.section` until 2026-10-16; see the amendments below. **It touches neither the network nor the filesystem.**
 
 **Amendment (2026-10-15): the shop is a Settings section, not a tab inside Plugins.** At the maintainer's request, the client half registers one entry into `settings.section` with `id: 'shop'` and `order: 17`, and contributes nothing to `settings.plugins.tab`.
 
@@ -128,6 +128,14 @@ China-side reader at 0.03 MB/s against an npm mirror's 12.53 MB/s. See
 - **Unchanged:** the host half, every RPC and every install flow.
 - **Not verified:** dsh below 0.1.5, which is outside the CI matrix, as before.
 - **Moves with the 0.8.7 promotion:** the READMEs' path "Settings → Built-in plugins → Plugin shop" and the screenshot script's navigation. Both describe, or shoot, the published `latest`.
+
+**Amendment (2026-10-16): the shop is a page in dsh's sidebar, not a Settings section.** At the maintainer's request, for 0.9.0, the client half registers:
+
+- its page into dsh's main column (`main`, key `shop`);
+- the page's row in the left sidebar (`sidebar.panellist`, `id: 'shop'`, `order: 5`, directly under dsh's own Plugins row where there is one (0.1.7 and later)), with a glyph of its own;
+- two buttons on dsh's Plugins page (`plugins.detail.actions`, dsh 0.1.7 and later).
+
+It registers nothing into `settings.section` or `settings.plugins.tab`. The 2026-10-15 amendment above describes 0.8.7, whose seat, icon and 760px column (the sidebar design's §4.2) no longer apply, and a page store now answers what "Leaving the section" said leaving cost. The design, the harness facts it was measured against and the hand-over after a hot swap are in [2026-10-16-shop-sidebar-page.md](2026-10-16-shop-sidebar-page.md).
 
 **Upstream dsh: no change required for v0.**
 

@@ -1,20 +1,20 @@
 # The shop's own sidebar page — design
 
-Status: **approved in conversation; the page store (§5) built, the sidebar
-page not** (2026-10-16). LivXue started 0.9.0 on 2026-10-15 and took each
-decision in §2 between then and 2026-10-16. The work lands as two pull
+Status: **built** (2026-10-17): the page store on `feat/shop-page-store`, the
+page on `feat/shop-sidebar-page`. LivXue started 0.9.0 on 2026-10-15 and took
+each decision in §2 between then and 2026-10-16. The work lands as two pull
 requests, the page store first (§5) and the sidebar page second (§4, §6, §7).
-When the second lands, it amends §5.1 of
-`2026-08-18-dsh-plugin-shop-design.md`, whose 2026-10-15 amendment made the
-shop a Settings section; the first already amends that amendment's "Leaving
-the section" bullet, which its page store makes false (§10). English only, per
-convention.
+It amends §5.1 of `2026-08-18-dsh-plugin-shop-design.md` (the 2026-10-16
+amendment there), whose 2026-10-15 amendment made the shop a Settings section.
+English only, per convention.
 
-Every harness fact below was read in the installed bundles of dsh 0.1.5-rc.3,
-0.1.7-rc.2 and 0.2.0-rc.2 (`.claude/worktrees/.dsh0{15,17,20}-prefix`) on
-2026-10-15 or 2026-10-16, or measured with a throwaway build that registered
-into the same seats on all three (2026-10-15, worktree `probe-plugins-page`,
-never committed). A fact that holds on fewer of them says which.
+Every harness fact below that names no other source was read in the installed
+bundles of dsh 0.1.5-rc.3, 0.1.7-rc.2 and 0.2.0-rc.2
+(`.claude/worktrees/.dsh0{15,17,20}-prefix`) on 2026-10-15 or 2026-10-16, or
+measured with a throwaway build that registered into the same seats on all
+three (2026-10-15, worktree `probe-plugins-page`, never committed). A fact
+that holds on fewer of them says which, and one read elsewhere names its
+source where it is stated, as §2 item 3's Add plugin seat does.
 
 ## 1. Why
 
@@ -56,7 +56,13 @@ LivXue's, in the order taken:
 3. **Two jumps from dsh's Plugins page**, 0.1.7 and later (§7): "Open Plugin
    shop" on the shop's own bundle page and "View in Plugin shop" on the page
    of any bundle the shelf lists. A row in the Add plugin menu
-   (`plugins.add.actions`) waits: only dsh 0.2.1-alpha.3 declares that slot.
+   (`plugins.add.actions`) waits: no dsh `latest` declares that slot yet
+   (0.2.0-rc.2 on 2026-10-17). `next`, 0.2.1-rc.2, declares it, as do
+   0.2.1-alpha.1 and alpha.3; the wait is for 0.2.1 to reach `latest`. The
+   tags are from `npm view @deepseek-ai/dsh dist-tags`; the declarations were
+   read in the `.dsh021a-prefix` install (alpha.1) and in packed
+   `dsh-client-ui-plugin-manager` tarballs (alpha.3 and rc.2;
+   `slot-contract.d.ts`).
 4. **The state lives in a page store on `globalThis`** (§5), the pattern
    `restart-monitor.ts` already uses. Rejected: a host RPC listing running
    installs, which changes §5.3's method set and covers installs only, so the
@@ -65,8 +71,10 @@ LivXue's, in the order taken:
    uses but the 0.1.1-rc.2 protocol this package builds against predates,
    with 0.1.5-rc.3 the harness at risk.
 5. **A hot swap from a 0.8.x shop switches the main column to the shop page**
-   (§6, rule 2), so the reader who pressed Update in the Settings section finds
-   the restart offer when Settings closes.
+   (§6, rule 2), so the reader who pressed Update in Settings finds the restart
+   offer when Settings closes. Rule 2 sees the 0.8.x shops that leave a store
+   on the page, 0.8.4 and later; a swap from 0.8.0–0.8.3 reads as a fresh page
+   and moves nothing.
 6. **Glyph B**, a bag with a whale tail (§4.3), chosen from three candidates
    shot in a real 0.2.0-rc.2 sidebar, each in its idle and selected rows, wide
    and collapsed, light and dark. The shots are not committed; §4.3 holds the
@@ -102,7 +110,7 @@ LivXue's, in the order taken:
   the conversation.
 - **`ctx.layout`**: `selectPanel(id)` throws when `id` is not a registered
   `main` key and otherwise selects it, and `panelInfo` is an observable of
-  `{ activePanelId }`. **Measured 2026-10-16 (plan Task 1): this shape is not
+  `{ activePanelId }`. **Measured 2026-10-16 (§9.1): this shape is not
   the same on all three harnesses.** 0.1.5-rc.3's `ILayout` is a command
   facade (`selectPanel`, `beginNavigation`, `toggleSidebar`,
   `openRightbar`, `closeRightbar`) and the observable reaches the client only
@@ -355,8 +363,8 @@ and `useFlows.client.spec.ts` pins them on that hook:
 
 ### 5.7 Scroll position
 
-The page's `<section>` is its only scroll container (part 2; part 1 still
-lives inside Settings' own container and restores no scroll).
+The page's `<section>` is its only scroll container. While the shop lived in
+Settings, it sat inside Settings' own container and restored no scroll.
 
 - **Recording.** The scroll position is written to the store on scroll, at
   most once per animation frame.
@@ -402,7 +410,8 @@ first version answer after `apply` carries `pendingVersion`. A self-update or
 a CLI install of a new version always leaves one. A bundle switched off and on
 again leaves none, so it never moves the reader. Each rule selects the page at
 most once per `apply`, after the page's own `main` entry is registered.
-Without a layout service, neither rule does anything.
+Without a layout service that can select a panel, one whose `selectPanel` is
+there to call, neither rule does anything.
 
 **The first answer waits on npm.** The host's `version` asks the registry for
 the shop's latest release, uncached, before it reads the profile's copy for
@@ -442,6 +451,15 @@ for that offer.
   the page was mounted and selected, so a page that watches its own mount sees
   the same thing without reading the observable (§9.1).
 
+  The e2e has since measured the mount-based witness on 0.1.7-rc.2 and
+  0.2.0-rc.2 (2026-10-17, UTC), through its hot-swap case. On a build with
+  rule 1 removed, the swap happened: the new bundle was fetched and the old
+  page's root detached. The conversation then kept the main column, and the
+  case failed waiting for the restart offer. With rule 1 the case passes. The
+  page comes back there only through rule 1, which reads the record, so the
+  record read the page as mounted. On 0.1.5-rc.3 the witness is still argued:
+  that run was not made there.
+
   The evidence for the fallback is the page itself: after the swap the DOM read
   `probe page showing false, row aria-current null` on all three — the shop's
   page was gone and the conversation held the column, so the selection does not
@@ -457,15 +475,25 @@ for that offer.
   (0.1.5-rc.3), 1755 ms (0.1.7-rc.2) and 1005 ms (0.2.0-rc.2) — the gap between
   the swap and the second `apply` that rule 1's own `selectPanel` closes.
 
-  The same three legs also measured `selectPanel('shop')` under an open Settings
-  dialog: the dialog **stayed open** on all three while the page became selected
-  behind it, which is what rule 2 accepts (Task 14's hand check reads the same
-  thing).
-- **Rule 2, a 0.8.x predecessor.** The new `apply` selects the page. The
-  Settings dialog, which has lost the shop's section, falls back to its first
-  section. When the reader closes it, the shop page and its restart offer are
-  underneath. The cost was accepted: a CLI install of 0.9.0 under an open 0.8.x
-  page also switches that page to the shop once.
+  The same three legs also measured `selectPanel('shop')` under an open
+  Settings dialog: the dialog **stayed open** on all three while the page
+  became selected behind it, which is what rule 2 accepts (§9.4, the hand
+  check before the pull request, reads the same thing).
+- **Rule 2, a 0.8.x predecessor.** It sees 0.8.4 and later, through the
+  restart monitor's store they leave (the table above). The new `apply` selects
+  the page, and the Settings dialog loses the shop where that release put it.
+  0.8.4–0.8.6 kept the shop in a tab of Built-in plugins
+  (`settings.plugins.tab`; the section is Plugins on 0.1.5-rc.3), so the
+  dialog stays on that section and falls back to its first tab
+  (`dsh-client-ui-settings-plugins` selects `rows[0]` when the selected tab is
+  gone, on all three harnesses). 0.8.7 gave the shop its own section
+  (`settings.section`), so the dialog falls back to its first section. When
+  the reader closes it, the shop page and its restart offer are underneath.
+  0.8.0–0.8.3 register no restart carrier and leave nothing on `globalThis`,
+  so they read as a fresh page and nothing moves: their reader loses the
+  shop's tab with no restart offer in view. The cost was accepted: a CLI
+  install of 0.9.0 under an open 0.8.x page also switches that page to the
+  shop once.
 
 ## 7. The two jumps
 
@@ -493,7 +521,8 @@ in the shop's button would reach dsh's page.
   to the expanded set. Whatever search the reader left is replaced: they asked
   to see this plugin.
 - **Selection** goes through `ctx.layout.selectPanel('shop')`. Without a layout
-  service the button does not render, because it could not navigate.
+  service that can select a panel the button does not render, because it could
+  not navigate.
 - **Style.** A plain `<button type="button">` drawn with the shop's own CSS,
   an outline button sized to the page's own small outline button (measured
   from the bundle when built, and pinned by the CSS-token test). The client
@@ -526,7 +555,7 @@ in the shop's button would reach dsh's page.
 
 ## 9. Testing
 
-### 9.1 Task 1: measure before building
+### 9.1 Measure before building
 
 On all three harnesses, use a throwaway build that logs its registrations,
 its disposals and every `panelInfo` change, installed into a temporary
@@ -622,8 +651,9 @@ On all three harnesses:
 
 ## 11. Not built, and why
 
-- **A row in Add plugin's menu.** Only dsh 0.2.1-alpha.3 declares
-  `plugins.add.actions`.
+- **A row in Add plugin's menu.** No dsh `latest` declares
+  `plugins.add.actions` yet (0.2.0-rc.2 on 2026-10-17), though `next`,
+  0.2.1-rc.2, does; §2 item 3 says where each was read.
 - **Badges or sections on other bundles' pages**, such as "newer in the
   catalog". They were not asked for, and
   `plugins.detail.badge` and `plugins.detail.section` stay open for them.

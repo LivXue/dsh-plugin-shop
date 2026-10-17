@@ -22,7 +22,7 @@ P0 — the catalog pipeline — is complete: 24 commits on branch `feat/p0-regis
 
 P1 — the Host half — is complete (2026-08-25, branch `feat/p1-host`, merged): the npm package `dsh-plugin-shop` lives at `packages/dsh-plugin-shop/` (the typert generator hardcodes `packages/` as its package container; spec §5.1 was amended accordingly), exposing the five `shop/*` Remote methods. The P1 exit criterion — the real-installation test of spec §11.3.3 — passes against the real dsh CLI, locally and in CI (`plugin.yml`). Execution record: [2026-08-25-p1-host.md](2026-08-25-p1-host.md).
 
-P2 — the Client half — is complete (2026-08-25, branch `feat/p2-client`, merged): the shop tab under `settings.plugins.tab` (browse, detail, the §9.3 acknowledgement gate, install with polling, enable/disable, and the outdated list; a Settings section of its own since 2026-10-15, design §5.1 amendment), the XSS regression of §11.3.4, and the web full-flow e2e. Execution record: [2026-08-25-p2-client.md](2026-08-25-p2-client.md). Two wire-level facts the spec gained as §7.3 amendments: the install method is `shop/installStart` (the namespace service owns `install`), and a self-mounting client consumes its namespace via `ctx.get('remote.shop')`. P3 was absorbed into P2 (enable/disable and `shop/outdated` shipped there); the §12 deviation note records that a successful shop-driven install is deferred until a real npm package with `dsh.bundle` exists.
+P2 — the Client half — is complete (2026-08-25, branch `feat/p2-client`, merged): the shop tab under `settings.plugins.tab` (browse, detail, the §9.3 acknowledgement gate, install with polling, enable/disable, and the outdated list; a Settings section of its own from 2026-10-15 and, decided 2026-10-16, a page in dsh's sidebar for 0.9.0, design §5.1 amendments), the XSS regression of §11.3.4, and the web full-flow e2e. Execution record: [2026-08-25-p2-client.md](2026-08-25-p2-client.md). Two wire-level facts the spec gained as §7.3 amendments: the install method is `shop/installStart` (the namespace service owns `install`), and a self-mounting client consumes its namespace via `ctx.get('remote.shop')`. P3 was absorbed into P2 (enable/disable and `shop/outdated` shipped there); the §12 deviation note records that a successful shop-driven install is deferred until a real npm package with `dsh.bundle` exists.
 
 What does **not** exist yet: nothing further in the P0-P3 plan. Remaining are the operational items below (upstream PRs U1-U4, carried-over cleanups). A review workflow was on this list until 2026-09-08 and is not remaining work: decision 4 declines it.
 
@@ -134,6 +134,18 @@ These block a real launch, not the code.
    components (2 cards) and the unloadable-bundle rule (6 entries) are not
    built. [2026-09-28-bundle-components-and-github-peers.md](../design/2026-09-28-bundle-components-and-github-peers.md)
    section 13.
+10. **The shop's own sidebar page — built for 0.9.0, 2026-10-17.** The shop
+    moves from its Settings section (0.8.7) to a page in dsh's left sidebar,
+    keeps the whole page across leaving and returning in a page store on
+    `globalThis`, and gains two buttons on dsh's Plugins page (0.1.7 and
+    later). [2026-10-16-shop-sidebar-page.md](../design/2026-10-16-shop-sidebar-page.md).
+    Two things wait:
+    - a row in dsh's Add plugin menu needs `plugins.add.actions` in a dsh
+      `latest`; none declares it yet (0.2.0-rc.2 on 2026-10-17), though
+      `next`, 0.2.1-rc.2, does, so the wait is for 0.2.1 to reach `latest`
+      (sources in that design's §2 item 3);
+    - a running install is not found again after a page reload (that
+      design's §5.8).
 
 ## P1 — the Host half (done 2026-08-25)
 
@@ -155,7 +167,7 @@ Build it in this order, because the failure-prone parts come first:
 
 ## P2 — the Client half (done 2026-08-25)
 
-`packages/dsh-plugin-shop/src/client/`, contributing one tab to `settings.plugins.tab` (one `settings.section` entry since 2026-10-15, design §5.1 amendment). It holds no privilege beyond the five `shop/*` methods.
+`packages/dsh-plugin-shop/src/client/`, contributing one tab to `settings.plugins.tab` (one `settings.section` entry from 2026-10-15; for 0.9.0, decided 2026-10-16, its page in dsh's main column, its sidebar row and two Plugins page buttons, design §5.1 amendments). It holds no privilege beyond the five `shop/*` methods.
 
 Two requirements that are easy to miss:
 
