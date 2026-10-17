@@ -1,5 +1,6 @@
 /**
- * One keyed registry of install-shaped flows: start, poll to terminal, reset.
+ * React's view of a keyed registry of install-shaped flows (flow-registry.ts):
+ * start, poll to terminal, reset.
  *
  * Install and uninstall are the same machine. Both fold a
  * `ShopInstallStatusResult` through `reduceInstall` into an `InstallView`,
@@ -19,12 +20,16 @@
  * was not theoretical: a single review round had to make the same edit twice
  * (the settle signature, and its call), and the `pending` set below was added
  * to one of them and not the other before this module existed.
+ *
+ * Since 2026-10-16 the registry is its own module, framework-free, and the
+ * polling belongs to it: a component's effect stopped the moment the shop left
+ * the screen (design 2026-10-16-shop-sidebar-page §5).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ShopInstallStatusResult } from '../host/index.ts'
-import { INSTALL_POLL_MS, reduceInstall, type InstallEvent, type InstallView } from './present.ts'
-import { isTerminalInstallState } from '../shared/install-state.ts'
+import { createFlowRegistry, IDLE_VIEW, type FlowRegistry, type FlowRegistryDeps } from './flow-registry.ts'
+import type { InstallView } from './present.ts'
 
 /** One identity's flow, as the tab hands it to a panel. */
 export interface KeyedFlow<TArgs> {
@@ -52,8 +57,10 @@ export interface UseKeyedFlows<TArgs> {
   /** Return every identity whose view `predicate` selects to `idle`, and
    * nothing else. Stable across renders like `resetFlow`; a call selecting
    * nothing leaves the registry — and so every flow and `pending` — exactly
-   * as it was. The tab clears the receipts dsh restarting under it settled
-   * with this (design §8, 2026-10-06 amendment). */
+   * as it was. The receipts dsh restarting under the page settled are
+   * cleared the same way at the store, through each registry's own
+   * `resetWhere` (page-store.ts `noteRestarted`; design §8, 2026-10-06
+   * amendment). */
   resetWhere: (predicate: (view: InstallView) => boolean) => void
   /**
    * The identities whose flow is not `idle` — asked by the shelf, which has
@@ -74,16 +81,16 @@ export interface UseKeyedFlows<TArgs> {
 /** Shared empty set, so an idle registry hands out one stable identity. */
 const NO_PENDING: ReadonlySet<string> = new Set()
 
-/** Shared idle view, so every key WITHOUT a flow yields one object rather
- * than a fresh literal per call. That is what lets `flowFor` below answer
- * "did this key change?" by identity. */
-const IDLE_VIEW: InstallView = { kind: 'idle' }
-
 /**
+ * A component's own registry: built once, handed the latest functions on
+ * every render, and polling only while the component is mounted —
+ * `pollUnwatched` is off, so unmounting stops it, as the effect that used to
+ * poll did, and a second mount (React StrictMode's included) resumes it.
+ *
  * @param begin the starting RPC and its answer, mapped to the first view.
  *   Never rejects: a transport throw is the caller's to fold into a view,
- *   because only the caller knows which localized line stands in for a detail
- *   too private to render.
+ *   because only the caller knows which localized line stands in for a
+ *   detail too private to render.
  * @param onSettled called once per identity that reaches a terminal state,
  *   with WHICH terminal state. The outcome is load-bearing: a failed flow
  *   changed nothing on the server, so a caller acting on "settled" alone
@@ -94,100 +101,19 @@ export function useKeyedFlows<TArgs>(
   installStatus: (args: { installId: string }) => Promise<ShopInstallStatusResult>,
   onSettled?: (key: string, outcome: 'done' | 'failed') => void,
 ): UseKeyedFlows<TArgs> {
-  const [views, setViews] = useState<ReadonlyMap<string, InstallView>>(() => new Map())
-  const [starting, setStarting] = useState<ReadonlySet<string>>(() => new Set())
-  // The synchronous half of `starting`. React batches state updates, so two
-  // clicks dispatched in one task would both read the pre-update Set and both
-  // reach `begin` — which is exactly the double install this guard exists to
-  // stop. The ref is what a second call in the same tick sees.
-  const inFlight = useRef(new Set<string>())
-  const settled = useRef(onSettled)
-  settled.current = onSettled
+  const deps = useRef<FlowRegistryDeps<TArgs>>({ begin, installStatus, onSettled })
+  deps.current = { begin, installStatus, onSettled }
+  const [registry] = useState(() => createFlowRegistry<TArgs>(() => deps.current, { pollUnwatched: false }))
+  return useRegistryFlows(registry)
+}
 
-  const put = useCallback((key: string, view: InstallView): void => {
-    setViews(current => {
-      const next = new Map(current)
-      next.set(key, view)
-      return next
-    })
-  }, [])
-
-  const apply = useCallback((key: string, event: InstallEvent): void => {
-    setViews(current => {
-      const before = current.get(key) ?? { kind: 'idle' as const }
-      const after = reduceInstall(before, event)
-      if (after === before) return current
-      const next = new Map(current)
-      next.set(key, after)
-      return next
-    })
-  }, [])
-
-  const start = useCallback(async (key: string, args: TArgs): Promise<void> => {
-    // ONE start in flight per identity. The §9.3 gate used to absorb a second
-    // press — it reopened instead of asking again — and nothing else does:
-    // `begin` reaches the host, and the host does not dedupe. A release asset
-    // would be downloaded and hashed twice, or one name installed twice over.
-    if (inFlight.current.has(key)) return
-    inFlight.current.add(key)
-    setStarting(current => new Set(current).add(key))
-    try {
-      // `idle` first, so a retry of a settled flow clears the previous outcome
-      // before the new request is in flight rather than after it answers.
-      put(key, { kind: 'idle' })
-      put(key, await begin(args))
-    } finally {
-      inFlight.current.delete(key)
-      setStarting(current => {
-        if (!current.has(key)) return current
-        const next = new Set(current)
-        next.delete(key)
-        return next
-      })
-    }
-  }, [begin, put])
-
-  const reset = useCallback((key: string): void => {
-    setViews(current => {
-      if (!current.has(key)) return current
-      const next = new Map(current)
-      next.delete(key)
-      return next
-    })
-  }, [])
-
-  const resetWhere = useCallback((predicate: (view: InstallView) => boolean): void => {
-    setViews(current => {
-      let next: Map<string, InstallView> | null = null
-      for (const [key, view] of current) {
-        if (!predicate(view)) continue
-        next ??= new Map(current)
-        next.delete(key)
-      }
-      return next ?? current
-    })
-  }, [])
-
-  // One interval polls every running identity; duplicate panels never poll
-  // the same host record independently.
-  useEffect(() => {
-    const running: Array<[string, string]> = []
-    for (const [key, view] of views) {
-      if (view.kind === 'running') running.push([key, view.installId])
-    }
-    if (running.length === 0) return
-    const timer = setInterval(() => {
-      for (const [key, installId] of running) {
-        void installStatus({ installId }).then(status => {
-          apply(key, { type: 'status', status })
-          if (status.found && isTerminalInstallState(status.state)) settled.current?.(key, status.state)
-        }, () => {
-          // Poll failures are transient; the retained host record is retried.
-        })
-      }
-    }, INSTALL_POLL_MS)
-    return () => clearInterval(timer)
-  }, [views, installStatus, apply])
+/** The keyed-flow face over any registry: a component's own, or one of the
+ * page store's, which outlives the component. */
+export function useRegistryFlows<TArgs>(registry: FlowRegistry<TArgs>): UseKeyedFlows<TArgs> {
+  const { views, starting } = useSyncExternalStore(registry.subscribe, registry.getSnapshot)
+  const start = useCallback((key: string, args: TArgs) => registry.start(key, args), [registry])
+  const reset = useCallback((key: string): void => { registry.reset(key) }, [registry])
+  const resetWhere = useCallback((predicate: (view: InstallView) => boolean): void => { registry.resetWhere(predicate) }, [registry])
 
   const pendingRef = useRef<ReadonlySet<string>>(NO_PENDING)
   const pending = useMemo(() => {

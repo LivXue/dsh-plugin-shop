@@ -2,9 +2,10 @@
 import './__loader__.ts'
 import { loadModule } from './__loader__.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { cleanup } from '@testing-library/react'
 import { apply, inject, NS, WARM_TTL_MS } from '../../src/client/index.ts'
-import { useInstallFlows } from '../../src/client/useInstall.ts'
+import { installPageStore, readPageStore, resetPageStore, type ShopPageStore } from '../../src/client/page-store.ts'
+import { INSTALL_POLL_MS } from '../../src/client/present.ts'
 import type { ShopTabInjected } from '../../src/client/ShopTab.tsx'
 import { readRestartMonitor, requestRestart, resetRestartMonitor, startRestartMonitor } from '../../src/client/restart-monitor.ts'
 import type { InstallArgs, ShopInstallResult, ShopVersionResult } from '../../src/host/index.ts'
@@ -19,9 +20,11 @@ const { SlotRegistry } = loadModule<typeof import('@deepseek-ai/dsh-client-runti
 
 afterEach(() => {
   cleanup()
-  // Every boot registers its restart path on the page store, which outlives
-  // the test that booted it.
+  // Every boot registers its restart path on the restart monitor's record
+  // and puts its own store on the page (page-store.ts); both live on
+  // globalThis and outlive the test that booted it.
   resetRestartMonitor()
+  resetPageStore()
 })
 
 /** One stubbed shop method: return the wire envelope of your choice. The
@@ -30,6 +33,7 @@ afterEach(() => {
  * installStart, never install, which the namespace service owns). */
 interface ShopStub {
   installStart?: (args: InstallArgs) => Promise<unknown>
+  installStatus?: (args: { installId: string }) => Promise<unknown>
   uninstallStart?: (args: { name: string }) => Promise<unknown>
   updateStart?: (args: { version: string }) => Promise<unknown>
   catalog?: () => Promise<unknown>
@@ -72,7 +76,7 @@ async function boot(shop: ShopStub = {}, modules?: unknown) {
   ctx.provide('remote.shop', {
     catalog: shop.catalog ?? vi.fn(),
     installStart: shop.installStart ?? vi.fn(),
-    installStatus: vi.fn(),
+    installStatus: shop.installStatus ?? vi.fn(),
     setEnabled: vi.fn(),
     installed: vi.fn(),
     uninstallStart: shop.uninstallStart ?? vi.fn(),
@@ -130,8 +134,8 @@ describe('shop client apply', () => {
     const first = await boot()
     const before = first.ctx.slots.entries('settings.section').find(entry => entry.options.id === 'shop')
     await first.ctx.fiber.dispose()
-    // Every boot registers its restart path on the page store, as afterEach
-    // notes; clear it between the two boots the same way.
+    // Every boot registers its restart path on the restart monitor's
+    // record, as afterEach notes; clear it between the two boots the same way.
     resetRestartMonitor()
     const second = await boot()
     const after = second.ctx.slots.entries('settings.section').find(entry => entry.options.id === 'shop')
@@ -171,16 +175,15 @@ describe('shop client apply', () => {
     // EMPTY detail; ShopTab falls back to the localized
     // installTransportFailed line (R-P2-15).
     //
-    // Driven through `useInstallFlows`, which is the registry the shop
-    // actually ships. This used to drive `useInstall`, a single-view hook
-    // with no production caller left — so the assertion was made about a
-    // code path no reader could reach, while the shipped one implemented the
-    // same rule separately and uncovered.
-    const { result } = renderHook(() => useInstallFlows(injected.install, injected.installStatus))
-    await act(async () => {
-      await result.current.flowFor('k').start(args)
-    })
-    expect(result.current.flowFor('k').view).toEqual({ kind: 'failed', detail: '', log: [] })
+    // Driven through the page store's install registry, the one the shop
+    // ships (page-store.ts; apply hands it to the tab as `page`), which
+    // begins every install through flow-registry.ts's `beginInstall`. This
+    // case once drove `useInstall`, a single-view hook no reader reached, and
+    // so asserted about a path the shop never took.
+    const page = injected.page
+    if (page === undefined) throw new Error('the face hands over no page store')
+    await page.installs.start('k', args)
+    expect(page.installs.getSnapshot().views.get('k')).toEqual({ kind: 'failed', detail: '', log: [] })
   })
 })
 
@@ -579,8 +582,9 @@ describe('shop client apply: dsh restarting under the page', () => {
     ok: true,
     value: { installed: '0.8.6', latest: '0.8.6', outdated: false, restartBlocked: null, pendingVersion: null, bootId },
   })
-  /** What a reload leaves of the page: no page store and no probe loop, but
-   * the tab's sessionStorage — and so the record of the restart it asked for. */
+  /** What a reload leaves of the page: no restart-monitor record and no probe
+   * loop, but the tab's sessionStorage — and so the record of the restart it
+   * asked for. */
   const pageReloaded = (): void => {
     const page = globalThis as unknown as Record<symbol, { stop?: (() => void) | null } | undefined>
     const key = Symbol.for('dsh-plugin-shop.restart-monitor')
@@ -683,5 +687,141 @@ describe('shop client apply: dsh restarting under the page', () => {
     await vi.waitFor(() => { expect(version).toHaveBeenCalledTimes(2) })
     await injected.catalog(undefined)
     expect(catalog).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('shop client apply: the page store (design 2026-10-16-shop-sidebar-page §5)', () => {
+  /** The face's store, failing loudly rather than skipping when there is none. */
+  const pageOf = (injected: ShopTabInjected): ShopPageStore => {
+    if (injected.page === undefined) throw new Error('the face hands over no page store')
+    return injected.page
+  }
+
+  it('builds the page\'s store, puts it on the page and hands it to the section', async () => {
+    const { ctx, injected } = await boot()
+    expect(readPageStore()).toBe(pageOf(injected))
+    // The face is built per read; the store is the page's, the same each time.
+    const entry = ctx.slots.entries('settings.section').find(e => e.options.id === 'shop')
+    if (entry === undefined) throw new Error('the shop section entry is not registered')
+    expect((entry.inject!() as unknown as ShopTabInjected).page).toBe(pageOf(injected))
+  })
+
+  it('builds a new store on a fresh apply, and the one it replaces stops polling', async () => {
+    const installStart = vi.fn().mockResolvedValue({ ok: true, value: { ok: true, installId: 'i1', state: 'running' } })
+    const installStatus = vi.fn().mockResolvedValue({ ok: true, value: { found: true, state: 'running', log: [] } })
+    const first = await boot({ installStart, installStatus })
+    await pageOf(first.injected).installs.start('npm:dsh-hello-plugin', { name: 'dsh-hello-plugin', version: '1.2.0' })
+    await vi.waitFor(() => { expect(installStatus).toHaveBeenCalled() }, { timeout: 3000 })
+    await first.ctx.fiber.dispose()
+    const polled = installStatus.mock.calls.length
+    // Longer than one poll interval: a timer the dispose missed would fire.
+    await new Promise(resolve => { setTimeout(resolve, INSTALL_POLL_MS + 500) })
+    expect(installStatus.mock.calls.length).toBe(polled)
+    const second = await boot()
+    expect(pageOf(second.injected)).not.toBe(pageOf(first.injected))
+    expect(readPageStore()).toBe(pageOf(second.injected))
+  })
+
+  it('disposes a predecessor whose teardown never ran', async () => {
+    const installStart = vi.fn().mockResolvedValue({ ok: true, value: { ok: true, installId: 'i1', state: 'running' } })
+    const installStatus = vi.fn().mockResolvedValue({ ok: true, value: { found: true, state: 'running', log: [] } })
+    const first = await boot({ installStart, installStatus })
+    await pageOf(first.injected).installs.start('npm:dsh-hello-plugin', { name: 'dsh-hello-plugin', version: '1.2.0' })
+    await vi.waitFor(() => { expect(installStatus).toHaveBeenCalled() }, { timeout: 3000 })
+    await boot() // the first fiber is never disposed
+    const polled = installStatus.mock.calls.length
+    await new Promise(resolve => { setTimeout(resolve, INSTALL_POLL_MS + 500) })
+    expect(installStatus.mock.calls.length).toBe(polled)
+  })
+
+  it('tells the page\'s store when dsh restarted under the page, with no tab mounted', async () => {
+    const answer = (bootId: string) => ({ ok: true as const, value: { installed: '0.8.7', latest: '0.8.7', outdated: false, restartBlocked: null, pendingVersion: null, bootId } })
+    const version = vi.fn().mockResolvedValueOnce(answer('boot-a')).mockResolvedValue(answer('boot-b'))
+    const { ctx, injected } = await boot({ version })
+    await vi.waitFor(() => { expect(version).toHaveBeenCalledTimes(1) })
+    const before = pageOf(injected).getSnapshot().settled
+    ctx.emit('connection/reset')
+    await vi.waitFor(() => { expect(pageOf(injected).getSnapshot().settled).toBe(before + 1) })
+    expect(pageOf(injected).getSnapshot().reverdictPending).toBe(true)
+  })
+
+  it('names a package an uninstall no tab watched removed, for the page-removed set', async () => {
+    // dock-base keeps a graph row after a restart-free uninstall, the false
+    // "provided" the page-removed set exists to refuse (module-table.ts).
+    const table = {
+      version: 'client' as const,
+      manifest: {
+        rev: 'r1',
+        modules: [{ id: 'dock-base', url: '/plugin/dock-base?rev=r1', initialUrl: '/batch?rev=r1', rev: 'r1', inject: [], external: [] }],
+        plugins: [{ id: 'dock-base', inject: [], immediately: false }],
+      },
+      loadCache: new Map<string, unknown>(),
+      import: vi.fn(async () => ({})),
+    }
+    const HOST = {
+      schemaVersion: 2, builtAt: '2026-09-24T00:00:00Z', stale: false,
+      plugins: [], denied: [], stars: {}, incompatible: { 'npm:needs-dock-base': ['dock-base'] }, incompatibleHarness: {},
+    }
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: HOST })
+    const uninstallStart = vi.fn().mockResolvedValue({ ok: true, value: { ok: true, installId: 'u1' } })
+    const installStatus = vi.fn().mockResolvedValue({ ok: true, value: { found: true, state: 'done', log: [], activation: 'live' } })
+    const { injected } = await boot({ catalog, uninstallStart, installStatus }, table)
+    expect((await injected.catalog(undefined)).incompatible).toEqual({})
+    await pageOf(injected).uninstalls.start('npm:dock-base', { name: 'dock-base' })
+    await vi.waitFor(() => { expect(pageOf(injected).uninstalls.getSnapshot().views.get('npm:dock-base')?.kind).toBe('done') }, { timeout: 3000 })
+    expect((await injected.catalog(undefined)).incompatible).toEqual({ 'npm:needs-dock-base': ['dock-base'] })
+  })
+
+  it('sends the reverdict an unwatched install left to the wire, past the stash a mount refilled while it ran', async () => {
+    // The whole chain the store closes, through the real stash (design
+    // 2026-10-16-shop-sidebar-page §5.4): the install drops the stash when it
+    // starts, a mount while it runs refills it with verdicts judged before it
+    // lands, and the reverdict its settle leaves must pass that stash, reach
+    // the wire and become the stash itself. `builtAt` tells the answers apart.
+    const verdicts = (builtAt: string) => ({
+      schemaVersion: 2, builtAt, stale: false,
+      plugins: [], denied: [], stars: {}, incompatible: {}, incompatibleHarness: {},
+    })
+    const BEFORE = verdicts('2026-10-16T00:00:00Z')
+    const AFTER = verdicts('2026-10-17T00:00:00Z')
+    const catalog = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: BEFORE }) // the boot-time warm
+      .mockResolvedValueOnce({ ok: true, value: BEFORE }) // the mid-install mount's, judged before the install lands
+      .mockResolvedValue({ ok: true, value: AFTER }) // judged after it
+    const installStart = vi.fn().mockResolvedValue({ ok: true, value: { ok: true, installId: 'i1', state: 'running' } })
+    const installStatus = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: { found: true, state: 'running', log: [] } })
+      .mockResolvedValue({ ok: true, value: { found: true, state: 'done', log: [], activation: 'live' } })
+    const { injected } = await boot({ catalog, installStart, installStatus })
+    const page = pageOf(injected)
+    expect(catalog).toHaveBeenCalledTimes(1) // the boot-time warm
+    // (1) The install starts, and its start drops the stash.
+    await page.installs.start('npm:dsh-hello-plugin', { name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(page.installs.getSnapshot().views.get('npm:dsh-hello-plugin')?.kind).toBe('running')
+    expect(catalog).toHaveBeenCalledTimes(1)
+    // (2) A tab mounted while it runs asks plainly. The dropped stash sends it
+    // to the wire, and the answer, judged before the install lands, is the
+    // stash again.
+    expect(await injected.catalog(undefined)).toMatchObject({ builtAt: BEFORE.builtAt })
+    expect(catalog).toHaveBeenCalledTimes(2)
+    // (3) The install lands with no tab mounted, and its settle leaves the
+    // reverdict pending.
+    await vi.waitFor(() => { expect(page.getSnapshot().reverdictPending).toBe(true) }, { timeout: 4000 })
+    expect(page.installs.getSnapshot().views.get('npm:dsh-hello-plugin')?.kind).toBe('done')
+    expect(catalog).toHaveBeenCalledTimes(2)
+    // (4) The next mount's first request is that reverdict: it passes the
+    // refilled stash and reaches the wire...
+    expect(await injected.catalog({ reverdict: true })).toMatchObject({ builtAt: AFTER.builtAt })
+    expect(catalog).toHaveBeenCalledTimes(3)
+    // (5) ...and its answer is the stash a following plain open is served
+    // from, with no wire call.
+    expect(await injected.catalog(undefined)).toMatchObject({ builtAt: AFTER.builtAt })
+    expect(catalog).toHaveBeenCalledTimes(3)
+  })
+
+  it('replaces a store of another shape without calling what it lacks, as after a downgrade', async () => {
+    installPageStore({ schema: 2 } as unknown as ShopPageStore)
+    const { injected } = await boot()
+    expect(readPageStore()).toBe(pageOf(injected))
   })
 })
