@@ -90,9 +90,10 @@ export interface ShopTabOwnProps {
   onShelfReady?: () => void
 }
 
-/** Full component props assembled by the slot renderer, plus the frame's. */
+/** The page's props as the main-column renderer assembles them (no owner
+ * props), plus what only the page frame hands the body. */
 export type ShopTabProps =
-  PropsRuntime<'settings.section'>
+  PropsRuntime<'main'>
   & PropsLocale<'settings.shop'>
   & InjectFace<ShopTabInjected>
   & ShopTabOwnProps
@@ -1431,10 +1432,10 @@ class ShopErrorBoundary extends Component<{ t: ShopTabProps['t']; children: Reac
   }
 }
 
-/** The shop body inside its own error boundary, as `ShopSection` renders it
- * below the page's title and intro (the settings slot registers `ShopSection`,
- * `index.ts`). Exported under the name the body used to carry, so nothing can
- * render the body without the boundary. */
+/** The shop body inside its own error boundary, as `ShopPage` renders it
+ * below the page's head (index.ts registers `ShopPage` in the main column).
+ * Exported under the name the body used to carry, so nothing can render the
+ * body without the boundary. */
 export function ShopTab(props: ShopTabProps): ReactNode {
   return (
     <ShopErrorBoundary t={props.t}>

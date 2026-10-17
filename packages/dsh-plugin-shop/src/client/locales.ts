@@ -1,12 +1,12 @@
-/** Copy dictionaries for the shop's Settings section. */
+/** Copy dictionaries for the shop's page in dsh's main column. */
 
 /** Simplified Chinese dictionary and key source of truth. */
 export const zh = {
-  /** The shop's name in Settings (design §5.1, amended 2026-10-15): its nav
-   * entry and its page title, one key so the two cannot drift apart. */
+  /** The shop's name: its sidebar row and its page title (design
+   * 2026-10-16-shop-sidebar-page §4.1), one key so the two cannot drift
+   * apart. */
   title: '插件商店',
-  /** The shop's Settings page intro line (design §5.1, amended 2026-10-15),
-   * as the built-in Models and 内置插件 pages carry one under their title. */
+  /** The page's intro line, under its title, as dsh's own pages carry one. */
   intro: '浏览、安装和更新目录中的插件。',
   loading: '正在读取目录…',
   error: '暂时无法读取目录。',
