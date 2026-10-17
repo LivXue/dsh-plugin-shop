@@ -5,8 +5,9 @@
  * restarting under the page settles exactly what a restart settles.
  */
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
-import { createPageStore, disposeOccupant, INITIAL_VIEW, installPageStore, readPageStore, resetPageStore, switchKey, type PageStoreDeps, type ShopPageStore } from '../../src/client/page-store.ts'
+import { createPageStore, disposeOccupant, INITIAL_VIEW, installPageStore, readPageStore, readPredecessor, resetPageStore, switchKey, type PageStoreDeps, type ShopPageStore } from '../../src/client/page-store.ts'
 import { INSTALL_POLL_MS, SHOP_VISIBLE_BATCH } from '../../src/client/present.ts'
+import { registerRestartCarrier, resetRestartMonitor } from '../../src/client/restart-monitor.ts'
 import { SELF_UPDATE_KEY } from '../../src/client/useUpdateSelf.ts'
 import type { ShopInstallStatusResult } from '../../src/host/index.ts'
 
@@ -593,5 +594,56 @@ describe('the store on the page', () => {
     installPageStore({ schema: 2 } as unknown as ShopPageStore)
     expect(() => { resetPageStore() }).not.toThrow()
     expect(readPageStore()).toEqual({ kind: 'none' })
+  })
+})
+
+describe('what applied on the page before (design 2026-10-16-shop-sidebar-page §6)', () => {
+  const forgetRestartMonitor = (): void => {
+    resetRestartMonitor()
+    delete (globalThis as unknown as Record<symbol, unknown>)[Symbol.for('dsh-plugin-shop.restart-monitor')]
+  }
+  afterEach(forgetRestartMonitor)
+
+  it('reads a page with neither store as fresh', () => {
+    forgetRestartMonitor()
+    expect(readPredecessor()).toEqual({ kind: 'none' })
+  })
+  it('reads the restart monitor\'s store alone as a 0.8.x shop', () => {
+    forgetRestartMonitor()
+    // The shop's teardown withdrew its carrier; the store it left names it.
+    const withdraw = registerRestartCarrier(async () => ({ ok: true }))
+    withdraw()
+    expect(readPredecessor()).toEqual({ kind: 'section' })
+  })
+  it('reads a page store as a 0.9.0-or-later shop, with what it recorded at teardown', () => {
+    const { store } = bench()
+    installPageStore(store)
+    expect(readPredecessor()).toEqual({ kind: 'page', showing: false })
+    store.notePageMounted(true)
+    store.recordTeardown()
+    expect(readPredecessor()).toEqual({ kind: 'page', showing: true })
+    expect(store.handover()).toEqual({ showing: true })
+  })
+  // The fake answers `readPredecessor` but has no `dispose`. The case deletes the
+  // key itself, so the page it leaves never depends on what this file's
+  // `afterEach` does with a store of another shape (`resetPageStore()` calls
+  // only a `dispose` that exists; the case above pins that).
+  it('names no page showing for a store of another shape, as a downgrade would leave', () => {
+    installPageStore({ schema: 2 } as unknown as ShopPageStore)
+    try {
+      expect(readPredecessor()).toEqual({ kind: 'page', showing: false })
+    } finally {
+      delete (globalThis as unknown as Record<symbol, unknown>)[Symbol.for('dsh-plugin-shop.page')]
+    }
+  })
+  // What a build with the page store but not yet the page leaves; the key goes
+  // in `finally` for the reason the case above gives.
+  it('reads a schema-1 store that cannot hand over as a shop that still lived in Settings', () => {
+    installPageStore({ schema: 1 } as unknown as ShopPageStore)
+    try {
+      expect(readPredecessor()).toEqual({ kind: 'section' })
+    } finally {
+      delete (globalThis as unknown as Record<symbol, unknown>)[Symbol.for('dsh-plugin-shop.page')]
+    }
   })
 })

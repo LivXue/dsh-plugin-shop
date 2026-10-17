@@ -10,6 +10,7 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { RESTART_GRACE_MS, RESTART_STABLE_MS, RESTART_WAIT_MS, INSTALL_POLL_MS } from '../../src/client/present.ts'
 import {
+  hasRestartMonitorStore,
   noteBoot,
   readRestartMonitor,
   registerRestartCarrier,
@@ -485,5 +486,16 @@ describe('a restart the page reloaded after', () => {
     resetRestartMonitor()
     expect(() => { noteBoot('boot-a') }).not.toThrow()
     expect(readRestartMonitor()).toBeNull()
+  })
+})
+
+describe('hasRestartMonitorStore', () => {
+  it('reads a page no shop has registered a restart path on as empty, and one that has as taken, even after its carrier is withdrawn', () => {
+    delete (globalThis as unknown as Record<symbol, unknown>)[Symbol.for('dsh-plugin-shop.restart-monitor')]
+    expect(hasRestartMonitorStore()).toBe(false)
+    const withdraw = registerRestartCarrier(async () => ({ ok: true }))
+    expect(hasRestartMonitorStore()).toBe(true)
+    withdraw()
+    expect(hasRestartMonitorStore()).toBe(true)
   })
 })
