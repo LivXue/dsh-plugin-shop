@@ -116,6 +116,20 @@ function monitorStore(): MonitorStore {
   return Object.assign(stored, { carriers: stored.carriers ?? [], attempt: stored.attempt ?? null })
 }
 
+/**
+ * Whether a shop instance on this page has registered its restart path:
+ * every `apply` since 0.8.4 does so before anything can ask for a restart.
+ * Read before this instance's own `apply` registers one, a store here names
+ * a predecessor — a 0.8.x shop when no page store sits beside it
+ * (page-store.ts `readPredecessor`; design 2026-10-16-shop-sidebar-page §6).
+ * The store outlives a carrier's withdrawal: a predecessor's teardown
+ * withdraws its carrier and leaves the store, and the store is what names it.
+ * Only a read: unlike `monitorStore`, it never creates the store.
+ */
+export function hasRestartMonitorStore(): boolean {
+  return (globalThis as unknown as Record<symbol, unknown>)[STORE_KEY] !== undefined
+}
+
 function settle(store: MonitorStore, state: RestartMonitorState | null): void {
   store.state = state
   notify(store.listeners)

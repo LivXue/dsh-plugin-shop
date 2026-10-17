@@ -7,7 +7,7 @@ import {
   nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall,
   installPhaseKey, reduceInstall, type InstallView,
   reviewHashPin, shelfOrderLocaleKey, shelfTime, SHELF_ORDERS, sortByStars, starsOf, tierKey, utcDay, orderShelf,
-  RESTART_STABLE_MS, RESTART_WAIT_MS, restartMonitorVerdict, answeredByAnotherProcess, settledByRestart,
+  RESTART_STABLE_MS, RESTART_WAIT_MS, restartMonitorVerdict, answeredByAnotherProcess, settledByRestart, updateAwaitsRestart,
   versionLabel, versionLabelKey,
 } from '../../src/client/present.ts'
 import { en, zh } from '../../src/client/locales.ts'
@@ -1245,5 +1245,21 @@ describe('settledByRestart', () => {
     ['nothing', { kind: 'idle' }, false],
   ] satisfies Array<[string, InstallView, boolean]>)('%s', (_case, view, expected) => {
     expect(settledByRestart(view)).toBe(expected)
+  })
+})
+
+describe('updateAwaitsRestart', () => {
+  const answer = (pendingVersion?: string | null): ShopVersionResult => ({
+    installed: '0.9.0', latest: '0.9.1', outdated: true, restartBlocked: null,
+    ...(pendingVersion === undefined ? {} : { pendingVersion }),
+  })
+  it('reads a version the profile holds that is not the one running as waiting', () => {
+    expect(updateAwaitsRestart(answer('0.9.1'))).toBe(true)
+  })
+  it('reads nothing pending as not waiting', () => {
+    expect(updateAwaitsRestart(answer(null))).toBe(false)
+  })
+  it('reads a host older than the field as waiting, as the tab always has', () => {
+    expect(updateAwaitsRestart(answer())).toBe(true)
   })
 })

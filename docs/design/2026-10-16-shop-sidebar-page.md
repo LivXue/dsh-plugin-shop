@@ -244,8 +244,7 @@ own; it stops one only through a `dispose` it has.
 **Lifetime.** Each `apply` creates a new store. A re-applied bundle is a new
 page, as `warmCatalog` and `pageRemoved` in `index.ts` already treat it.
 Before replacing a predecessor's store, `apply` reads its hand-over facts
-(§6) and disposes it, which stops its timer and drops its listeners (that
-read is part 2; part 1 disposes the predecessor's store without reading it).
+(§6) and disposes it, which stops its timer and drops its listeners.
 A disposed store, its flow registries included, publishes nothing and
 registers no listener again, so nothing in a hot swap's window changes it, a
 start that answers late included; what it held stays readable. A page reload
@@ -392,7 +391,9 @@ anything:
 
 | What is on `globalThis` | Predecessor |
 |---|---|
-| a page store | 0.9.0 or later |
+| a page store with `schema: 1` and a `handover` | 0.9.0 or later |
+| a page store with `schema: 1` and no `handover` | a build with the page store (§5) but not yet the page, whose shop still lived in Settings: read as a 0.8.x shop. The two land in separate pull requests (§10), so a build cut between them leaves this |
+| a page store of another schema | a later shop, after a downgrade: its hand-over cannot be read, so it reads as a page that was not showing |
 | the restart-monitor store, no page store | a 0.8.4–0.8.7 shop, which creates that store in its own `apply`; 0.9.0's `apply` creates it too, but only after this read |
 | neither | none: a fresh page |
 
@@ -402,6 +403,18 @@ a CLI install of a new version always leaves one. A bundle switched off and on
 again leaves none, so it never moves the reader. Each rule selects the page at
 most once per `apply`, after the page's own `main` entry is registered.
 Without a layout service, neither rule does anything.
+
+**The first answer waits on npm.** The host's `version` asks the registry for
+the shop's latest release, uncached, before it reads the profile's copy for
+`pendingVersion` (`host/index.ts`, `self-update.ts`; the same in the
+0.8.4–0.8.7 hosts, which answer until the restart). That lookup normally
+takes about a second, and up to about 10 s when no registry answers: 5 s for
+the profile's configured registry, then 5 s for npmjs.org, which is always
+asked last. A reader who goes elsewhere in that window is moved to the page
+once, when the answer lands. This is accepted, with no time bound: the move
+brings the restart offer the update needs, and a bound would skip it exactly
+when an update has just finished on a slow mirror, with the reader waiting
+for that offer.
 
 - **Rule 1, a 0.9.0-or-later predecessor.** The requirement: a hot swap while
   the shop page is showing leaves it showing. If dsh unregisters the old

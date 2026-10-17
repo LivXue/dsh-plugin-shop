@@ -443,6 +443,19 @@ export function answeredByAnotherProcess(previous: ShopVersionResult, next: Shop
 }
 
 /**
+ * Whether an update of the shop has landed and waits for a restart: the
+ * profile holds a version other than the one running. A host older than the
+ * field sends none, and that reads as waiting: a client newer than its host
+ * exists only because the disk holds a newer shop than the process running
+ * (design §7.3, 2026-09-27 amendment). The tab's restart offer and the
+ * hand-over after a hot swap (design 2026-10-16-shop-sidebar-page §6) read
+ * it alike.
+ */
+export function updateAwaitsRestart(version: ShopVersionResult): boolean {
+  return version.pendingVersion !== null
+}
+
+/**
  * Whether dsh restarting under the page settles this receipt: a change that
  * landed and was waiting for exactly that. The page store clears these
  * (page-store.ts, `noteRestarted`) once the answers come from another

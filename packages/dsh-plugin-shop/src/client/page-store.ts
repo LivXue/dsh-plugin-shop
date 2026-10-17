@@ -21,6 +21,7 @@ import type { InstallArgs, ShopInstallResult, ShopInstallStatusResult, ShopUnins
 import { beginInstall, beginUninstall, beginUpdate, createFlowRegistry, pruned, type FlowRegistry, type FlowRegistryOptions } from './flow-registry.ts'
 import { forget, listen, notify } from './listeners.ts'
 import { SHOP_VISIBLE_BATCH, settledByRestart, type Category, type InstallView, type ShelfOrder } from './present.ts'
+import { hasRestartMonitorStore } from './restart-monitor.ts'
 
 /** The reader's controls over the shelf, kept across leaving and returning. */
 export interface ShelfView {
@@ -85,7 +86,8 @@ export interface PageStoreDeps {
 }
 
 export interface ShopPageStore {
-  /** The shape a successor may read (design §6). */
+  /** The shape a successor may read
+   * (design 2026-10-16-shop-sidebar-page §6). */
   readonly schema: 1
   readonly installs: FlowRegistry<InstallArgs>
   readonly uninstalls: FlowRegistry<{ name: string }>
@@ -141,9 +143,9 @@ export interface ShopPageStore {
   clearReverdict: (asked: number) => void
   /** dsh restarted under the page (index.ts `onRestarted`). */
   noteRestarted: () => void
-  /** Where the page was scrolled to (design §5.7). Written on every scroll
-   * without telling anyone, since nothing renders from it; read once, when
-   * the page comes back. */
+  /** Where the page was scrolled to (design 2026-10-16-shop-sidebar-page §5.7).
+   * Written on every scroll without telling anyone, since nothing renders
+   * from it; read once, when the page comes back. */
   recordScroll: (top: number) => void
   readScroll: () => number
   /** ShopPage reports its own mount here. The page is the only surface that
@@ -151,8 +153,17 @@ export interface ShopPageStore {
    * `main` mounts a key's panel only while it is selected. Not published
    * either: what reads it is the hot-swap hand-over record, which this
    * instance's `main` entry takes as it leaves and the next instance's
-   * `apply` reads (index.ts; design §6). */
+   * `apply` reads (index.ts; design 2026-10-16-shop-sidebar-page §6). */
   notePageMounted: (mounted: boolean) => void
+  /** As this instance's `main` entry leaves, record whether the page showed
+   * (index.ts; design 2026-10-16-shop-sidebar-page §6). Reads the mount flag
+   * above — NEVER dsh's layout service, whose selection observable is not
+   * the same object on every leg (measured 2026-10-16,
+   * design 2026-10-16-shop-sidebar-page §3.1; see index.ts's layout-face
+   * comment). */
+  recordTeardown: () => void
+  /** What a successor reads of this instance. */
+  handover: () => Handover
   /** Stop the flows' polling and drop every listener. A disposed store
    * publishes nothing and registers no listener again, so a hot swap's
    * window cannot change it. What it held stays readable, and the store
@@ -186,6 +197,7 @@ export function createPageStore(deps: () => PageStoreDeps, options: FlowRegistry
   let snapshot: PageSnapshot = { view: INITIAL_VIEW, reverdictPending: false, reverdicts: 0, settled: 0 }
   let scrollTop = 0
   let pageMounted = false
+  let handover: Handover = { showing: false }
   // Set by `dispose`. Every change reaches the page through one of the three
   // publishes below, and a disposed store publishes nothing: what it held is
   // what a successor reads.
@@ -358,6 +370,8 @@ export function createPageStore(deps: () => PageStoreDeps, options: FlowRegistry
     recordScroll: top => { scrollTop = top },
     readScroll: () => scrollTop,
     notePageMounted: mounted => { pageMounted = mounted },
+    recordTeardown: () => { handover = { showing: pageMounted } },
+    handover: () => handover,
     dispose: () => {
       disposed = true
       installs.dispose()
@@ -405,6 +419,41 @@ export function installPageStore(store: ShopPageStore): PageKeyOccupant {
   const previous = occupantOf(page[STORE_KEY])
   page[STORE_KEY] = store
   return previous
+}
+
+/** What a successor reads of the instance it replaces
+ * (design 2026-10-16-shop-sidebar-page §6). */
+export interface Handover {
+  /** Whether the shop page was showing when the instance's teardown began. */
+  readonly showing: boolean
+}
+
+/** What applied on this page before the instance reading it
+ * (design 2026-10-16-shop-sidebar-page §6). */
+export type Predecessor =
+  | { readonly kind: 'none' }
+  /** A shop that still lived in Settings: a 0.8.4–0.8.7 shop, which left the
+   * restart monitor's store and no page store, or a build with the page store
+   * but not yet the page, whose schema-1 store cannot hand over. */
+  | { readonly kind: 'section' }
+  /** A 0.9.0-or-later shop, and whether its page showed as it was torn down.
+   * A later shop's store of another schema reads as not showing: its
+   * hand-over cannot be read. */
+  | { readonly kind: 'page'; readonly showing: boolean }
+
+/** Read at the very start of `apply`, before this instance puts its own
+ * stores on the page. */
+export function readPredecessor(): Predecessor {
+  const previous = readPageStore()
+  // Nothing at the key: a shop that still lived in Settings, or a fresh page.
+  if (previous.kind === 'none') return hasRestartMonitorStore() ? { kind: 'section' } : { kind: 'none' }
+  // A store of another shape (a later shop's, after a downgrade) names no
+  // hand-over this instance can read.
+  if (previous.kind === 'other') return { kind: 'page', showing: false }
+  // A schema-1 store that cannot hand over was left by a build with the page
+  // store but not yet the page: its shop still lived in Settings.
+  if (typeof (previous.store as { handover?: unknown }).handover !== 'function') return { kind: 'section' }
+  return { kind: 'page', showing: previous.store.handover().showing }
 }
 
 /** Stop what the page key held, through the `dispose` it has and no other:

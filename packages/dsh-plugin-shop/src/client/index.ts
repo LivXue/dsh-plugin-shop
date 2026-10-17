@@ -18,8 +18,8 @@ import type { ShopCatalogResult, ShopRestartResult, ShopVersionResult } from '..
 import type { ShopLocaleKey } from './locales.ts'
 import { en, zh } from './locales.ts'
 import { refineAgainstModuleTable } from './module-table.ts'
-import { createPageStore, disposeOccupant, installPageStore } from './page-store.ts'
-import { answeredByAnotherProcess } from './present.ts'
+import { createPageStore, disposeOccupant, installPageStore, readPredecessor } from './page-store.ts'
+import { answeredByAnotherProcess, updateAwaitsRestart } from './present.ts'
 import { noteBoot, registerRestartCarrier } from './restart-monitor.ts'
 import { ShopGlyph } from './ShopGlyph.tsx'
 import { ShopPage } from './ShopPage.tsx'
@@ -106,8 +106,32 @@ export const inject = ['remote', 'slots', 'locale']
  * `ctx.remote.shop` would expose, read here without the inject gate. */
 type ShopRemoteNamespace = TypertRemoteNamespaceMap['shop']
 
+/** What the shop CALLS on dsh's layout service (`dsh-client-ui-layout`).
+ * Only `selectPanel` — one call, identical on 0.1.5-rc.3, 0.1.7-rc.2 and
+ * 0.2.0-rc.2. The shop does NOT read the selection observable from this
+ * service: measured 2026-10-16 (design 2026-10-16-shop-sidebar-page §3.1),
+ * 0.1.5-rc.3's ILayout is a command facade and the observable lives on a
+ * root slot hook reachable only through a private field of `ctx.slots`,
+ * while 0.1.7-rc.2 and 0.2.0-rc.2 carry it on ILayout. Reading
+ * `ctx.layout.panelInfo` unguarded throws on 0.1.5-rc.3 — that crash is
+ * what the probe hit before it was made shape-tolerant. Instead the shop
+ * records whether its OWN page is mounted, which is a fact it owns. The
+ * 2026-10-16 probe measured the teardown record running before the `main`
+ * entry leaves, while dsh's selection still stands, on all three legs; that
+ * the page is still mounted then is the design's argued half (design
+ * 2026-10-16-shop-sidebar-page §6). The e2e's hot-swap case witnesses it on
+ * 0.1.7-rc.2 and 0.2.0-rc.2: the page comes back there only through rule 1,
+ * which reads that record, and the case fails with rule 1 removed (measured
+ * 2026-10-17). */
+interface ShopLayoutFace {
+  selectPanel(panelId: string | null): void
+}
+
 /** Mount the shop Remote and contribute the shop's page and its sidebar row. */
 export async function apply(ctx: ClientContext): Promise<void> {
+  // What this instance replaces (design 2026-10-16-shop-sidebar-page §6),
+  // read before anything below puts a store of its own on the page.
+  const predecessor = readPredecessor()
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-plugin-shop: dictionaries')
 
   // `ctx.on('dispose')` never fires in cordis 4.0.1; an effect whose body
@@ -181,7 +205,8 @@ export async function apply(ctx: ClientContext): Promise<void> {
   }
   // The check is advisory, and so is its failure: a transport that cannot
   // answer leaves the last answer standing, which is all this path can do.
-  void version().catch(() => {})
+  const firstAnswer = version()
+  void firstAnswer.catch(() => {})
   // dsh reconnects to whatever server holds the origin and reloads nothing,
   // so a restart from a terminal, by a supervisor, or one whose own reload
   // never came leaves the page on the old process's answers. Asking again on
@@ -323,16 +348,40 @@ export async function apply(ctx: ClientContext): Promise<void> {
     page,
   })
 
+  // dsh's layout service, read through the reflect shop rather than `inject`,
+  // as `modules` is: what needs it degrades without it, and an inject
+  // requirement would hold the whole client back on a harness that lacks it.
+  const layout = (): ShopLayoutFace | undefined => ctx.get('layout') as ShopLayoutFace | undefined
+  const selectShopPage = (): void => {
+    const service = layout()
+    if (service === undefined) return
+    try {
+      service.selectPanel(SHOP_PANEL)
+    } catch {
+      // dsh refuses a key no `main` entry holds: this instance's own entry is
+      // gone, a teardown under way, so there is no page to select.
+    }
+  }
+
   // The shop's own page in dsh's main column (design
   // 2026-10-16-shop-sidebar-page §4.1), under the key its sidebar row
   // selects. The page first: the row's click selects `shop`, which dsh
   // refuses while no `main` entry holds that key.
-  ctx.slots.inject('main', () => ctx.slots.register({
-    name: 'main',
-    key: SHOP_PANEL,
-    locale: NS,
-    inject: injected,
-  }, ShopPage))
+  ctx.slots.inject('main', () => [
+    ctx.slots.register({
+      name: 'main',
+      key: SHOP_PANEL,
+      locale: NS,
+      inject: injected,
+    }, ShopPage),
+    // Listed after the registration, so it runs before it: cordis disposes
+    // an effect's collected disposers in reverse. The record reads the
+    // page's own mount (ShopPage.tsx), never dsh's selection, and the entry
+    // leaving is what unmounts the page, so run first it reads the page as
+    // the reader last saw it, even on a host that unmounts the page the
+    // moment its entry leaves (design 2026-10-16-shop-sidebar-page §6).
+    () => { page.recordTeardown() },
+  ])
   // Its row in the sidebar, directly under dsh's own Plugins row (order 0)
   // and above Automation (10). The sidebar owns the button, its label and its
   // selection; the shop supplies the glyph.
@@ -343,4 +392,27 @@ export async function apply(ctx: ClientContext): Promise<void> {
     label: () => ctx.locale.bind(NS)('title'),
     locale: NS,
   }, ShopGlyph))
+
+  // The hand-over (design 2026-10-16-shop-sidebar-page §6). A hot swap took
+  // the page from a reader who was on it (rule 1), or swapped out a 0.8.x
+  // shop whose Settings section is gone, leaving the dialog on its first
+  // section (rule 2): either way the page that offers the restart comes
+  // back. Only while an update waits for a restart — a bundle switched off
+  // and on again leaves none, and must not move the reader — and only once,
+  // with this instance's own page in place.
+  //
+  // The first answer includes the host's npm lookup, which it makes uncached
+  // before it reads the profile's copy: about a second, and up to about 10 s
+  // when the registry does not answer (5 s for each of two registries). A
+  // reader who goes elsewhere in that window is moved to the page once, when
+  // the answer lands. That is accepted, with no time bound: the move brings
+  // the restart offer the update needs, and a bound would skip it exactly
+  // when an update has just finished on a slow mirror.
+  if (predecessor.kind === 'section' || (predecessor.kind === 'page' && predecessor.showing)) {
+    void firstAnswer.then(answer => {
+      if (updateAwaitsRestart(answer)) selectShopPage()
+    }, () => {
+      // No answer, no claim that an update waits: nothing moves.
+    })
+  }
 }

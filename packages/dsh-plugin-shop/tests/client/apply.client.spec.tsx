@@ -1,16 +1,16 @@
 // @vitest-environment jsdom
 import './__loader__.ts'
 import { loadModule } from './__loader__.ts'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup } from '@testing-library/react'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { apply, inject, NS, WARM_TTL_MS } from '../../src/client/index.ts'
-import { installPageStore, readPageStore, resetPageStore, type ShopPageStore } from '../../src/client/page-store.ts'
+import { installPageStore, readPageStore, readPredecessor, resetPageStore, type ShopPageStore } from '../../src/client/page-store.ts'
 import { INSTALL_POLL_MS } from '../../src/client/present.ts'
 import { ShopGlyph } from '../../src/client/ShopGlyph.tsx'
 import { ShopPage } from '../../src/client/ShopPage.tsx'
 import type { ShopTabInjected } from '../../src/client/ShopTab.tsx'
-import { readRestartMonitor, requestRestart, resetRestartMonitor, startRestartMonitor } from '../../src/client/restart-monitor.ts'
+import { readRestartMonitor, registerRestartCarrier, requestRestart, resetRestartMonitor, startRestartMonitor } from '../../src/client/restart-monitor.ts'
 import type { InstallArgs, ShopInstallResult, ShopVersionResult } from '../../src/host/index.ts'
 
 // The published dsh client packages expose their browser bundles (a
@@ -49,8 +49,12 @@ interface ShopStub {
  * envelopes the stub returns and the injected methods the tab calls.
  *
  * @param modules the page's `modules` service, provided before the shop boots
- *   the way the web shell provides it; omitted, the page has none. */
-async function boot(shop: ShopStub = {}, modules?: unknown) {
+ *   the way the web shell provides it; omitted, the page has none.
+ * @param options `layout: true` provides a fake of dsh's layout service
+ *   (`fakeLayout`) before the shop boots; omitted, the page has none.
+ *   `unmountOnLeave: true` unmounts the page the moment its `main` entry
+ *   leaves, as a host stricter than React would. */
+async function boot(shop: ShopStub = {}, modules?: unknown, options: { layout?: boolean; unmountOnLeave?: boolean } = {}) {
   const ctx = new Context()
   const locale = new LocaleRuntime(ctx)
   ctx.provide('locale', locale)
@@ -70,6 +74,20 @@ async function boot(shop: ShopStub = {}, modules?: unknown) {
       'sidebar.panellist': { kind: 'list', scope: 'root' },
     },
   } as never, () => null)
+  const layout = options.layout === true ? fakeLayout(ctx) : undefined
+  if (layout !== undefined) ctx.provide('layout', layout.service)
+  // A host stricter than React: it unmounts the page the moment its entry
+  // leaves, on the slot registry's synchronous mutation event. Registered
+  // before apply, because cordis disposes a fiber's effects newest first.
+  if (options.unmountOnLeave === true) {
+    ctx.on('slots/changed', key => {
+      if (key !== 'main' || ctx.slots.entries('main').some(entry => entry.options.key === 'shop')) return
+      // The page key reports what it holds (page-store.ts): only a store of
+      // this schema is the page's, and it is the one that hears this.
+      const occupant = readPageStore()
+      if (occupant.kind === 'store') occupant.store.notePageMounted(false)
+    })
+  }
   const mounted: unknown[] = []
   const disposer = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
   ctx.provide('remote', {
@@ -94,7 +112,29 @@ async function boot(shop: ShopStub = {}, modules?: unknown) {
   const entry = ctx.slots.entries('main').find(e => e.options.key === 'shop')
   if (entry === undefined) throw new Error('the shop page entry is not registered')
   const injected = entry.inject!() as unknown as ShopTabInjected
-  return { ctx, locale, mounted, disposer, injected }
+  return { ctx, locale, mounted, disposer, injected, layout }
+}
+
+/** dsh's layout service as the SHOP calls it — `selectPanel` only, plus the
+ * fallback the layout plugin performs: a selection drops to the conversation
+ * (`null`) when its key's `main` entry leaves (`retainMainPanels`, identical
+ * on 0.1.5-rc.3, 0.1.7-rc.2 and 0.2.0-rc.2, measured 2026-10-16;
+ * design 2026-10-16-shop-sidebar-page §6). `selected()` is the TEST's window
+ * on the selection: the shop never reads it, and no `panelInfo` is faked,
+ * because a service that carried one would let a regression read it back
+ * (its shape differs on 0.1.5-rc.3;
+ * design 2026-10-16-shop-sidebar-page §3.1). */
+function fakeLayout(ctx: InstanceType<typeof Context>) {
+  let active: string | null = null
+  const held = (id: string): boolean => ctx.slots.entries('main').some(entry => entry.options.key === id)
+  const service = {
+    selectPanel: vi.fn((id: string | null) => {
+      if (id !== null && !held(id)) throw new Error(`layout.selectPanel: main panel "${id}" is not registered`)
+      active = id
+    }),
+  }
+  ctx.slots.subscribe('main', () => { if (active !== null && !held(active)) active = null })
+  return { service, selected: (): string | null => active }
 }
 
 describe('shop client apply', () => {
@@ -830,5 +870,198 @@ describe('shop client apply: the page store (design 2026-10-16-shop-sidebar-page
     installPageStore({ schema: 2 } as unknown as ShopPageStore)
     const { injected } = await boot()
     expect(readPageStore()).toEqual({ kind: 'store', store: pageOf(injected) })
+  })
+})
+
+describe('shop client apply: the hand-over after a hot swap (design 2026-10-16-shop-sidebar-page §6)', () => {
+  /** A page no shop has applied on: neither store on `globalThis`. The
+   * shared afterEach's resetRestartMonitor() recreates the monitor's store,
+   * so it is deleted here, before every case. */
+  const freshPage = (): void => {
+    resetPageStore()
+    resetRestartMonitor()
+    delete (globalThis as unknown as Record<symbol, unknown>)[Symbol.for('dsh-plugin-shop.restart-monitor')]
+  }
+  beforeEach(freshPage)
+  const answer = (pendingVersion: string | null) => ({
+    ok: true as const,
+    value: { installed: '0.9.0', latest: '0.9.1', outdated: true, restartBlocked: null, pendingVersion, bootId: 'boot-a' },
+  })
+  /** Waits for the first version request, then a little longer. From that
+   * request to a move runs only through microtasks (the stub's answer,
+   * `version`'s unwrap, the rule's `then`), so the extra wait always covers a
+   * move. A "moves nobody" case owes its non-vacuity elsewhere: its
+   * `readPredecessor()` pre-assertion names the row it starts from, and a
+   * moving neighbour passes under this same wait. */
+  const settle = async (version: ReturnType<typeof vi.fn>): Promise<void> => {
+    await vi.waitFor(() => { expect(version).toHaveBeenCalled() })
+    await new Promise(resolve => { setTimeout(resolve, 20) })
+  }
+  /** The reader is on the page: dsh mounts it when its key is selected, and
+   * ShopPage's mount effect tells the store (ShopPage.tsx). This file renders no
+   * panel, so the case does what the page would. */
+  const readerOnPage = (layout: { service: { selectPanel: (id: string | null) => void } } | undefined): void => {
+    layout?.service.selectPanel('shop')
+    const occupant = readPageStore()
+    if (occupant.kind !== 'store') throw new Error('apply put no page store on the page')
+    occupant.store.notePageMounted(true)
+  }
+
+  it('rule 1: brings the page back after a swap took it from the reader, once an update waits for a restart', async () => {
+    const first = await boot({ version: vi.fn().mockResolvedValue(answer('0.9.1')) }, undefined, { layout: true })
+    readerOnPage(first.layout)
+    await first.ctx.fiber.dispose()
+    // The entry left, so dsh's layout fell back to the conversation…
+    expect(first.layout?.selected()).toBeNull()
+    // …but the record reads the page's own mount, which no selection touches.
+    expect(readPredecessor()).toEqual({ kind: 'page', showing: true })
+    const version = vi.fn().mockResolvedValue(answer('0.9.1'))
+    const second = await boot({ version }, undefined, { layout: true })
+    await settle(version)
+    expect(second.layout?.service.selectPanel).toHaveBeenCalledTimes(1)
+    expect(second.layout?.selected()).toBe('shop')
+  })
+
+  it('rule 1: selects the page once per apply, however many version answers follow', async () => {
+    const first = await boot({ version: vi.fn().mockResolvedValue(answer('0.9.1')) }, undefined, { layout: true })
+    readerOnPage(first.layout)
+    await first.ctx.fiber.dispose()
+    expect(readPredecessor()).toEqual({ kind: 'page', showing: true })
+    const version = vi.fn().mockResolvedValue(answer('0.9.1'))
+    const second = await boot({ version }, undefined, { layout: true })
+    await settle(version)
+    // A tab's own check and every reconnect's re-ask answer through the same
+    // `version`, and the update still waits.
+    await second.injected.version()
+    await settle(version)
+    expect(version).toHaveBeenCalledTimes(2)
+    expect(second.layout?.service.selectPanel).toHaveBeenCalledTimes(1)
+  })
+
+  it('rule 1: records the page as showing even on a host that unmounts it the moment its entry leaves', async () => {
+    const first = await boot({ version: vi.fn().mockResolvedValue(answer('0.9.1')) }, undefined, { layout: true, unmountOnLeave: true })
+    readerOnPage(first.layout)
+    await first.ctx.fiber.dispose()
+    expect(readPredecessor()).toEqual({ kind: 'page', showing: true })
+  })
+
+  it('rule 1: leaves the reader where they were when the page was not showing', async () => {
+    const first = await boot({ version: vi.fn().mockResolvedValue(answer('0.9.1')) }, undefined, { layout: true })
+    await first.ctx.fiber.dispose()
+    expect(readPredecessor()).toEqual({ kind: 'page', showing: false })
+    const version = vi.fn().mockResolvedValue(answer('0.9.1'))
+    const second = await boot({ version }, undefined, { layout: true })
+    await settle(version)
+    expect(second.layout?.service.selectPanel).not.toHaveBeenCalled()
+  })
+
+  it('rule 1: moves nobody when no update waits, as after the bundle is switched off and on', async () => {
+    const first = await boot({ version: vi.fn().mockResolvedValue(answer(null)) }, undefined, { layout: true })
+    readerOnPage(first.layout)
+    await first.ctx.fiber.dispose()
+    // The page WAS showing: what holds the reader still is the answer alone.
+    expect(readPredecessor()).toEqual({ kind: 'page', showing: true })
+    const version = vi.fn().mockResolvedValue(answer(null))
+    const second = await boot({ version }, undefined, { layout: true })
+    await settle(version)
+    expect(second.layout?.service.selectPanel).not.toHaveBeenCalled()
+  })
+
+  it('rule 1: leaves the reader where they were after a downgrade from a later shop, even with an update waiting', async () => {
+    // What a later shop leaves on the page after a downgrade: the restart
+    // monitor's store, and a page store of another schema. As in every case
+    // below that registers one, the predecessor's teardown withdrew its
+    // carrier: the store it leaves is what names a predecessor.
+    const withdraw = registerRestartCarrier(async () => ({ ok: true }))
+    withdraw()
+    installPageStore({ schema: 2, dispose: () => {} } as unknown as ShopPageStore)
+    expect(readPredecessor()).toEqual({ kind: 'page', showing: false })
+    const version = vi.fn().mockResolvedValue(answer('0.9.0'))
+    const { layout } = await boot({ version }, undefined, { layout: true })
+    await settle(version)
+    expect(layout?.service.selectPanel).not.toHaveBeenCalled()
+  })
+
+  it('rule 1: moves nobody after a downgrade from a later shop when no update waits', async () => {
+    const withdraw = registerRestartCarrier(async () => ({ ok: true }))
+    withdraw()
+    installPageStore({ schema: 2, dispose: () => {} } as unknown as ShopPageStore)
+    expect(readPredecessor()).toEqual({ kind: 'page', showing: false })
+    const version = vi.fn().mockResolvedValue(answer(null))
+    const { layout } = await boot({ version }, undefined, { layout: true })
+    await settle(version)
+    expect(layout?.service.selectPanel).not.toHaveBeenCalled()
+  })
+
+  it('rule 2: brings up the page after a swap from a 0.8.x shop, once an update waits for a restart', async () => {
+    // What a 0.8.4–0.8.7 shop leaves on the page: the restart monitor's store, no page store.
+    const withdraw = registerRestartCarrier(async () => ({ ok: true }))
+    withdraw()
+    expect(readPredecessor()).toEqual({ kind: 'section' })
+    const version = vi.fn().mockResolvedValue(answer('0.9.0'))
+    const { layout } = await boot({ version }, undefined, { layout: true })
+    await settle(version)
+    expect(layout?.service.selectPanel).toHaveBeenCalledTimes(1)
+    expect(layout?.selected()).toBe('shop')
+  })
+
+  it('rule 2: brings up the page after a swap from a shop that kept the page store but still lived in Settings', async () => {
+    // What a build with the page store but not yet the page leaves: the
+    // restart monitor's store, and a schema-1 page store with no hand-over.
+    const withdraw = registerRestartCarrier(async () => ({ ok: true }))
+    withdraw()
+    installPageStore({ schema: 1, dispose: () => {} } as unknown as ShopPageStore)
+    const version = vi.fn().mockResolvedValue(answer('0.9.0'))
+    const { layout } = await boot({ version }, undefined, { layout: true })
+    await settle(version)
+    expect(layout?.service.selectPanel).toHaveBeenCalledTimes(1)
+    expect(layout?.selected()).toBe('shop')
+  })
+
+  it('rule 2: moves nobody when no update waits', async () => {
+    const withdraw = registerRestartCarrier(async () => ({ ok: true }))
+    withdraw()
+    expect(readPredecessor()).toEqual({ kind: 'section' })
+    const version = vi.fn().mockResolvedValue(answer(null))
+    const { layout } = await boot({ version }, undefined, { layout: true })
+    await settle(version)
+    expect(layout?.service.selectPanel).not.toHaveBeenCalled()
+  })
+
+  it('rule 2: moves nobody when no update waits, after a swap from a shop that kept the page store but still lived in Settings', async () => {
+    const withdraw = registerRestartCarrier(async () => ({ ok: true }))
+    withdraw()
+    installPageStore({ schema: 1, dispose: () => {} } as unknown as ShopPageStore)
+    expect(readPredecessor()).toEqual({ kind: 'section' })
+    const version = vi.fn().mockResolvedValue(answer(null))
+    const { layout } = await boot({ version }, undefined, { layout: true })
+    await settle(version)
+    expect(layout?.service.selectPanel).not.toHaveBeenCalled()
+  })
+
+  it('rule 2: moves nobody when the first version request fails', async () => {
+    const withdraw = registerRestartCarrier(async () => ({ ok: true }))
+    withdraw()
+    expect(readPredecessor()).toEqual({ kind: 'section' })
+    const version = vi.fn().mockResolvedValue({ ok: false, error: { code: 'WIRE', message: 'down' } })
+    const { layout } = await boot({ version }, undefined, { layout: true })
+    await settle(version)
+    expect(layout?.service.selectPanel).not.toHaveBeenCalled()
+  })
+
+  it('a fresh page moves nobody, even with an update waiting', async () => {
+    expect(readPredecessor()).toEqual({ kind: 'none' })
+    const version = vi.fn().mockResolvedValue(answer('0.9.1'))
+    const { layout } = await boot({ version }, undefined, { layout: true })
+    await settle(version)
+    expect(layout?.service.selectPanel).not.toHaveBeenCalled()
+  })
+
+  it('a fresh page moves nobody when no update waits', async () => {
+    expect(readPredecessor()).toEqual({ kind: 'none' })
+    const version = vi.fn().mockResolvedValue(answer(null))
+    const { layout } = await boot({ version }, undefined, { layout: true })
+    await settle(version)
+    expect(layout?.service.selectPanel).not.toHaveBeenCalled()
   })
 })
