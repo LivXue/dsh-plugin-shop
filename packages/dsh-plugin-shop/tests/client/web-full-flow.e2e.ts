@@ -1596,8 +1596,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await checkOneLine(app, shop)
       // And the warn and success texts this run never stages, from their rules.
       await checkStandInText(app, shop, 'dsh-e2e-fixture-plugin')
-      // The page keeps its scroll position across leaving and returning
-      // (design 2026-10-16-shop-sidebar-page §5.7). Six cards fit the usual
+      // The page keeps the reader's place across leaving and returning: the
+      // card at its top edge comes back at the same height (design
+      // 2026-10-16-shop-sidebar-page §5.7). Six cards fit the usual
       // viewport, so a short one makes the page scroll; the usual one comes
       // back even when a step here fails, so no later case runs short.
       await app.setViewportSize({ width: 1680, height: 480 })
@@ -1605,17 +1606,33 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         await shop.locator('[data-shop-page-title]').hover()
         await app.mouse.wheel(0, 4000)
         // Settled, never slept for: two reads two frames apart agree. The
-        // page writes the position on every scroll event, at most one a
-        // frame, so the settled position is also the one its store holds.
+        // page writes its place on every scroll event, at most one a frame,
+        // so the settled place is also the one its store holds.
         const settledTop = (): Promise<number> => shop.evaluate(el => new Promise<number>(resolve => {
           const first = el.scrollTop
           requestAnimationFrame(() => requestAnimationFrame(() => { resolve(el.scrollTop === first ? first : -1) }))
         }))
         await expect.poll(settledTop, { timeout: 5_000 }).toBeGreaterThan(0)
-        const scrolled = await shop.evaluate(el => el.scrollTop)
+        // The card at the top edge, read as the page reads it: the first
+        // whose bottom lies below the edge, by the identity its shelf item
+        // carries, and its top's offset from the edge.
+        const atEdge = (): Promise<{ identity: string | null; offset: number }> => shop.evaluate(el => {
+          const edge = el.getBoundingClientRect().top
+          const card = [...el.querySelectorAll('[data-shop-identity]')].find(item => item.getBoundingClientRect().bottom > edge)
+          return { identity: card?.getAttribute('data-shop-identity') ?? null, offset: card === undefined ? Number.NaN : card.getBoundingClientRect().top - edge }
+        })
+        const left = await atEdge()
+        // The wheel went past the head and the toolbar: a card meets the
+        // edge, so the check below reads a card, never a missing one.
+        expect(left.identity).not.toBeNull()
         await leaveShopPage(app, launchedDshVersion)
         await openShopPage(app)
-        await expect.poll(() => shop.evaluate(el => el.scrollTop), { timeout: 10_000 }).toBe(scrolled)
+        // The same card, at its height to within the page's own correction
+        // threshold of a pixel. The scroll position is not compared: the
+        // page puts back the card, and the position followed only because
+        // every card here renders, so none lays out at its placeholder.
+        await expect.poll(async () => (await atEdge()).identity, { timeout: 10_000 }).toBe(left.identity)
+        await expect.poll(async () => Math.abs((await atEdge()).offset - left.offset), { timeout: 10_000 }).toBeLessThanOrEqual(1)
         // The reopen left the pointer on the sidebar row, where a wheel
         // scrolls the sidebar: back over the page first.
         await shop.hover()

@@ -58,6 +58,17 @@ export function switchKey(surface: SwitchSurface, identity: string): string {
  * everything after the first. */
 const identityOf = (key: string): string => key.slice(key.indexOf(':') + 1)
 
+/** The card the reader is at: the first on the shelf whose bottom lies below
+ * the page's top edge (design 2026-10-16-shop-sidebar-page §5.7). */
+export interface ScrollAnchor {
+  /** Its identity (`identityKey`), since two listed entries can share a
+   * name. */
+  readonly key: string
+  /** Its top relative to the page's top edge, in px: zero or negative while
+   * the card spans the edge, and at most the shelf's gap between cards while
+   * the edge falls in that gap. A reader above the shelf has no card. */
+  readonly offset: number
+}
 export interface PageSnapshot {
   readonly view: ShelfView
   /** A settle changed what the catalog's verdicts depend on, and no answer to
@@ -149,11 +160,17 @@ export interface ShopPageStore {
   clearReverdict: (asked: number) => void
   /** dsh restarted under the page (index.ts `onRestarted`). */
   noteRestarted: () => void
-  /** Where the page was scrolled to (design 2026-10-16-shop-sidebar-page §5.7).
-   * Written on every scroll without telling anyone, since nothing renders
-   * from it; read once, when the page comes back. */
-  recordScroll: (top: number) => void
+  /** Where the page was scrolled to, and the card at its top edge (design
+   * 2026-10-16-shop-sidebar-page §5.7). Written on every scroll without
+   * telling anyone, since nothing renders from it; read once, when the page
+   * comes back. A position written without a card has none. */
+  recordScroll: (top: number, anchor?: ScrollAnchor | null) => void
   readScroll: () => number
+  /** The card written with the position, or null. A view change that
+   * refilters or reorders the shelf forgets it, as `focus` does: the card is
+   * somewhere else on the new shelf, or gone, and no scroll event need follow
+   * to write the card the reader sees now. */
+  readAnchor: () => ScrollAnchor | null
   /** ShopPage reports its own mount here. The page is the only surface that
    * knows it is on screen, and it knows it without asking dsh anything:
    * `main` mounts a key's panel only while it is selected. Not published
@@ -193,6 +210,16 @@ export const INITIAL_VIEW: ShelfView = {
   visibleCount: SHOP_VISIBLE_BATCH,
 }
 
+/** Whether going from one view to the other changes which cards the shelf
+ * shows, or their order. Growing the shelf and opening a card change
+ * neither. */
+function reshelves(before: ShelfView, after: ShelfView): boolean {
+  return before.query !== after.query
+    || before.category !== after.category
+    || before.order !== after.order
+    || before.hideIncompatible !== after.hideIncompatible
+}
+
 /**
  * @param deps read on every call, so the owner can hand over its latest
  *   functions without rebuilding the store.
@@ -202,6 +229,7 @@ export const INITIAL_VIEW: ShelfView = {
 export function createPageStore(deps: () => PageStoreDeps, options: FlowRegistryOptions): ShopPageStore {
   let snapshot: PageSnapshot = { view: INITIAL_VIEW, reverdictPending: false, reverdicts: 0, settled: 0 }
   let scrollTop = 0
+  let scrollAnchor: ScrollAnchor | null = null
   let pageMounted = false
   let handover: Handover = { showing: false }
   // Set by `dispose`. Every change reaches the page through one of the three
@@ -216,10 +244,13 @@ export function createPageStore(deps: () => PageStoreDeps, options: FlowRegistry
   }
   /** The view with `patch` applied, published only when it differs: the
    * view's fields are primitives, so a field-by-field compare is the
-   * whole question. */
+   * whole question. One that refilters or reorders the shelf forgets the
+   * card the reader was at: the restore then sets the position, which is
+   * what the reader last saw, and their next scroll writes a card again. */
   const showView = (patch: Partial<ShelfView>): void => {
     const view = { ...snapshot.view, ...patch }
     if ((Object.keys(view) as Array<keyof ShelfView>).every(field => view[field] === snapshot.view[field])) return
+    if (reshelves(snapshot.view, view)) scrollAnchor = null
     publish({ view })
   }
   // Which cards are expanded, by identity, told to listeners of their own
@@ -344,7 +375,9 @@ export function createPageStore(deps: () => PageStoreDeps, options: FlowRegistry
       scrollTop = 0
       // The view's fields through `showView`, so a view that changes nothing
       // publishes nothing, and the card on its own channel: opening one card
-      // re-renders that card, never the shelf.
+      // re-renders that card, never the shelf. The anchor goes whatever the
+      // view says: the reader asked for this plugin, not for where they were.
+      scrollAnchor = null
       showView({ query: name, category: null, hideIncompatible: false, visibleCount: SHOP_VISIBLE_BATCH })
       if (card !== null) openCard(card)
     },
@@ -385,8 +418,12 @@ export function createPageStore(deps: () => PageStoreDeps, options: FlowRegistry
       if (next !== null) publishOwed(next)
       settle(true)
     },
-    recordScroll: top => { scrollTop = top },
+    recordScroll: (top, anchor = null) => {
+      scrollTop = top
+      scrollAnchor = anchor
+    },
     readScroll: () => scrollTop,
+    readAnchor: () => scrollAnchor,
     notePageMounted: mounted => { pageMounted = mounted },
     recordTeardown: () => { handover = { showing: pageMounted } },
     handover: () => handover,
