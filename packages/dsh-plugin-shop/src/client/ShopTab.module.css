@@ -105,6 +105,50 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+/* The shop's own page in dsh's main column (design
+ * 2026-10-16-shop-sidebar-page §4.2), framed as dsh 0.2.0-rc.2 frames its
+ * Plugins page — read from that page's stylesheet: the page is the scroll
+ * container, its children one centred column of at most 960px, and the head
+ * clears the desktop title bar. One declaration is the shop's own, `color`:
+ * dsh's `.page` inherits its colour from the shell around it, and the shop's
+ * root is not inside dsh's panel stylesheet, so the shop's page states it. */
+.page {
+  box-sizing: border-box;
+  height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  padding: 0 clamp(24px, 4vw, 48px) 48px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.page > * {
+  width: 100%;
+  max-width: 960px;
+}
+
+.pageHead {
+  box-sizing: border-box;
+  padding-top: calc(28px + var(--dsh-frame-top-clearance, 0px));
+}
+
+.pageTitle {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 28px;
+}
+
+/* Secondary, as dsh's own intro: 5.80:1 on the light theme's white. */
+.pageIntro {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+}
+
 .stateLine {
   margin: 0;
   color: var(--dsw-alias-label-primary);

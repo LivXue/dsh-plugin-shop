@@ -4,7 +4,7 @@
  * details — never markup, so hostile npm descriptions cannot inject (spec
  * §11.3.4): no render path here may ever use dangerouslySetInnerHTML. */
 
-import { Component, memo, useCallback, useEffect, useId, useMemo, useReducer, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
+import { Component, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
 import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, utcDay, versionLabel, versionLabelKey } from './present.ts'
@@ -81,13 +81,21 @@ export interface ShopTabInjected {
   page?: ShopPageStore
 }
 
-/** Full component props assembled by the Settings slot renderer. */
-/** The shop body's props: since 2026-10-15 the shop is its own Settings
- * section (design §5.1), whose one owner prop, `close`, the body ignores. */
+/** What only the page frame hands the body (ShopPage.tsx). */
+export interface ShopTabOwnProps {
+  /** Called once per mount, on the first commit with the shelf on screen
+   * and an answer from the installed list, rows or none or a failure: the
+   * frame restores its scroll position then (design
+   * 2026-10-16-shop-sidebar-page §5.7). */
+  onShelfReady?: () => void
+}
+
+/** Full component props assembled by the slot renderer, plus the frame's. */
 export type ShopTabProps =
   PropsRuntime<'settings.section'>
   & PropsLocale<'settings.shop'>
   & InjectFace<ShopTabInjected>
+  & ShopTabOwnProps
 
 /** What the tab is trying to load, and with which catalog cache behavior:
  * a refresh forces the network re-fetch while the stale snapshot stays
@@ -1438,7 +1446,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
 /** The shop tab body: browse, search, refresh, and render one card per
  * entry. Data attributes on the e2e-relevant nodes follow the Task 3 list. */
 function ShopTabBody(props: ShopTabProps): ReactNode {
-  const { t, catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, noteUninstalled, restart, version, onRestarted, updateStart, reload: injectedReload, page: injectedPage } = props
+  const { t, catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, noteUninstalled, restart, version, onRestarted, updateStart, reload: injectedReload, page: injectedPage, onShelfReady } = props
   const [catalogState, setCatalogState] = useState<CatalogState>({ kind: 'loading' })
   const [installedState, setInstalledState] = useState<InstalledState>({ kind: 'loading' })
   /** The install gate's own input, or undefined while it is unknown — loading,
@@ -1662,6 +1670,23 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
     void load()
     return () => { cancelled = true }
   }, [catalog, request, page])
+
+  // The first commit with the shelf on screen and an answer from the
+  // installed list, once per mount: the page frame restores its scroll
+  // position then, when what it was measured against is in the document
+  // again. The installed list draws the Updatable section and the whole
+  // Installed view, so a restore on the catalog alone would clamp to a page
+  // that is shorter only until the list answers, and the clamp's own scroll
+  // event would overwrite the stored position. A list that failed has
+  // answered too, so the restore never waits forever. A layout effect, so the
+  // restore lands before that commit is painted (design
+  // 2026-10-16-shop-sidebar-page §5.7).
+  const shelfShown = useRef(false)
+  useLayoutEffect(() => {
+    if (shelfShown.current || catalogState.kind !== 'ready' || installedState.kind === 'loading') return
+    shelfShown.current = true
+    onShelfReady?.()
+  }, [catalogState, installedState, onShelfReady])
 
   // The shop's own version check reloads on an explicit Retry/Refresh click
   // (`versionReload`, bumped only by those two buttons, which the
@@ -1974,11 +1999,15 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   )
   filteredLenRef.current = filtered.length
 
-  // The sentinel that grows the shelf: when the last rendered card's footer
-  // comes within a screen and a half of the viewport, the window widens by
-  // one batch. The effect re-runs as the window grows so it always observes
-  // the CURRENT sentinel node; the length is read through a ref because the
-  // callback must not close over a stale filtered list.
+  // The sentinel that grows the shelf: when it scrolls into view, below the
+  // last rendered card, the window widens by one batch. The observer's root
+  // is the viewport, and the page's own scroll container clips the sentinel
+  // before the viewport is reached, so the 1200px margin below the viewport
+  // never reaches past that clip and the batch grows only once the sentinel
+  // is on screen, as it did inside Settings' scroll container. The effect
+  // re-runs as the window grows so it always observes the CURRENT sentinel
+  // node; the length is read through a ref because the callback must not
+  // close over a stale filtered list.
   useEffect(() => {
     if (!incremental) return
     const node = sentinelRef.current
