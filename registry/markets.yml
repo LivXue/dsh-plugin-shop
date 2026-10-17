@@ -54,6 +54,11 @@
   by: human
   reason: "DSH 社区插件市场：设置内「插件市场」入口 + 卡片弹窗 + 一键安装/卸载/管理（bundle 走 dsh plugin add，pack 走 zip 落盘）"
 
+- name: "@baitongserver/dsh-plugin-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: 百通插件广场：在 DeepSeek Harness 中浏览、搜索并安装百通插件市场的 DSH 插件与百通技能库技能"
+
 - name: "@becomeopc/dshx-plugin-marketplace"
   market: true
   by: human
