@@ -141,6 +141,18 @@ export interface ShopPageStore {
   clearReverdict: (asked: number) => void
   /** dsh restarted under the page (index.ts `onRestarted`). */
   noteRestarted: () => void
+  /** Where the page was scrolled to (design §5.7). Written on every scroll
+   * without telling anyone, since nothing renders from it; read once, when
+   * the page comes back. */
+  recordScroll: (top: number) => void
+  readScroll: () => number
+  /** ShopPage reports its own mount here. The page is the only surface that
+   * knows it is on screen, and it knows it without asking dsh anything:
+   * `main` mounts a key's panel only while it is selected. Not published
+   * either: what reads it is the hot-swap hand-over record, which this
+   * instance's `main` entry takes as it leaves and the next instance's
+   * `apply` reads (index.ts; design §6). */
+  notePageMounted: (mounted: boolean) => void
   /** Stop the flows' polling and drop every listener. A disposed store
    * publishes nothing and registers no listener again, so a hot swap's
    * window cannot change it. What it held stays readable, and the store
@@ -172,6 +184,8 @@ export const INITIAL_VIEW: ShelfView = {
  */
 export function createPageStore(deps: () => PageStoreDeps, options: FlowRegistryOptions): ShopPageStore {
   let snapshot: PageSnapshot = { view: INITIAL_VIEW, reverdictPending: false, reverdicts: 0, settled: 0 }
+  let scrollTop = 0
+  let pageMounted = false
   // Set by `dispose`. Every change reaches the page through one of the three
   // publishes below, and a disposed store publishes nothing: what it held is
   // what a successor reads.
@@ -341,6 +355,9 @@ export function createPageStore(deps: () => PageStoreDeps, options: FlowRegistry
       if (next !== null) publishOwed(next)
       settle(true)
     },
+    recordScroll: top => { scrollTop = top },
+    readScroll: () => scrollTop,
+    notePageMounted: mounted => { pageMounted = mounted },
     dispose: () => {
       disposed = true
       installs.dispose()

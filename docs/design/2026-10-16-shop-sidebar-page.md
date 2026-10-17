@@ -362,8 +362,9 @@ lives inside Settings' own container and restores no scroll).
 - **Recording.** The scroll position is written to the store on scroll, at
   most once per animation frame.
 - **Restoring.** On mount the stored card count renders that many cards. Once
-  the catalog is ready and laid out, the page sets the position once, and a
-  shorter page clamps it.
+  the catalog is ready and the installed list has answered (the Updatable
+  section and the Installed view are drawn from it), and both are laid out, the
+  page sets the position once; a page that is genuinely shorter clamps it.
 - **Cancelling.** A wheel, touch or key event before the restore cancels it.
 
 ### 5.8 Known gap: a reload during an install
@@ -548,7 +549,8 @@ selection itself rather than watching its own mount, so the mount-based witness
   `pendingVersion` set and unset.
 - **`ShopDetailAction`:** every subject in §7's table, plus an error inside
   the component rendering nothing.
-- **Scroll restore:** it happens once, and an earlier wheel cancels it.
+- **Scroll restore:** it waits for the catalog and the installed list, happens
+  once, and an earlier wheel, touch or key cancels it.
 - **The existing `ShopTab` suite stays as it is.** It is the regression net
   for moving the state.
 

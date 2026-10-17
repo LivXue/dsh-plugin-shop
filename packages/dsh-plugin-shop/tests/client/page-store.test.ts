@@ -142,6 +142,19 @@ describe('the reader\'s place', () => {
     store.setOwed(switchKey('row', KEY), 'reload', store.owedEpoch())
     expect(switches).toHaveBeenCalledTimes(2)
   })
+
+  it('remembers where the page was scrolled to, and that it is mounted, without telling its subscribers', () => {
+    const { store } = bench()
+    const heard = vi.fn()
+    store.subscribe(heard)
+    expect(store.readScroll()).toBe(0)
+    store.recordScroll(640)
+    store.notePageMounted(true)
+    store.notePageMounted(false)
+    expect(store.readScroll()).toBe(640)
+    expect(heard).not.toHaveBeenCalled()
+    store.dispose()
+  })
 })
 
 describe('settles, with no page mounted', () => {

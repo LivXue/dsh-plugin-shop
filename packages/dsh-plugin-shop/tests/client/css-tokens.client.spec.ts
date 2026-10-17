@@ -109,12 +109,37 @@ describe('class references', () => {
     // the singular while the stylesheet defined only the plural
     // `.outdatedVersions`, so the two version labels on an outdated row
     // rendered with no class and therefore no separation between them.
-    const tsx = ['ShopTab.tsx', 'ShopSection.tsx']
+    const tsx = ['ShopTab.tsx', 'ShopSection.tsx', 'ShopPage.tsx']
       .map(file => readFileSync(new URL(`../../src/client/${file}`, import.meta.url), 'utf8'))
       .join('\n')
     const used = new Set([...tsx.matchAll(/\bcss\.([A-Za-z_][\w]*)/g)].map(m => m[1]))
     const defined = definedClasses(css)
     expect([...used].filter(name => name !== undefined && !defined.has(name))).toEqual([])
+  })
+
+  it('frames the page as dsh\'s Plugins page does: one centred column of at most 960px', () => {
+    // Read from dsh 0.2.0-rc.2's Plugins page stylesheet (design
+    // 2026-10-16-shop-sidebar-page §3.2): the page scrolls, its children
+    // share one column, and the head clears the desktop title bar.
+    expect(declarationsOf(rules.get('.page') ?? '')).toEqual([
+      { prop: 'box-sizing', value: 'border-box' },
+      { prop: 'height', value: '100%' },
+      { prop: 'overflow', value: 'auto' },
+      { prop: 'display', value: 'flex' },
+      { prop: 'flex-direction', value: 'column' },
+      { prop: 'align-items', value: 'center' },
+      { prop: 'gap', value: '32px' },
+      { prop: 'padding', value: '0 clamp(24px, 4vw, 48px) 48px' },
+      { prop: 'color', value: 'var(--dsw-alias-label-primary)' },
+    ])
+    expect(declarationsOf(rules.get('.page > *') ?? '')).toEqual([
+      { prop: 'width', value: '100%' },
+      { prop: 'max-width', value: '960px' },
+    ])
+    expect(rules.get('.pageHead') ?? '').toMatch(/padding-top:\s*calc\(28px \+ var\(--dsh-frame-top-clearance, 0px\)\)/)
+    expect(rules.get('.pageTitle') ?? '').toMatch(/font-size:\s*20px/)
+    expect(rules.get('.pageTitle') ?? '').toMatch(/font-weight:\s*500/)
+    expect(rules.get('.pageIntro') ?? '').toMatch(/color:\s*var\(--dsw-alias-label-secondary\)/)
   })
 
   it('keeps the section in the 760px column Built-in plugins drew it in', () => {
