@@ -1,8 +1,16 @@
-/* Shop tab styles — a market shelf on the shop's own page. The visual
- * language is the dsh theme's alias tokens ONLY (the four tokens the previous
- * styles referenced that do not exist — bg-layer-3, interactive-bg-hover,
- * state-error, state-success — are corrected to bg-layer-2 and the
- * state-*-primary set). The signature is the category spine: one HUE per
+/* Shop styles — the shop's own page with its market shelf, and the shop's two
+ * buttons on dsh's Plugins page. Every variable read here is a dsh theme
+ * alias token (`--dsw-alias-*`), one of the shop's own properties declared in
+ * this file (`--shop-*`, `--category-hue`, `--switch-hue`, `--track-hue`), or
+ * one of two dsh variables outside the alias set, each read where the shop
+ * copies dsh: `--dsh-frame-top-clearance`, so the page head clears the
+ * desktop frame as dsh's own pages do, and `--dsw-radius-sm`, because the
+ * Plugins page buttons copy dsh's Button (0.1.5-rc.3 lacks that token, and
+ * has no Plugins page to draw them on). `state-error` and
+ * `state-success` do not exist, so the state-*-primary set stands in for
+ * them (measured 2026-10-17 on dsh 0.1.5-rc.3, 0.1.7-rc.2 and 0.2.0-rc.2,
+ * which do define `bg-layer-3` and `interactive-bg-hover`, once listed here
+ * as missing). The signature is the category spine: one HUE per
  * category (seven fixed hues, not the brand token — the brand resolves to
  * near-black in the light theme, so seven brand opacities read as seven
  * shades of gray), with the category name as the cover label in the same hue. Class names are mapped to content-derived names at bundle time
@@ -122,6 +130,37 @@
   font-size: 13px;
   line-height: 20px;
   color: var(--dsw-alias-label-secondary);
+}
+
+/* The two buttons on dsh's Plugins page (design 2026-10-16-shop-sidebar-page
+ * §7), drawn as that page draws its own small outline buttons beside them —
+ * dsh 0.2.0-rc.2's Button, sm + outline: 28px tall, 12px text on an 18px
+ * line, 10px of side padding, the small radius, the neutral stroke. That
+ * stroke is 0.5px in dsh and 1px here: every border in this stylesheet is,
+ * and Chromium paints 0.5px as 1px at every ratio measured. */
+.detailAction {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.detailAction:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.detailAction:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
 }
 
 .stateLine {

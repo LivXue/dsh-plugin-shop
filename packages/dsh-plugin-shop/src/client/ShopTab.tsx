@@ -7,7 +7,7 @@
 import { Component, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, updateAwaitsRestart, utcDay, versionLabel, versionLabelKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, listedOnShelf, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, updateAwaitsRestart, utcDay, versionLabel, versionLabelKey } from './present.ts'
 import { createPageStore, switchKey, type OwedNotice, type ShopPageStore, type SwitchSurface } from './page-store.ts'
 import { readRestartMonitor, requestRestart, subscribeRestartMonitor, type RestartMonitorState } from './restart-monitor.ts'
 import { useRegistryFlows, type InstallFlow, type UninstallFlow, type UseUninstallFlows } from './useFlows.ts'
@@ -1823,7 +1823,9 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   // entry and said "9300 packages" above a shelf that would never render 73
   // of them. Advertising is all it governs: an INSTALLED shop-like plugin is
   // still managed from the Installed view, which reads `sortedCatalog`.
-  // The repo slug gets the same check for github entries.
+  // The repo slug gets the same check for github entries. The rule itself is
+  // present.ts' `listedOnShelf`, which the Plugins page's "View in Plugin
+  // shop" applies too (design 2026-10-16-shop-sidebar-page §7).
   //
   // This pass, `matched` down the file and the three counts share
   // `sortedCatalog`, so a toggle click re-runs all of them over the whole
@@ -1840,9 +1842,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
     // stores tea or sells plugins. It travels with the data, so a correction
     // lands on the next daily build instead of the client's next release.
     const cleared = new Set(catalogState.result.notAShop ?? [])
-    return sortedCatalog.filter(entry =>
-      cleared.has(entry.name)
-      || (!isShopLike(entry.name) && (entry.repo === undefined || !isShopLike(entry.repo))))
+    return sortedCatalog.filter(entry => listedOnShelf(entry, cleared))
   }, [catalogState, sortedCatalog])
 
   // Each card's incompatibility badge, looked up once per catalog load

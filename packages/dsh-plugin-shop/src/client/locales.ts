@@ -1,4 +1,5 @@
-/** Copy dictionaries for the shop's page in dsh's main column. */
+/** Copy dictionaries for the shop's page in dsh's main column, its row in the
+ * sidebar, and its two buttons on dsh's Plugins page. */
 
 /** Simplified Chinese dictionary and key source of truth. */
 export const zh = {
@@ -8,6 +9,11 @@ export const zh = {
   title: '插件商店',
   /** The page's intro line, under its title, as dsh's own pages carry one. */
   intro: '浏览、安装和更新目录中的插件。',
+  /** The Plugins page's button on the shop's own bundle page (design
+   * 2026-10-16-shop-sidebar-page §7). */
+  openShop: '打开插件商店',
+  /** Its button on a page of a bundle the shelf lists. */
+  viewInShop: '在插件商店中查看',
   loading: '正在读取目录…',
   error: '暂时无法读取目录。',
   installedLoading: '正在读取已安装列表…',
@@ -209,6 +215,8 @@ export type ShopLocaleKey = keyof typeof zh
 export const en = {
   title: 'Plugin shop',
   intro: 'Browse, install, and update plugins from the catalog.',
+  openShop: 'Open Plugin shop',
+  viewInShop: 'View in Plugin shop',
   loading: 'Reading the catalog…',
   error: 'The catalog is temporarily unavailable.',
   installedLoading: 'Reading the installed list…',

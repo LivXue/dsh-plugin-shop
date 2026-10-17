@@ -1,8 +1,9 @@
 /**
  * Shop surface, browser half — the shop's own page in dsh's main column
- * (`main`) with its row in the left sidebar (`sidebar.panellist`), which
- * browses the catalog, installs on one click, toggles enablement, lists
- * installed plugins, and restarts dsh after installs (design
+ * (`main`), which browses the catalog, installs on one click, toggles
+ * enablement, lists installed plugins, and restarts dsh after installs; its
+ * row in the left sidebar (`sidebar.panellist`); and the two buttons on dsh's
+ * Plugins page that lead into it (`plugins.detail.actions`) (design
  * 2026-10-16-shop-sidebar-page).
  * Mounts the shop Remote itself (the assembly does not know this package)
  * and holds no privilege beyond the nine `shop/*` methods (the shop design's
@@ -21,6 +22,7 @@ import { refineAgainstModuleTable } from './module-table.ts'
 import { createPageStore, disposeOccupant, installPageStore, readPredecessor } from './page-store.ts'
 import { answeredByAnotherProcess, updateAwaitsRestart } from './present.ts'
 import { noteBoot, registerRestartCarrier } from './restart-monitor.ts'
+import { ShopDetailAction, type PluginsSubject, type ShopDetailActionInjected } from './ShopDetailAction.tsx'
 import { ShopGlyph } from './ShopGlyph.tsx'
 import { ShopPage } from './ShopPage.tsx'
 import type { ShopTabInjected } from './ShopTab.tsx'
@@ -42,6 +44,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * harnesses): only the selected key is mounted, and the sidebar row with
      * the same id selects it. Declared here for the same reason. */
     'main': { kind: 'keyed'; scope: 'root' }
+    /** Controls at the head of a detail page on dsh's Plugins page
+     * (`dsh-client-ui-plugin-manager`, 0.1.7-rc.2 and later), rendered with
+     * the page's subject; an entry renders null for a subject it has nothing
+     * for. On a harness without the Plugins page nothing declares it, and a
+     * registration into it waits without ever rendering. */
+    'plugins.detail.actions': { kind: 'list'; scope: 'root'; owner: { subject: PluginsSubject } }
   }
 }
 
@@ -90,7 +98,8 @@ let warmCatalog: { at: number; result: Promise<ShopCatalogResult> } | null = nul
  * here and stays unknown to this page until it reloads. */
 let pageRemoved = new Set<string>()
 
-/** Services required by the page and row registrations and the Remote mount.
+/** Services required by the page, row and Plugins page button registrations
+ * and the Remote mount.
  *
  * `remote.shop` is deliberately ABSENT: this package both mounts its own
  * Remote (the assembly does not know it, §7.3) and consumes it, and cordis
@@ -127,7 +136,8 @@ interface ShopLayoutFace {
   selectPanel(panelId: string | null): void
 }
 
-/** Mount the shop Remote and contribute the shop's page and its sidebar row. */
+/** Mount the shop Remote and contribute the shop's page, its sidebar row and
+ * its buttons on dsh's Plugins page. */
 export async function apply(ctx: ClientContext): Promise<void> {
   // What this instance replaces (design 2026-10-16-shop-sidebar-page §6),
   // read before anything below puts a store of its own on the page.
@@ -265,6 +275,27 @@ export async function apply(ctx: ClientContext): Promise<void> {
     return fresh
   }
 
+  // "Does the shelf list this name?", for the Plugins page's button (design
+  // 2026-10-16-shop-sidebar-page §7): the stash, whatever its age — a
+  // listing question needs none of a shelf's freshness — and one plain read
+  // when there is no stash to ask. A question asked while that read is in
+  // flight shares it rather than start another whole-catalog read; the
+  // window opens whenever a mutation drops the stash. Once the read settles,
+  // the next question finds the stash it left, or reads again if it failed.
+  let listingRead: Promise<ShopCatalogResult> | null = null
+  const listing = async (): Promise<ShopCatalogResult> => {
+    const warm = warmCatalog
+    if (warm !== null) {
+      try {
+        return await warm.result
+      } catch {
+        // The stashed fetch failed; the plain read below is the retry.
+      }
+    }
+    listingRead ??= hostCatalog().finally(() => { listingRead = null })
+    return listingRead
+  }
+
   // The host's peer list is only half a verdict (module-table.ts says why and
   // how much of it is wrong), so every result is refined against this page's
   // module table on its way to the tab — warm, stashed, fresh and refreshed
@@ -351,15 +382,19 @@ export async function apply(ctx: ClientContext): Promise<void> {
   // dsh's layout service, read through the reflect shop rather than `inject`,
   // as `modules` is: what needs it degrades without it, and an inject
   // requirement would hold the whole client back on a harness that lacks it.
-  const layout = (): ShopLayoutFace | undefined => ctx.get('layout') as ShopLayoutFace | undefined
+  // Read as a shape to check rather than to trust: a service without
+  // `selectPanel`, as a reshaped one could be, cannot move the reader, so
+  // nothing here calls it or offers to.
+  const layout = (): Partial<ShopLayoutFace> | undefined => ctx.get('layout') as Partial<ShopLayoutFace> | undefined
   const selectShopPage = (): void => {
     const service = layout()
-    if (service === undefined) return
+    if (typeof service?.selectPanel !== 'function') return
     try {
       service.selectPanel(SHOP_PANEL)
     } catch {
-      // dsh refuses a key no `main` entry holds: this instance's own entry is
-      // gone, a teardown under way, so there is no page to select.
+      // dsh refuses a key no `main` entry holds, the one throw `selectPanel`
+      // documents: this instance's own entry is gone, a teardown under way,
+      // so there is no page to select.
     }
   }
 
@@ -392,12 +427,26 @@ export async function apply(ctx: ClientContext): Promise<void> {
     label: () => ctx.locale.bind(NS)('title'),
     locale: NS,
   }, ShopGlyph))
+  // The Plugins page's two buttons (0.1.7-rc.2 and later; design
+  // 2026-10-16-shop-sidebar-page §7). They open the page through the layout
+  // service, so without one that can select it they do not render
+  // (`canOpen`).
+  ctx.slots.inject('plugins.detail.actions', () => ctx.slots.register({
+    name: 'plugins.detail.actions',
+    id: SHOP_PANEL,
+    order: 0,
+    locale: NS,
+    inject: (): ShopDetailActionInjected => ({ listing, canOpen: () => typeof layout()?.selectPanel === 'function', openShop: selectShopPage, page }),
+  }, ShopDetailAction))
 
   // The hand-over (design 2026-10-16-shop-sidebar-page §6). A hot swap took
   // the page from a reader who was on it (rule 1), or swapped out a 0.8.x
-  // shop whose Settings section is gone, leaving the dialog on its first
-  // section (rule 2): either way the page that offers the restart comes
-  // back. Only while an update waits for a restart — a bundle switched off
+  // shop that lived in Settings (rule 2): either way the page that offers the
+  // restart comes back. Rule 2 sees 0.8.4 and later, through the restart
+  // monitor's store. From 0.8.4–0.8.6 the dialog stays on Built-in plugins
+  // and falls back to its first tab, and from 0.8.7 to its first section;
+  // 0.8.0–0.8.3 leave nothing to see and read as a fresh page, so nothing
+  // moves. Only while an update waits for a restart — a bundle switched off
   // and on again leaves none, and must not move the reader — and only once,
   // with this instance's own page in place.
   //
