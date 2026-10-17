@@ -366,12 +366,63 @@ and `useFlows.client.spec.ts` pins them on that hook:
 The page's `<section>` is its only scroll container. While the shop lived in
 Settings, it sat inside Settings' own container and restored no scroll.
 
-- **Recording.** The scroll position is written to the store on scroll, at
-  most once per animation frame.
+- **Recording.** On scroll, at most once per animation frame, the page writes
+  the store the scroll position and the card the reader is at: the first card
+  whose bottom lies below the page's top edge, by its install identity (a name
+  is not unique on the shelf), and its top's offset from that edge. A binary
+  search over the cards finds it, so a scroll event reads a handful of rects,
+  never one per card. The card counts only while its top lies at or above the
+  edge, or within the shelf's gap between cards below it (`.cards`' `gap`, as
+  the list's computed style reads it). A reader above the shelf, in the head
+  or the toolbar, writes no card: nothing there lays out at a placeholder
+  height, so the position is exact, and a card would pull them down the page
+  whenever the content above the shelf grows while they are away. A change to
+  the search, the category, the order or "hide incompatible" forgets the
+  card, since it is somewhere else on the new shelf or gone, and no scroll
+  event need follow; growing the shelf and opening a card keep it.
 - **Restoring.** On mount the stored card count renders that many cards. Once
   the catalog is ready and the installed list has answered (the Updatable
   section and the Installed view are drawn from it), and both are laid out, the
-  page sets the position once; a page that is genuinely shorter clamps it.
+  page puts the same card at the same height, once; when that card is no
+  longer on the shelf, it sets the recorded position, and a page that is
+  genuinely shorter clamps it. The position alone does not return the reader:
+  every card carries `content-visibility: auto; contain-intrinsic-size: auto
+  140px`, and a remount builds new cards that remember no size, so each card
+  above the position lays out at 140px until it renders. Measured 2026-10-17
+  on dsh 0.2.0-rc.2 against the live catalog, at 1440×900 with 144 cards on the
+  shelf and card #120 left at the top edge, the position alone brought back
+  card #99 in English and #106 in Chinese (mean card heights 116.9 px and
+  124.4 px).
+- **Holding.** The cards around the reader's render a frame or two after it
+  is put back and take their real heights, and those above it move it. So the
+  page holds it at its height for 500 ms, correcting each frame. Measured the
+  same day, a first build that put the card back without holding it came back
+  with card #121 at the top edge in both locales: in English, frame by frame,
+  #120 stood at the edge for two frames and then rose 242 px as the cards
+  above it rendered.
+
+  The page is the only hand that holds it: from the moment it puts the card
+  back, it turns the browser's own scroll anchoring off on its scroll
+  container (`overflow-anchor: none`), and whatever ends the hold turns it
+  back on. A wheel, touch or key ends the hold, as it cancels the restore, and
+  so does a scroll by any other hand, such as a dragged scrollbar. Another
+  hand is told by a pixel or more of difference from the position the page
+  last wrote; less is the browser rounding a fractional position to the
+  pixels it keeps.
+
+  The anchoring would do the same job for some of the steps only. The
+  shelf's entry animation (`.cards`, 220 ms) changes the transform of an
+  ancestor of every card, which suppresses the anchoring's adjustment in that
+  turn of the event loop (CSS Scroll Anchoring, suppression triggers), and
+  the steps land while it runs. Measured the same way on 2026-10-18, a hold
+  that took the anchoring for another hand lost the card in 21 returns of
+  163. The browser took the first step itself, in a turn the animation did
+  not move the cards in (−241 px in English, −169 px in Chinese, leaving the
+  card within a pixel of its height); the hold stopped there, and nothing
+  took the steps after it, so the card came back 81 px or 65 px above the
+  edge. With the animation off (reduced motion), the anchoring took every
+  step in 20 returns of 20; with the anchoring off, the hold took every step
+  in 60 of 60.
 - **Cancelling.** A wheel, touch or key event before the restore cancels it.
 
 ### 5.8 Known gap: a reload during an install
@@ -591,7 +642,17 @@ selection itself rather than watching its own mount, so the mount-based witness
   `pendingVersion` set and unset.
 - **`ShopDetailAction`:** every subject in §7's table, plus an error inside
   the component rendering nothing.
-- **Scroll restore:** it waits for the catalog and the installed list, happens
+- **Scroll restore:** recording picks the first card whose bottom lies below
+  the top edge, with its offset, in a bounded number of rect reads, and no
+  card for a reader above the shelf, who comes back to the top though the
+  content above the shelf grew; the
+  restore puts that card back at that offset when the cards above it lay out
+  at other heights, holds it there while they change height, though the
+  browser's own anchoring would take one of the steps, for a moment only and
+  until the reader or another hand scrolls, gives the page back to that
+  anchoring whatever ends the hold, and sets the recorded
+  position when the card is no longer on the shelf or the shelf was
+  refiltered since; it waits for the catalog and the installed list, happens
   once, and an earlier wheel, touch or key cancels it.
 - **The existing `ShopTab` suite stays as it is.** It is the regression net
   for moving the state.

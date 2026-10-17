@@ -2440,13 +2440,15 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
               * uniqueness invariant is the identity, and 243 of its entries
               * share a name with another (see entryKey). A name key handed
               * React duplicates, and it then left every duplicate's card
-              * orphaned in the DOM when the filter changed. */}
+              * orphaned in the DOM when the filter changed. The item carries
+              * the same identity, which the page records as the card the
+              * reader is at and finds again on its return (ShopPage.tsx). */}
             {visible.map(entry => {
               // Once per card. `entryKey` builds a fresh string on every call,
               // and this line was asking for four of them.
               const key = entryKey(entry)
               return (
-                <li key={key}>
+                <li key={key} data-shop-identity={key}>
                   <EntryCard entry={entry} stars={starsOf(entry, stars)} order={order} shelfDay={shelfDayOf(entry)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} harness={harnessVerdictOf(harnessVerdicts, key)} nameTakenBy={nameTakenByKey.get(key)} t={t} flow={flows.flowFor(key)} uninstallFlow={uninstallFlows.flowFor(key)} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} page={page} />
                 </li>
               )

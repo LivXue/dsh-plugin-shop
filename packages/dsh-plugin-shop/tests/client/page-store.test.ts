@@ -171,6 +171,69 @@ describe('the reader\'s place', () => {
   })
 })
 
+describe('the card at the page\'s top edge (design 2026-10-16-shop-sidebar-page §5.7)', () => {
+  const ANCHOR = { key: KEY, offset: -12 }
+
+  it('is kept beside the position without telling the subscribers, and a position written without one has none', () => {
+    const { store } = bench()
+    const heard = vi.fn()
+    store.subscribe(heard)
+    expect(store.readAnchor()).toBeNull()
+    store.recordScroll(640, ANCHOR)
+    expect(store.readScroll()).toBe(640)
+    expect(store.readAnchor()).toEqual(ANCHOR)
+    // The page was scrolled where no card meets the edge: the card from
+    // before would pair with a position it was never at.
+    store.recordScroll(20)
+    expect(store.readScroll()).toBe(20)
+    expect(store.readAnchor()).toBeNull()
+    expect(heard).not.toHaveBeenCalled()
+    store.dispose()
+  })
+
+  it('is forgotten when the shelf is refiltered or reordered, and kept when the shelf grows or a card opens', () => {
+    const { store } = bench()
+    // Each changes which cards the shelf shows or their order, and fires no
+    // scroll event of its own to write a fresh card.
+    const refilters: Array<[string, () => void]> = [
+      ['a search', () => { store.setView({ query: 'hello' }) }],
+      ['a category', () => { store.setView({ category: 'tool', visibleCount: SHOP_VISIBLE_BATCH }) }],
+      ['an order', () => { store.setView({ order: 'added', visibleCount: SHOP_VISIBLE_BATCH }) }],
+      ['"hide incompatible"', () => { store.updateView(view => ({ hideIncompatible: !view.hideIncompatible, visibleCount: SHOP_VISIBLE_BATCH })) }],
+    ]
+    for (const [what, change] of refilters) {
+      store.recordScroll(640, ANCHOR)
+      change()
+      expect(store.readAnchor(), what).toBeNull()
+      expect(store.readScroll(), what).toBe(640)
+    }
+    // Each keeps the shelf's cards and their order.
+    const keeps: Array<[string, () => void]> = [
+      ['a grown shelf', () => { store.updateView(view => ({ visibleCount: view.visibleCount + SHOP_VISIBLE_BATCH })) }],
+      ['an opened card', () => { store.toggleExpanded(KEY) }],
+      ['the category pressed again', () => { store.setView({ category: store.getSnapshot().view.category, visibleCount: SHOP_VISIBLE_BATCH }) }],
+    ]
+    store.recordScroll(640, ANCHOR)
+    for (const [what, change] of keeps) {
+      change()
+      expect(store.readAnchor(), what).toEqual(ANCHOR)
+    }
+    store.dispose()
+  })
+
+  it('is forgotten when the Plugins page puts one plugin on the shelf, even the one already searched for', () => {
+    const { store } = bench()
+    store.setView({ query: 'dsh-hello-plugin' })
+    store.recordScroll(900, ANCHOR)
+    // The view this asks for is the view already shown, so only the shelf's
+    // own top says where the page opens.
+    store.focus('dsh-hello-plugin', null)
+    expect(store.readAnchor()).toBeNull()
+    expect(store.readScroll()).toBe(0)
+    store.dispose()
+  })
+})
+
 describe('settles, with no page mounted', () => {
   it('folds an install that lands while nothing watches: the installed list re-reads, and the catalog is judged again', async () => {
     vi.useFakeTimers()
