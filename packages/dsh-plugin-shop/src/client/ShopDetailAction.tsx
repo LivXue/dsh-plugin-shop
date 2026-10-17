@@ -36,7 +36,8 @@ export type PluginsSubject =
 export interface ShopDetailActionInjected {
   /** The catalog a listing question is asked of (index.ts `listing`). */
   listing: () => Promise<ShopCatalogResult>
-  /** Whether the page can be opened at all: false without a layout service. */
+  /** Whether the page can be opened at all: false without a layout service
+   * that can select a panel. */
   canOpen: () => boolean
   openShop: () => void
   page: ShopPageStore
