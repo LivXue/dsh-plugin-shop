@@ -2,14 +2,14 @@
  * The shop page's state, held by the page rather than by the components that
  * show it (design 2026-10-16-shop-sidebar-page §5).
  *
- * dsh mounts the shop only while it is on screen — the Settings shell renders
- * only the open section, the main column only the selected panel — so what a
- * component held in its own state went the moment the reader looked
- * elsewhere: the search text, the filters, an install's progress and its
- * receipt, the restart offer included (the shop design's §5.1, "Leaving the
- * section"). This store keeps them, and it owns the flows' polling
- * (flow-registry.ts), so an install the reader left still has its status
- * folded and its receipt written.
+ * dsh mounts the shop only while it is on screen — the main column renders
+ * only the selected panel, as the Settings shell, the shop's home through
+ * 0.8.7, rendered only the open section — so what a component held in its
+ * own state went the moment the reader looked elsewhere: the search text,
+ * the filters, an install's progress and its receipt, the restart offer
+ * included (the shop design's §5.1, "Leaving the section"). This store keeps
+ * them, and it owns the flows' polling (flow-registry.ts), so an install the
+ * reader left still has its status folded and its receipt written.
  *
  * It sits on `globalThis` under a registry symbol for the reason
  * `restart-monitor.ts` does: the symbol is the one thing a hot-swapped module

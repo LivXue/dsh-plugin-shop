@@ -3,9 +3,12 @@ import './__loader__.ts'
 import { loadModule } from './__loader__.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup } from '@testing-library/react'
+import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { apply, inject, NS, WARM_TTL_MS } from '../../src/client/index.ts'
 import { installPageStore, readPageStore, resetPageStore, type ShopPageStore } from '../../src/client/page-store.ts'
 import { INSTALL_POLL_MS } from '../../src/client/present.ts'
+import { ShopGlyph } from '../../src/client/ShopGlyph.tsx'
+import { ShopPage } from '../../src/client/ShopPage.tsx'
 import type { ShopTabInjected } from '../../src/client/ShopTab.tsx'
 import { readRestartMonitor, requestRestart, resetRestartMonitor, startRestartMonitor } from '../../src/client/restart-monitor.ts'
 import type { InstallArgs, ShopInstallResult, ShopVersionResult } from '../../src/host/index.ts'
@@ -41,7 +44,7 @@ interface ShopStub {
   version?: () => Promise<unknown>
 }
 
-/** Boot apply() against a stubbed remote and return the shop section entry's
+/** Boot apply() against a stubbed remote and return the shop page entry's
  * injected face — the real unwrap from index.ts sits between the wire
  * envelopes the stub returns and the injected methods the tab calls.
  *
@@ -53,15 +56,18 @@ async function boot(shop: ShopStub = {}, modules?: unknown) {
   ctx.provide('locale', locale)
   if (modules !== undefined) ctx.provide('modules', modules)
   await ctx.plugin(SlotRegistry).await()
-  // The settings shell declares the section seat at boot, and the Built-in
-  // plugins section declares the tab seat inside it. Declaring both makes the
-  // section's inject callback run synchronously inside apply, and gives the
-  // "no shop tab" assertion a declared seat to read rather than an absent one.
+  // The shell declares the main column's seat and the sidebar's at boot,
+  // which makes the page's and the row's inject callbacks run synchronously
+  // inside apply. It declares the two Settings seats too, which the shop no
+  // longer uses, so the assertions that the shop is absent from them read a
+  // declared seat rather than an absent one.
   ctx.slots.register({
     name: 'root',
     children: {
       'settings.section': { kind: 'list', scope: 'root' },
       'settings.plugins.tab': { kind: 'list', scope: 'root' },
+      'main': { kind: 'keyed', scope: 'root' },
+      'sidebar.panellist': { kind: 'list', scope: 'root' },
     },
   } as never, () => null)
   const mounted: unknown[] = []
@@ -85,63 +91,64 @@ async function boot(shop: ShopStub = {}, modules?: unknown) {
     updateStart: shop.updateStart ?? vi.fn(),
   })
   await apply(ctx)
-  const entry = ctx.slots.entries('settings.section').find(e => e.options.id === 'shop')
-  if (entry === undefined) throw new Error('the shop section entry is not registered')
+  const entry = ctx.slots.entries('main').find(e => e.options.key === 'shop')
+  if (entry === undefined) throw new Error('the shop page entry is not registered')
   const injected = entry.inject!() as unknown as ShopTabInjected
   return { ctx, locale, mounted, disposer, injected }
 }
 
 describe('shop client apply', () => {
-  it('mounts the shop remote, registers the locale namespace and the shop section', async () => {
+  it('mounts the shop remote, registers the locale namespace, the page and its sidebar row', async () => {
     const { ctx, locale, mounted, disposer } = await boot()
 
     expect(inject).toEqual(['remote', 'slots', 'locale'])
     expect(mounted).toHaveLength(1)
     expect(mounted[0]).toMatchObject({ package: 'dsh-plugin-shop' })
     expect(locale.bind(NS)('title')).toBe('Plugin shop')
-    // The runtime augments the cordis Context with the slots service; the
-    // accessor is typed, so there is no cast to the class.
     const slots = ctx.slots
-    const section = slots.entries('settings.section').find(entry => entry.options.id === 'shop')
-    if (section === undefined) throw new Error('the shop section entry is not registered')
-    // Directly after Built-in plugins (15) and before Agent presets (20), the
-    // orders dsh's built-in sections take on every harness the matrix runs.
-    expect(section.options.order).toBeGreaterThan(15)
-    expect(section.options.order).toBeLessThan(20)
-    // No longer a tab inside Built-in plugins (design §5.1, amended 2026-10-15).
+    const pageEntry = slots.entries('main').find(entry => entry.options.key === 'shop')
+    // The page frame, not the bare body: the two share one props type, so
+    // only the component tells them apart.
+    expect(pageEntry?.component).toBe(ShopPage)
+    const row = slots.entries('sidebar.panellist').find(entry => entry.options.id === 'shop')
+    if (row === undefined) throw new Error('the sidebar row is not registered')
+    // Directly under dsh's Plugins row (order 0), above Automation (10).
+    expect(row.options.order).toBe(5)
+    expect(row.component).toBe(ShopGlyph)
+    // No longer a Settings section, nor a tab inside Built-in plugins
+    // (design 2026-10-16-shop-sidebar-page §2).
+    expect(slots.entries('settings.section').some(entry => entry.options.id === 'shop')).toBe(false)
     expect(slots.entries('settings.plugins.tab').some(entry => entry.options.id === 'shop')).toBe(false)
     await ctx.fiber.dispose()
-    expect(slots.entries('settings.section')).toHaveLength(0) // the section is disposed with the context
+    expect(slots.entries('main')).toHaveLength(0)
+    expect(slots.entries('sidebar.panellist')).toHaveLength(0)
     expect(disposer).toHaveBeenCalled()
   })
 
-  it('names the section in the locale current when the shell reads it', async () => {
+  it('names the sidebar row in the locale current when the sidebar reads it', async () => {
     // dsh re-reads `label` when the locale changes; a label captured once at
-    // registration would keep the nav in the language Settings opened in.
+    // registration would keep the row in the language dsh booted in.
     const { ctx, locale } = await boot()
-    const section = ctx.slots.entries('settings.section').find(entry => entry.options.id === 'shop')
-    if (section === undefined) throw new Error('the shop section entry is not registered')
-    const label = section.options.label as () => string
+    const row = ctx.slots.entries('sidebar.panellist').find(entry => entry.options.id === 'shop')
+    if (row === undefined) throw new Error('the sidebar row is not registered')
+    const label = row.options.label as () => string
     expect(label()).toBe('Plugin shop')
     locale.setLocale('zh')
     expect(label()).toBe('插件商店')
   })
 
-  it('registers the same section identity on a fresh apply, as a self-update hot swap does', async () => {
-    // The settings shell keeps the open section's id across a re-registration
-    // and falls back to its first row only while that id is absent, so a
-    // stable id is what returns an open panel to the shop.
+  it('registers the same page and row identity on a fresh apply, as a self-update hot swap does', async () => {
+    // The sidebar selects the page by the row's id, which is the page's
+    // `main` key; a re-apply must bring both back unchanged.
     const first = await boot()
-    const before = first.ctx.slots.entries('settings.section').find(entry => entry.options.id === 'shop')
     await first.ctx.fiber.dispose()
     // Every boot registers its restart path on the restart monitor's
     // record, as afterEach notes; clear it between the two boots the same way.
     resetRestartMonitor()
     const second = await boot()
-    const after = second.ctx.slots.entries('settings.section').find(entry => entry.options.id === 'shop')
-    if (before === undefined || after === undefined) throw new Error('the shop section entry is not registered')
-    expect(after.options.id).toBe(before.options.id)
-    expect(after.options.order).toBe(before.options.order)
+    expect(second.ctx.slots.entries('main').map(entry => entry.options.key)).toEqual(['shop'])
+    const row = second.ctx.slots.entries('sidebar.panellist').find(entry => entry.options.id === 'shop')
+    expect(row?.options.order).toBe(5)
   })
 
   it('routes a host business rejection through the real unwrap as a resolved value', async () => {
@@ -697,12 +704,12 @@ describe('shop client apply: the page store (design 2026-10-16-shop-sidebar-page
     return injected.page
   }
 
-  it('builds the page\'s store, puts it on the page and hands it to the section', async () => {
+  it('builds the page\'s store, puts it on the page and hands it to the main-column entry', async () => {
     const { ctx, injected } = await boot()
     expect(readPageStore()).toEqual({ kind: 'store', store: pageOf(injected) })
     // The face is built per read; the store is the page's, the same each time.
-    const entry = ctx.slots.entries('settings.section').find(e => e.options.id === 'shop')
-    if (entry === undefined) throw new Error('the shop section entry is not registered')
+    const entry = ctx.slots.entries('main').find(e => e.options.key === 'shop')
+    if (entry === undefined) throw new Error('the shop page entry is not registered')
     expect((entry.inject!() as unknown as ShopTabInjected).page).toBe(pageOf(injected))
   })
 

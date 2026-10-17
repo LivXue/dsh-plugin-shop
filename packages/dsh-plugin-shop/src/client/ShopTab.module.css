@@ -1,4 +1,4 @@
-/* Shop tab styles — a market shelf inside the settings surface. The visual
+/* Shop tab styles — a market shelf on the shop's own page. The visual
  * language is the dsh theme's alias tokens ONLY (the four tokens the previous
  * styles referenced that do not exist — bg-layer-3, interactive-bg-hover,
  * state-error, state-success — are corrected to bg-layer-2 and the
@@ -30,9 +30,10 @@
    * label-primary is the theme's foreground pole: it darkens the red on light
    * surfaces and lightens it on dark ones. Measured in the live app: 90% of
    * the red is 5.30:1 on white and 5.29:1 on the dark card, and 80% is
-   * 4.98:1 on the badge's tint, 4.92:1 in dark. Computed: 90% is 4.69:1 on
-   * the dark panel itself (#2c2c2e), where the self-update's failure heading
-   * sits, and 80% is 5.23:1 on the uninstall button's 10% hover fill.
+   * 4.98:1 on the badge's tint, 4.92:1 in dark. Computed: 90% is 6.14:1 on
+   * the dark page itself (#151517, `bg-base`), where the self-update's
+   * failure heading sits (4.69:1 on Settings' #2c2c2e, its ground through
+   * 0.8.7), and 80% is 5.23:1 on the uninstall button's 10% hover fill.
    * Declared here, on the tab root, because a custom property inherits: one
    * declaration reaches every red element, and a new one cannot be
    * forgotten. */
@@ -77,32 +78,6 @@
   overflow-x: hidden;
   overflow: clip;
   overflow-clip-margin: 3px;
-}
-
-/* The shop's Settings page (design §5.1, amended 2026-10-15): the frame dsh's
- * Built-in plugins page draws around its body, where the shop sat as a tab,
- * measured from dsh 0.2.0-rc.2 — a 760px column, 12px gaps, an 18px semibold
- * title and a 13px intro line. The intro takes label-secondary, not the
- * label-tertiary dsh's own intro lines use: tertiary measures 3.71:1 on the
- * light theme's white, secondary 5.80:1. */
-.section {
-  max-width: 760px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  color: var(--dsw-alias-label-primary);
-}
-
-.sectionTitle {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.sectionIntro {
-  margin: 0;
-  font-size: 13px;
-  color: var(--dsw-alias-label-secondary);
 }
 
 /* The shop's own page in dsh's main column (design
@@ -1574,7 +1549,8 @@
   align-items: center;
   /* The reload offer (§4) mounts inside the switch beside the Update button
    * and is a two-line block, not a control: without wrapping, a row reading
-   * [switch][notice + Reload][Update] overflows the settings dialog. */
+   * [switch][notice + Reload][Update] overflowed the Settings dialog the shop
+   * sat in through 0.8.7, and the page's column narrows with the window. */
   flex-wrap: wrap;
   gap: 10px;
 }

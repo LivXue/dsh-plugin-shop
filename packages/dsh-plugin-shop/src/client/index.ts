@@ -1,15 +1,17 @@
 /**
- * Shop settings surface, browser half — one Settings section (`settings.section`)
- * that browses the catalog, installs with acknowledgement, toggles
- * enablement, lists installed plugins, and restarts dsh after installs.
+ * Shop surface, browser half — the shop's own page in dsh's main column
+ * (`main`) with its row in the left sidebar (`sidebar.panellist`), which
+ * browses the catalog, installs on one click, toggles enablement, lists
+ * installed plugins, and restarts dsh after installs (design
+ * 2026-10-16-shop-sidebar-page).
  * Mounts the shop Remote itself (the assembly does not know this package)
- * and holds no privilege beyond the nine `shop/*` methods (§5.3).
+ * and holds no privilege beyond the nine `shop/*` methods (the shop design's
+ * §5.3).
  */
 
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { TypertRemoteNamespaceMap } from '@deepseek-ai/dsh-typert-protocol'
 import shopRemote from 'dsh-plugin-shop/remote'
 import type { ShopCatalogResult, ShopRestartResult, ShopVersionResult } from '../host/index.ts'
@@ -19,13 +21,27 @@ import { refineAgainstModuleTable } from './module-table.ts'
 import { createPageStore, disposeOccupant, installPageStore } from './page-store.ts'
 import { answeredByAnotherProcess } from './present.ts'
 import { noteBoot, registerRestartCarrier } from './restart-monitor.ts'
-import { ShopSection } from './ShopSection.tsx'
+import { ShopGlyph } from './ShopGlyph.tsx'
+import { ShopPage } from './ShopPage.tsx'
 import type { ShopTabInjected } from './ShopTab.tsx'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    /** Shop Settings section copy. */
+    /** The shop page's copy. */
     'settings.shop': ShopLocaleKey
+  }
+  interface SlotMap {
+    /** dsh's left column of global panels (`dsh-client-ui-sidebar`, on
+     * 0.1.5-rc.3, 0.1.7-rc.2 and 0.2.0-rc.2): one row per entry, which owns
+     * the button, its label and its selection, and renders the entry's glyph
+     * at the size it asks. Declared here, in dsh's own terms, because the
+     * 0.1.1-rc.2 protocol this package builds against predates it — as
+     * `connection/reset` is below. */
+    'sidebar.panellist': { kind: 'list'; scope: 'root'; owner: { size: number; active: boolean } }
+    /** The main column, keyed by panel id (`dsh-client-ui-layout`, the same
+     * harnesses): only the selected key is mounted, and the sidebar row with
+     * the same id selects it. Declared here for the same reason. */
+    'main': { kind: 'keyed'; scope: 'root' }
   }
 }
 
@@ -44,13 +60,17 @@ declare module '@deepseek-ai/cordis' {
 /** Dictionary namespace owned by this plugin. */
 export const NS = 'settings.shop'
 
+/** The id the shop's sidebar row and its main-column page share (design
+ * 2026-10-16-shop-sidebar-page §4.1). */
+export const SHOP_PANEL = 'shop'
+
 /** How long a stashed catalog may satisfy a plain open. The host applies the
  * same five-minute freshness window, so the client stash must not outlive it. */
 export const WARM_TTL_MS = 5 * 60 * 1000
 
 /** The boot-time warm fetch: the catalog the tab wants on its first open.
  * Started in apply — the client bundle boots with the web app, long before
- * the user reaches Settings — so the host's slow network fetch runs while
+ * the user opens the shop — so the host's slow network fetch runs while
  * nobody is looking at the shop, and the tab's mount consumes this promise
  * instead of starting its own fetch. A rejection stays stored (the injected
  * catalog falls back to a fresh call); the extra catch keeps the
@@ -70,7 +90,7 @@ let warmCatalog: { at: number; result: Promise<ShopCatalogResult> } | null = nul
  * here and stays unknown to this page until it reloads. */
 let pageRemoved = new Set<string>()
 
-/** Services required by the tab registration and the Remote mount.
+/** Services required by the page and row registrations and the Remote mount.
  *
  * `remote.shop` is deliberately ABSENT: this package both mounts its own
  * Remote (the assembly does not know it, §7.3) and consumes it, and cordis
@@ -86,7 +106,7 @@ export const inject = ['remote', 'slots', 'locale']
  * `ctx.remote.shop` would expose, read here without the inject gate. */
 type ShopRemoteNamespace = TypertRemoteNamespaceMap['shop']
 
-/** Mount the shop Remote and contribute the shop's Settings section. */
+/** Mount the shop Remote and contribute the shop's page and its sidebar row. */
 export async function apply(ctx: ClientContext): Promise<void> {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-plugin-shop: dictionaries')
 
@@ -303,17 +323,24 @@ export async function apply(ctx: ClientContext): Promise<void> {
     page,
   })
 
-  // Its own Settings section, directly after Built-in plugins (design §5.1,
-  // amended 2026-10-15). dsh's built-in sections take General 0, Models 10,
-  // Built-in plugins 15 and Agent presets 20 on every harness the matrix runs,
-  // so 17 lands between the last two. The shell draws the nav icon from its
-  // own table of ids; `shop` is not in it and gets the default gear.
-  ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section',
-    id: 'shop',
-    order: 17,
-    label: () => ctx.locale.bind(NS)('title'),
+  // The shop's own page in dsh's main column (design
+  // 2026-10-16-shop-sidebar-page §4.1), under the key its sidebar row
+  // selects. The page first: the row's click selects `shop`, which dsh
+  // refuses while no `main` entry holds that key.
+  ctx.slots.inject('main', () => ctx.slots.register({
+    name: 'main',
+    key: SHOP_PANEL,
     locale: NS,
     inject: injected,
-  }, ShopSection))
+  }, ShopPage))
+  // Its row in the sidebar, directly under dsh's own Plugins row (order 0)
+  // and above Automation (10). The sidebar owns the button, its label and its
+  // selection; the shop supplies the glyph.
+  ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+    name: 'sidebar.panellist',
+    id: SHOP_PANEL,
+    order: 5,
+    label: () => ctx.locale.bind(NS)('title'),
+    locale: NS,
+  }, ShopGlyph))
 }
