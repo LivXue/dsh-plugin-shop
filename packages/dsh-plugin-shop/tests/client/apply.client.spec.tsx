@@ -2,11 +2,13 @@
 import './__loader__.ts'
 import { loadModule } from './__loader__.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup } from '@testing-library/react'
+import { cleanup, render } from '@testing-library/react'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { apply, inject, NS, WARM_TTL_MS } from '../../src/client/index.ts'
+import { en, type ShopLocaleKey } from '../../src/client/locales.ts'
 import { installPageStore, readPageStore, readPredecessor, resetPageStore, type ShopPageStore } from '../../src/client/page-store.ts'
 import { INSTALL_POLL_MS } from '../../src/client/present.ts'
+import { ShopDetailAction, type ShopDetailActionInjected, type ShopDetailActionProps } from '../../src/client/ShopDetailAction.tsx'
 import { ShopGlyph } from '../../src/client/ShopGlyph.tsx'
 import { ShopPage } from '../../src/client/ShopPage.tsx'
 import type { ShopTabInjected } from '../../src/client/ShopTab.tsx'
@@ -52,9 +54,10 @@ interface ShopStub {
  *   the way the web shell provides it; omitted, the page has none.
  * @param options `layout: true` provides a fake of dsh's layout service
  *   (`fakeLayout`) before the shop boots; omitted, the page has none.
- *   `unmountOnLeave: true` unmounts the page the moment its `main` entry
- *   leaves, as a host stricter than React would. */
-async function boot(shop: ShopStub = {}, modules?: unknown, options: { layout?: boolean; unmountOnLeave?: boolean } = {}) {
+ *   `reshapedLayout` provides a layout service of another shape instead, as
+ *   given. `unmountOnLeave: true` unmounts the page the moment its `main`
+ *   entry leaves, as a host stricter than React would. */
+async function boot(shop: ShopStub = {}, modules?: unknown, options: { layout?: boolean; reshapedLayout?: object; unmountOnLeave?: boolean } = {}) {
   const ctx = new Context()
   const locale = new LocaleRuntime(ctx)
   ctx.provide('locale', locale)
@@ -62,9 +65,10 @@ async function boot(shop: ShopStub = {}, modules?: unknown, options: { layout?: 
   await ctx.plugin(SlotRegistry).await()
   // The shell declares the main column's seat and the sidebar's at boot,
   // which makes the page's and the row's inject callbacks run synchronously
-  // inside apply. It declares the two Settings seats too, which the shop no
-  // longer uses, so the assertions that the shop is absent from them read a
-  // declared seat rather than an absent one.
+  // inside apply; so does the seat of the Plugins page's head controls, which
+  // dsh 0.1.7-rc.2 and later declare. It declares the two Settings seats too,
+  // which the shop no longer uses, so the assertions that the shop is absent
+  // from them read a declared seat rather than an absent one.
   ctx.slots.register({
     name: 'root',
     children: {
@@ -72,10 +76,12 @@ async function boot(shop: ShopStub = {}, modules?: unknown, options: { layout?: 
       'settings.plugins.tab': { kind: 'list', scope: 'root' },
       'main': { kind: 'keyed', scope: 'root' },
       'sidebar.panellist': { kind: 'list', scope: 'root' },
+      'plugins.detail.actions': { kind: 'list', scope: 'root' },
     },
   } as never, () => null)
   const layout = options.layout === true ? fakeLayout(ctx) : undefined
   if (layout !== undefined) ctx.provide('layout', layout.service)
+  if (options.reshapedLayout !== undefined) ctx.provide('layout', options.reshapedLayout)
   // A host stricter than React: it unmounts the page the moment its entry
   // leaves, on the slot registry's synchronous mutation event. Registered
   // before apply, because cordis disposes a fiber's effects newest first.
@@ -1063,5 +1069,174 @@ describe('shop client apply: the hand-over after a hot swap (design 2026-10-16-s
     const { layout } = await boot({ version }, undefined, { layout: true })
     await settle(version)
     expect(layout?.service.selectPanel).not.toHaveBeenCalled()
+  })
+
+  // The window the catch guards: the rule fires only once the first version
+  // answer lands, after the host's npm lookup, and a shop disabled or
+  // replaced meanwhile has no `main` entry left for `selectPanel` to select.
+  // Disposing this file's root fiber would take the provided layout with it,
+  // so dsh's refusal is driven through the fake instead, as it reads.
+  it('rule 2: leaves nothing thrown and nothing selected when dsh refuses the key before the answer lands', async () => {
+    const escaped: unknown[] = []
+    const onRejection = (reason: unknown): void => { escaped.push(reason) }
+    process.on('unhandledRejection', onRejection)
+    try {
+      const withdraw = registerRestartCarrier(async () => ({ ok: true }))
+      withdraw()
+      expect(readPredecessor()).toEqual({ kind: 'section' })
+      let land: (value: unknown) => void = () => {}
+      const version = vi.fn(() => new Promise(resolve => { land = resolve }))
+      const { ctx, layout } = await boot({ version }, undefined, { layout: true })
+      if (layout === undefined) throw new Error('no layout service')
+      layout.service.selectPanel.mockImplementation(() => { throw new Error('layout.selectPanel: main panel "shop" is not registered') })
+      land(answer('0.9.0'))
+      await settle(version)
+      // The rule asked, dsh refused, and the refusal stopped there.
+      expect(layout.service.selectPanel).toHaveBeenCalledTimes(1)
+      expect(layout.selected()).toBeNull()
+      expect(escaped).toEqual([])
+      const buttons = ctx.slots.entries('plugins.detail.actions').find(entry => entry.options.id === 'shop')
+      if (buttons === undefined) throw new Error('the Plugins page buttons are not registered')
+      const face = buttons.inject!() as unknown as ShopDetailActionInjected
+      expect(() => { face.openShop() }).not.toThrow()
+    } finally {
+      process.off('unhandledRejection', onRejection)
+    }
+  })
+
+  // Rule 2's row with an update waiting, the row that fires, on a dsh whose
+  // layout service has no `selectPanel`. A rule that called what is not there
+  // would reject the answer's `then`, which nothing handles.
+  it('lets no rule throw through a layout service that cannot select the page', async () => {
+    const escaped: unknown[] = []
+    const onRejection = (reason: unknown): void => { escaped.push(reason) }
+    process.on('unhandledRejection', onRejection)
+    try {
+      const withdraw = registerRestartCarrier(async () => ({ ok: true }))
+      withdraw()
+      expect(readPredecessor()).toEqual({ kind: 'section' })
+      const version = vi.fn().mockResolvedValue(answer('0.9.0'))
+      await boot({ version }, undefined, { reshapedLayout: { panelInfo: null } })
+      await settle(version)
+      expect(escaped).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onRejection)
+    }
+  })
+})
+
+describe('shop client apply: the Plugins page buttons (design 2026-10-16-shop-sidebar-page §7)', () => {
+  const HOST = {
+    schemaVersion: 2, builtAt: '2026-10-16T00:00:00Z', stale: false,
+    plugins: [], denied: [], stars: {}, incompatible: {}, incompatibleHarness: {},
+  }
+  const buttonsOf = (ctx: InstanceType<typeof Context>): ShopDetailActionInjected => {
+    const entry = ctx.slots.entries('plugins.detail.actions').find(e => e.options.id === 'shop')
+    if (entry === undefined) throw new Error('the Plugins page buttons are not registered')
+    return entry.inject!() as unknown as ShopDetailActionInjected
+  }
+
+  it('registers its buttons, which open the page through dsh\'s layout', async () => {
+    const { ctx, layout } = await boot({}, undefined, { layout: true })
+    // The component and the order design 2026-10-16-shop-sidebar-page §4.1
+    // names, as the page's and the row's are pinned above.
+    const entry = ctx.slots.entries('plugins.detail.actions').find(e => e.options.id === 'shop')
+    expect(entry?.component).toBe(ShopDetailAction)
+    expect(entry?.options.order).toBe(0)
+    const face = buttonsOf(ctx)
+    expect(face.canOpen()).toBe(true)
+    face.openShop()
+    expect(layout?.selected()).toBe('shop')
+  })
+
+  it('cannot open the page on a harness without a layout service', async () => {
+    const { ctx } = await boot()
+    expect(buttonsOf(ctx).canOpen()).toBe(false)
+  })
+
+  it('cannot open the page through a layout service that cannot select it, so no button renders', async () => {
+    // A dsh whose layout service has no `selectPanel`: a button could not
+    // navigate there, and one pressed anyway changes nothing.
+    const { ctx } = await boot({}, undefined, { reshapedLayout: { panelInfo: null } })
+    const face = buttonsOf(ctx)
+    expect(face.canOpen()).toBe(false)
+    const t = ((key: ShopLocaleKey) => en[key]) as ShopDetailActionProps['t']
+    const own: ShopDetailActionProps['subject'] = { kind: 'bundle', pkg: { name: 'dsh-plugin-shop' } }
+    const { container } = render(<ShopDetailAction {...({ subject: own, t, ...face } as unknown as ShopDetailActionProps)} />)
+    expect(container.innerHTML).toBe('')
+    expect(() => { face.openShop() }).not.toThrow()
+  })
+
+  it('answers a listing question from the stash, whatever its age, without asking the host again', async () => {
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: HOST })
+    const { ctx } = await boot({ catalog })
+    const now = Date.now()
+    vi.spyOn(Date, 'now').mockReturnValue(now + WARM_TTL_MS + 1)
+    expect(await buttonsOf(ctx).listing()).toEqual(HOST)
+    // The boot-time warm fetch only: a stale stash still answers "is it listed".
+    expect(catalog).toHaveBeenCalledTimes(1)
+    vi.restoreAllMocks()
+  })
+
+  it('asks the host once, with the plain read a page open makes, when a mutation has dropped the stash', async () => {
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: HOST })
+    const installStart = vi.fn().mockResolvedValue({ ok: true, value: { ok: true, installId: 'i1', state: 'running' } })
+    const { ctx, injected } = await boot({ catalog, installStart })
+    await injected.install({ name: 'dsh-hello-plugin', version: '1.0.0', acknowledged: true })
+    expect(await buttonsOf(ctx).listing()).toEqual(HOST)
+    expect(catalog).toHaveBeenCalledTimes(2)
+    expect(catalog).toHaveBeenLastCalledWith(undefined)
+    // That read is the new stash, so the next question asks nothing.
+    await buttonsOf(ctx).listing()
+    expect(catalog).toHaveBeenCalledTimes(2)
+  })
+
+  it('asks the host again when the stashed fetch failed', async () => {
+    const catalog = vi.fn()
+      .mockResolvedValueOnce({ ok: false, error: { code: 'WIRE', message: 'down' } })
+      .mockResolvedValue({ ok: true, value: HOST })
+    const { ctx } = await boot({ catalog })
+    expect(await buttonsOf(ctx).listing()).toEqual(HOST)
+    expect(catalog).toHaveBeenCalledTimes(2)
+  })
+
+  it('shares the read in flight between the questions asked before it lands', async () => {
+    // A mutation drops the stash, and a reader on the Plugins page can ask
+    // again before the first question's read lands. Each read is a whole
+    // catalog, so the second question shares the first one's.
+    let land!: (value: unknown) => void
+    const catalog = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: HOST })
+      .mockImplementation(() => new Promise(resolve => { land = resolve }))
+    const installStart = vi.fn().mockResolvedValue({ ok: true, value: { ok: true, installId: 'i1', state: 'running' } })
+    const { ctx, injected } = await boot({ catalog, installStart })
+    await injected.install({ name: 'dsh-hello-plugin', version: '1.0.0', acknowledged: true })
+    const first = buttonsOf(ctx).listing()
+    const second = buttonsOf(ctx).listing()
+    // The boot-time warm fetch, and one read.
+    expect(catalog).toHaveBeenCalledTimes(2)
+    land({ ok: true, value: HOST })
+    expect(await first).toEqual(HOST)
+    expect(await second).toEqual(HOST)
+    // Once it landed, a question after the next mutation reads again.
+    await injected.install({ name: 'dsh-other-plugin', version: '1.0.0', acknowledged: true })
+    const third = buttonsOf(ctx).listing()
+    expect(catalog).toHaveBeenCalledTimes(3)
+    land({ ok: true, value: HOST })
+    expect(await third).toEqual(HOST)
+  })
+
+  it('reads again after the shared read failed, so one failure does not hide the buttons for good', async () => {
+    const catalog = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: HOST }) // the boot-time warm
+      .mockRejectedValueOnce(new Error('the host did not answer')) // the read the install's dropped stash sends
+      .mockResolvedValue({ ok: true, value: HOST })
+    const installStart = vi.fn().mockResolvedValue({ ok: true, value: { ok: true, installId: 'i1', state: 'running' } })
+    const { ctx, injected } = await boot({ catalog, installStart })
+    await injected.install({ name: 'dsh-hello-plugin', version: '1.0.0', acknowledged: true })
+    await expect(buttonsOf(ctx).listing()).rejects.toThrow('the host did not answer')
+    // The failed read is not kept for the next question: it reads again.
+    expect(await buttonsOf(ctx).listing()).toEqual(HOST)
+    expect(catalog).toHaveBeenCalledTimes(3)
   })
 })

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, activationNoticeKey, categoryKey, entryKey, formatSize, formatStars,
   uninstallActivationNoticeKey,
-  authorOf, blockerBadgeKey, blockersOf, harnessVerdictOf, hasGithubHome, heldBy, isCustomLicense, isShopLike, missingPeersOf,
+  authorOf, blockerBadgeKey, blockersOf, harnessVerdictOf, hasGithubHome, heldBy, isCustomLicense, isShopLike, listedOnShelf, missingPeersOf,
   nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall,
   installPhaseKey, reduceInstall, type InstallView,
   reviewHashPin, shelfOrderLocaleKey, shelfTime, SHELF_ORDERS, sortByStars, starsOf, tierKey, utcDay, orderShelf,
@@ -1261,5 +1261,17 @@ describe('updateAwaitsRestart', () => {
   })
   it('reads a host older than the field as waiting, as the tab always has', () => {
     expect(updateAwaitsRestart(answer())).toBe(true)
+  })
+})
+
+describe('listedOnShelf', () => {
+  const at = (name: string, repo?: string) => ({ name, repo }) as unknown as Parameters<typeof listedOnShelf>[0]
+  it('lists an ordinary plugin, and hides a competing market by its name or its repository', () => {
+    expect(listedOnShelf(at('dsh-hello-plugin'), new Set())).toBe(true)
+    expect(listedOnShelf(at('dsh-plugin-hub'), new Set())).toBe(false)
+    expect(listedOnShelf(at('fine-name', 'someone/dsh-plugin-market'), new Set())).toBe(false)
+  })
+  it('lists a name the catalog\'s notAShop clears', () => {
+    expect(listedOnShelf(at('dsh-plugin-hub'), new Set(['dsh-plugin-hub']))).toBe(true)
   })
 })

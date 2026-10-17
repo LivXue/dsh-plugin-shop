@@ -110,6 +110,12 @@ export interface ShopPageStore {
   /** Open the card, and leave it open if it is: a jump to one plugin opens
    * its card from outside it. */
   expand: (key: string) => void
+  /** Put one plugin on the shelf, as the Plugins page's "View in Plugin
+   * shop" asks (design 2026-10-16-shop-sidebar-page §7): the search text
+   * set to its name, every category, nothing subtracted, the first batch,
+   * the top of the page, and the one card `card` names opened. Whatever
+   * search the reader left is replaced: they asked to see this plugin. */
+  focus: (name: string, card: string | null) => void
   /** What one switch owes (`switchKey`), or undefined when it owes nothing.
    * A channel of its own, apart from the page snapshot: one switch renders a
    * notice, and the shelf, which re-renders whole whenever the snapshot is
@@ -225,6 +231,12 @@ export function createPageStore(deps: () => PageStoreDeps, options: FlowRegistry
     expanded = next
     notify(expandedListeners)
   }
+  /** Open one card, and leave it open: a card's own header toggles it, and
+   * `expand` opens one from outside it (design
+   * 2026-10-16-shop-sidebar-page §5.6). */
+  const openCard = (key: string): void => {
+    if (!expanded.has(key)) publishExpanded(new Set(expanded).add(key))
+  }
   // What each switch owes, by `switchKey`, told to listeners of its own
   // (`getOwed`).
   let owed: ReadonlyMap<string, OwedNotice> = new Map()
@@ -327,8 +339,14 @@ export function createPageStore(deps: () => PageStoreDeps, options: FlowRegistry
       if (!next.delete(key)) next.add(key)
       publishExpanded(next)
     },
-    expand: key => {
-      if (!expanded.has(key)) publishExpanded(new Set(expanded).add(key))
+    expand: openCard,
+    focus: (name, card) => {
+      scrollTop = 0
+      // The view's fields through `showView`, so a view that changes nothing
+      // publishes nothing, and the card on its own channel: opening one card
+      // re-renders that card, never the shelf.
+      showView({ query: name, category: null, hideIncompatible: false, visibleCount: SHOP_VISIBLE_BATCH })
+      if (card !== null) openCard(card)
     },
     getOwed: key => owed.get(key),
     subscribeOwed: listener => listen(owedListeners, listener),

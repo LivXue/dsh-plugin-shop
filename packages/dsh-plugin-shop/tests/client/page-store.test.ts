@@ -156,6 +156,19 @@ describe('the reader\'s place', () => {
     expect(heard).not.toHaveBeenCalled()
     store.dispose()
   })
+
+  it('puts one plugin on the shelf as the Plugins page asks, replacing the reader\'s search', () => {
+    const { store } = bench()
+    store.setView({ query: 'memory', category: 'theme', hideIncompatible: true, visibleCount: 3 * SHOP_VISIBLE_BATCH })
+    store.recordScroll(900)
+    store.focus('dsh-hello-plugin', 'npm:dsh-hello-plugin')
+    expect(store.getSnapshot().view).toMatchObject({ query: 'dsh-hello-plugin', category: null, hideIncompatible: false, visibleCount: SHOP_VISIBLE_BATCH })
+    expect(store.isExpanded('npm:dsh-hello-plugin')).toBe(true)
+    expect(store.readScroll()).toBe(0)
+    store.focus('dup', null)
+    expect(store.isExpanded('npm:dsh-hello-plugin')).toBe(true)
+    store.dispose()
+  })
 })
 
 describe('settles, with no page mounted', () => {

@@ -3,6 +3,7 @@
  * drive all of it. */
 
 export { isShopLike } from '../shared/shop-like.ts'
+import { isShopLike } from '../shared/shop-like.ts'
 // Only what the client half actually uses. The identity primitives it does
 // not (`parseRepoSpec`, `installedSpecMatches`, `sameInstall`) were re-exported
 // here too, which advertised them as part of the presentation API and gave a
@@ -687,6 +688,17 @@ export function npmPageUrl(entry: CatalogEntry): string | null {
  */
 export function entryKey(entry: CatalogEntry): string {
   return identityKey(entry)
+}
+
+/**
+ * Whether the shelf lists `entry`: a name the catalog's `notAShop` clears,
+ * or one whose name and repository `isShopLike` leaves alone. One rule for
+ * the shelf and for the Plugins page's "View in Plugin shop" (design
+ * 2026-10-16-shop-sidebar-page §7), so that button never sends a reader to a
+ * shelf that hides the plugin.
+ */
+export function listedOnShelf(entry: CatalogEntry, cleared: ReadonlySet<string>): boolean {
+  return cleared.has(entry.name) || (!isShopLike(entry.name) && (entry.repo === undefined || !isShopLike(entry.repo)))
 }
 
 /**

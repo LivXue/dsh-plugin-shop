@@ -109,7 +109,7 @@ describe('class references', () => {
     // the singular while the stylesheet defined only the plural
     // `.outdatedVersions`, so the two version labels on an outdated row
     // rendered with no class and therefore no separation between them.
-    const tsx = ['ShopTab.tsx', 'ShopPage.tsx']
+    const tsx = ['ShopTab.tsx', 'ShopPage.tsx', 'ShopDetailAction.tsx']
       .map(file => readFileSync(new URL(`../../src/client/${file}`, import.meta.url), 'utf8'))
       .join('\n')
     const used = new Set([...tsx.matchAll(/\bcss\.([A-Za-z_][\w]*)/g)].map(m => m[1]))
@@ -140,6 +140,29 @@ describe('class references', () => {
     expect(rules.get('.pageTitle') ?? '').toMatch(/font-size:\s*20px/)
     expect(rules.get('.pageTitle') ?? '').toMatch(/font-weight:\s*500/)
     expect(rules.get('.pageIntro') ?? '').toMatch(/color:\s*var\(--dsw-alias-label-secondary\)/)
+  })
+
+  it('draws the Plugins page buttons at the size of that page\'s own small outline buttons', () => {
+    // dsh 0.2.0-rc.2's Button, sm + outline (design 2026-10-16-shop-sidebar-page
+    // §7): its 0.5px stroke is 1px here, as every border in this stylesheet is.
+    const rule = rules.get('.detailAction') ?? ''
+    expect(rule).toMatch(/height:\s*28px/)
+    expect(rule).toMatch(/padding:\s*0 10px/)
+    expect(rule).toMatch(/font-size:\s*12px/)
+    expect(rule).toMatch(/border:\s*1px solid var\(--dsw-alias-border-l3\)/)
+    expect(rule).toMatch(/border-radius:\s*var\(--dsw-radius-sm\)/)
+  })
+
+  it('draws the shop\'s own focus ring on the Plugins page buttons', () => {
+    // The ring every other control in this stylesheet draws. dsh's own
+    // focus rules there are scoped to its classes, so without this one the
+    // buttons fall back to the browser's ring, unlike the rest of the shop.
+    // The other controls' focus rules are not pinned rule by rule; this one
+    // is, being the only control drawn on a page that is not the shop's.
+    expect(declarationsOf(rules.get('.detailAction:focus-visible') ?? '')).toEqual([
+      { prop: 'outline', value: '2px solid var(--dsw-alias-brand-primary)' },
+      { prop: 'outline-offset', value: '1px' },
+    ])
   })
 
   it('separates the two version labels on an outdated row', () => {
