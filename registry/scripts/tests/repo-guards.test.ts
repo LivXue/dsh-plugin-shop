@@ -8,7 +8,7 @@
  * confirms it. A convention no test enforces is a convention that drifts
  * silently, which is what readme-pins.test.ts exists to prove. */
 
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -37,6 +37,27 @@ type Triggers = { push?: { paths?: string[] }; pull_request?: { paths?: string[]
 const triggerPaths = (file: string, event: 'push' | 'pull_request'): string[] | undefined => {
   const parsed = parse(read(`.github/workflows/${file}`)) as { on?: Triggers; true?: Triggers }
   return (parsed.on ?? parsed.true)?.[event]?.paths
+}
+
+/** The subset of GitHub's filter-pattern syntax these workflows use: `**`
+ * spans path segments, `*` stays inside one, everything else is literal. */
+const matcher = (pattern: string): RegExp =>
+  new RegExp(
+    `^${pattern.replace(/\*\*|\*|[.+?^${}()|[\]\\]/g, token =>
+      token === '**' ? '.*' : token === '*' ? '[^/]*' : `\\${token}`,
+    )}$`,
+  )
+
+/** Whether `file` starts a trigger carrying `paths`, folded the way GitHub
+ * folds it: every pattern is tested in order, the last match decides, and a
+ * `!` pattern decides against. */
+const starts = (paths: string[], file: string): boolean => {
+  let included = false
+  for (const pattern of paths) {
+    const negated = pattern.startsWith('!')
+    if (matcher(negated ? pattern.slice(1) : pattern).test(file)) included = !negated
+  }
+  return included
 }
 
 describe('the catalog harvest is serialised across refs', () => {
@@ -118,27 +139,6 @@ describe('a test-only change does not buy a harvest', () => {
   // the `!` line is not the property that matters: lift it above
   // `registry/**`, or add any matching positive pattern below it, and the
   // directory is included again with the string still sitting in the list.
-
-  /** The subset of GitHub's filter-pattern syntax these workflows use: `**`
-   * spans path segments, `*` stays inside one, everything else is literal. */
-  const matcher = (pattern: string): RegExp =>
-    new RegExp(
-      `^${pattern.replace(/\*\*|\*|[.+?^${}()|[\]\\]/g, token =>
-        token === '**' ? '.*' : token === '*' ? '[^/]*' : `\\${token}`,
-      )}$`,
-    )
-
-  /** Whether `file` starts a trigger carrying `paths`, folded the way GitHub
-   * folds it: every pattern is tested in order, the last match decides, and a
-   * `!` pattern decides against. */
-  const starts = (paths: string[], file: string): boolean => {
-    let included = false
-    for (const pattern of paths) {
-      const negated = pattern.startsWith('!')
-      if (matcher(negated ? pattern.slice(1) : pattern).test(file)) included = !negated
-    }
-    return included
-  }
 
   // The directories vitest runs the root suite from, imported from the config
   // that owns them rather than restated here or scraped back out of its text:
@@ -291,6 +291,84 @@ describe('the artifact round-trip is exercised where a dry run can see it', () =
         expect([...shas], `${file} pins ${action} to ${shas.size} different commits`).toHaveLength(1)
       }
     }
+  })
+})
+
+describe('the artifact pair is proven where the catalog cannot take the proof away', () => {
+  // The round-trip above runs after the hour-long live harvest and inside the
+  // one catalog-pull_request concurrency group, and on 2026-10-16 those two
+  // took the proof from both halves of one Dependabot batch: #96, the
+  // artifact-transfer bump, was cancelled 90 seconds in when #97 took the
+  // group, and #97 failed at Classify on a live-harvest shortfall before
+  // reaching the step. artifacts.yml round-trips a fixture through the same
+  // pins in a workflow of its own — held to publish's pins by "uses one SHA
+  // per action across every workflow" — and these keep it from being hollowed
+  // out into a check that reads green and proves nothing.
+  const FILE = '.github/workflows/artifacts.yml'
+  interface Step { uses?: string; run?: string; if?: unknown; with?: Record<string, unknown> }
+  interface Workflow { concurrency?: { group?: unknown }; jobs?: Record<string, { needs?: unknown; if?: unknown; steps?: Step[] }> }
+
+  /** The workflow, parsed — asserted present first, so that its absence fails
+   * with the reason it matters rather than with a file-system error. */
+  const workflow = (): Workflow => {
+    expect(existsSync(join(repoRoot, FILE)), `${FILE} is missing, so nothing proves the pair outside the catalog run`)
+      .toBe(true)
+    return parse(read(FILE)) as Workflow
+  }
+
+  it('round-trips a fixture through the pinned pair and compares every byte', () => {
+    const jobs = Object.values(workflow().jobs ?? {})
+    expect(jobs, `${FILE} should hold exactly one job`).toHaveLength(1)
+    const job = jobs[0]
+    expect(job?.needs, 'the proof must not wait on another job').toBeUndefined()
+    const steps = job?.steps ?? []
+    // Unconditional: an `if:` anywhere here is a way for the proof to be
+    // skipped while the check still reads green.
+    for (const item of [job, ...steps]) {
+      expect(item?.if, `${FILE} carries an if: condition`).toBeUndefined()
+    }
+    const at = (action: string): number => steps.findIndex(step => (step.uses ?? '').startsWith(`${action}@`))
+    const up = at('actions/upload-artifact')
+    const down = at('actions/download-artifact')
+    expect(up, 'nothing uploads').toBeGreaterThanOrEqual(0)
+    expect(down, 'nothing downloads, or the download comes before the upload').toBeGreaterThan(up)
+    const sent = steps[up]?.with
+    const received = steps[down]?.with
+    expect(received?.name, 'the download must fetch the artifact the upload wrote').toBe(sent?.name)
+    expect(received?.path, 'downloading over the source would compare the fixture with itself')
+      .not.toBe(sent?.path)
+    // Compared, not counted: a transfer that "succeeds" while emptying or
+    // dropping a file is the failure worth catching.
+    const comparison = `diff -r ${String(sent?.path)} ${String(received?.path)}`
+    expect(
+      steps.slice(down + 1).some(step => (step.run ?? '').includes(comparison)),
+      `no step after the download runs \`${comparison}\``,
+    ).toBe(true)
+  })
+
+  it('runs on every pull request that can move a pin of the pair', () => {
+    // A bump touches exactly the files that pin the two actions, so the
+    // trigger has to cover each of them. Folded the way GitHub folds it, like
+    // the catalog's filter above, rather than looked up as a string.
+    workflow()
+    const paths = triggerPaths('artifacts.yml', 'pull_request') ?? []
+    const pinning = workflowNames().filter(name =>
+      /uses:[ \t]*actions\/(?:upload|download)-artifact@/.test(read(`.github/workflows/${name}`)))
+    expect(pinning, 'daily.yml no longer pins the pair it publishes with').toContain('daily.yml')
+    for (const name of pinning) {
+      expect(
+        starts(paths, `.github/workflows/${name}`),
+        `${name} pins the pair, and a pull request changing it would not run ${FILE}`,
+      ).toBe(true)
+    }
+  })
+
+  it('keeps out of the catalog concurrency group, so no other pull request can cancel it', () => {
+    // Per ref: two pull requests never share a group, so neither can cancel
+    // the other's proof the way #97's catalog run cancelled #96's.
+    const group = String(workflow().concurrency?.group ?? '(no concurrency group)')
+    expect(group, `${FILE} does not group by ref`).toContain('github.ref')
+    expect(group, `${FILE} shares a group with the catalog harvest`).not.toContain('catalog')
   })
 })
 

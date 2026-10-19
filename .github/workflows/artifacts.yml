@@ -1,0 +1,66 @@
+name: artifacts
+
+# Proves that the pinned upload-artifact / download-artifact pair
+# interoperates, on every pull request that touches a workflow, without
+# waiting on anything.
+#
+# The pair matters in one place: daily.yml's `publish` job downloads the dist
+# its build job uploaded, and `publish` never runs on a pull request. daily.yml
+# round-trips its report for that reason, but that step sits behind the
+# hour-long live harvest and inside the catalog-pull_request concurrency
+# group, and on 2026-10-16 the two took the proof from both PRs of one
+# Dependabot batch: #96, the artifact-transfer bump, was cancelled 90 seconds
+# in when #97 took the group, and #97 failed at Classify on a live-harvest
+# shortfall before it reached the step. Neither run exercised the pair.
+#
+# This workflow has no harvest, no shared group and no secrets. Its pins are
+# publish's pins, because repo-guards.test.ts holds every workflow to one SHA
+# per action, and it watches every workflow file, because a pin can live in
+# any of them and a bump touches only the files that hold one.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+# Nothing here reads the repository or calls the API. The artifact actions
+# reach the artifact service with the runner's own runtime token, which this
+# block does not govern.
+permissions: {}
+
+# Per ref, so two pull requests never cancel each other's proof: that is the
+# failure this workflow exists to route around.
+concurrency:
+  group: artifacts-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  round-trip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Write a fixture shaped like the dist publish downloads
+        # A directory holding a nested one, text, and a mebibyte of
+        # incompressible bytes: the shape `publish` gets back, at a size that
+        # still moves in seconds.
+        run: |
+          mkdir -p fixture/v1/nested
+          printf '%s\n' '{"fixture":"artifact round-trip"}' > fixture/v1/index.json
+          printf '%s\n' '# report' '' 'Carried by the artifact round-trip.' > fixture/v1/nested/report.md
+          head -c 1048576 /dev/urandom > fixture/v1/nested/payload.bin
+      - name: Upload it with the pinned upload-artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: artifact-round-trip
+          path: fixture/v1
+          if-no-files-found: error
+          retention-days: 1
+      - name: Download it with the pinned download-artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: artifact-round-trip
+          path: round-trip/v1
+      - name: The round-trip carried every byte
+        # Compared, not counted: an emptied, truncated, renamed or missing
+        # file fails it, and so does one the transfer added.
+        run: diff -r fixture/v1 round-trip/v1
