@@ -337,6 +337,11 @@ day's newcomers sort above them.
   that is not a plain GitHub URL; one naming another owner's repository
   is listed beside it.
   The comment is reworded to stay true. The hold it explains is unchanged.
+- **`gate.ts`'s denial comment** says the npm package wins the bundle name
+  "by design". The case it describes still holds: a denied repository's
+  author publishes the same code to npm, from that repository. The
+  parenthetical now says what the design is: npm wins over its own
+  repository.
 - **Checked and still true:**
   - `2026-10-04-change-feed-harvest.md` :132 and :616;
   - `2026-09-26-market-borrowings.md` :543;
@@ -386,8 +391,11 @@ Registry: the pure core, driven by fixtures.
     `dsh-hello-plugin`;
   - `pipeline.test.ts:748` shadows `dave/monorepo`;
   - `classify-select.test.ts:85` shadows `someone/dsh-repo-plugin` with a
-    declared `dsh-same-name`.
-  
+    declared `dsh-same-name`;
+  - `classify-select.test.ts:103` classifies a repository whose npm
+    namesake the gate rejected. Under §2 another owner's repository is
+    classified anyway, so the case would pass on the owner alone.
+
   Each moves to a same-owner pair so that it keeps testing what its title
   says, and its commit says why. The old pairs become the new
   another-owner cases.
@@ -406,8 +414,12 @@ paths meets a pair.
 
 - `identity.test.ts` already pairs `npmEntry` and `repoEntry`, both
   `dsh-foo`, for the identity functions themselves.
-- No catalog-level fixture holds a pair. `installed()`, `validateInstall` and
-  the client have each met only one side of one, one at a time.
+- One catalog-level fixture holds a pair. `index.test.ts`'s G-1 case "does
+  not let an npm namesake claim a repo entry's installed row" gives
+  `installed()` an npm entry and a github entry of one name, for a
+  `github:` spec.
+- The other spec forms, `validateInstall` and the client have met only two
+  github entries of one name, or one side at a time.
 
 ## 8. Verification and rollout
 
