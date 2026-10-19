@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { asPluginManager, forDesktopReader, managerOutcome, type ManagerChange, type OutcomeContext } from '../../src/host/plugin-manager.ts'
+import { asPluginManager, forDesktopReader, managerOutcome, readChange, type ManagerChange, type OutcomeContext } from '../../src/host/plugin-manager.ts'
 
 const fn = async (): Promise<unknown> => ({})
 const complete = { installBundle: fn, removeBundle: fn, setPluginEnabled: fn, setBundleEnabled: fn, cancelInstall: fn }
@@ -116,6 +116,44 @@ describe('managerOutcome', () => {
       'dsh-plugin-shop: dsh refused the install: dsh-managed@1.0.0 declares @deepseek-ai/dsh 0.1.2-rc.1, which dsh 0.1.7-rc.2 does not satisfy.'
       + ' Nothing was installed. To accept the risk of crashes or data loss for this exact version,'
       + ' run: dsh plugin --profile web allow-version dsh-managed@1.0.0 --dsh-version 0.1.7-rc.2 --accept-risk - then install again.')
+  })
+
+  // dsh 0.2.1 renamed the list in an `IncompatiblePlugin` from `peers` to
+  // `requirements`, and a key may now be `engines.dsh` (design
+  // 2026-10-19-dsh-021-readiness, section 4). On 0.2.1-rc.2 the refusal read
+  // "declares ," for want of a list. Its detail keeps dsh's own key, since it
+  // names what the package declares.
+  it('reads an incompatible-version answer that names requirements, as dsh 0.2.1 does', () => {
+    const answer = {
+      error: {
+        code: 'incompatible-version',
+        incompatible: [{ name: 'p', version: '1.0.0', runtimeVersion: '0.2.1-rc.2', requirements: { 'engines.dsh': '>=0.3.0' } }],
+      },
+    }
+    expect(readChange(answer).incompatible)
+      .toEqual([{ name: 'p', version: '1.0.0', runtimeVersion: '0.2.1-rc.2', peers: { 'engines.dsh': '>=0.3.0' } }])
+    const detail = managerOutcome(answer, context).detail ?? ''
+    expect(detail).toContain('p@1.0.0 declares engines.dsh >=0.3.0, which dsh 0.2.1-rc.2 does not satisfy')
+    expect(detail).not.toContain('declares ,')
+  })
+
+  it("reads a removal's refusal that names requirements the same way, from the pnpm run's own list", () => {
+    // `packageResult.incompatible` is the second place dsh lists them: a
+    // removal that touched an incompatible sibling is an `operation-error`
+    // with the structured list kept beside it, the same refusal.
+    const answer = {
+      changed: false, application: 'failed', stage: 'remove', target: 'dsh-managed',
+      error: { code: 'operation-error', diagnostic: '' },
+      packageResult: {
+        exitCode: 1, output: '', truncated: false, logPath: '/l', kind: 'unknown',
+        incompatible: [{ name: 'dsh-sibling', version: '1.0.0', runtimeVersion: '0.2.1-rc.2', requirements: { '@deepseek-ai/dsh': '^0.3.0' } }],
+      },
+    }
+    const { incompatible } = readChange(answer)
+    expect(incompatible).toHaveLength(1)
+    expect(incompatible[0]?.peers).toEqual({ '@deepseek-ai/dsh': '^0.3.0' })
+    expect(managerOutcome(answer, uninstall).detail)
+      .toContain('dsh-sibling@1.0.0 declares @deepseek-ai/dsh ^0.3.0, which dsh 0.2.1-rc.2 does not satisfy')
   })
 
   // R28: dsh keeps only the last 16 KB of a pnpm run's output, so a long

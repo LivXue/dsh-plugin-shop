@@ -209,15 +209,26 @@ export function refusesInstall(blockers: readonly { kind: BlockerKind }[]): bool
   return blockers.some(blocker => blocker.kind === 'name-taken' || blocker.kind === 'harness-peers')
 }
 
+/** The key dsh 0.2.1 lists a package's own `engines.dsh` range under, among
+ * the requirements it refuses (design 2026-10-19-dsh-021-readiness, section
+ * 4). No card receives it yet: the prediction judges the catalog's `dshPeers`
+ * alone, and the catalog carries no `engines` (that section's known gap). A
+ * refusal dsh raises at install time names the key in the install's own detail
+ * (`versionRefusalDetail`), which never passes through here. So look for no
+ * producer in `peerVerdictsOf`; this waits for the catalog to carry `engines`. */
+const ENGINES_DSH = 'engines.dsh'
+
 /**
- * The refused peers as the refusal's copy names them: each peer and the range
- * the package declared, in the order dsh reported them. A blank range — which
- * dsh refuses — is quoted, or the sentence would name the peer and nothing
- * it asked for.
+ * The refused requirements as the refusal's copy names them: each one and the
+ * range the package declared, in the order dsh reported them. A peer is named
+ * by its package. `engines.dsh` is a manifest path, not a name anyone asked
+ * for, so it reads as `dsh` and its range, the way the sentence says "it
+ * requires dsh >=0.3.0". A blank range — which dsh refuses — is quoted, or the
+ * sentence would name the requirement and nothing it asked for.
  */
 export function refusedPeersText(refused: Readonly<Record<string, string>>): string {
   return Object.entries(refused)
-    .map(([name, range]) => `${name} ${range.trim() === '' ? JSON.stringify(range) : range}`)
+    .map(([name, range]) => `${name === ENGINES_DSH ? 'dsh' : name} ${range.trim() === '' ? JSON.stringify(range) : range}`)
     .join(', ')
 }
 

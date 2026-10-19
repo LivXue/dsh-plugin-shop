@@ -146,6 +146,18 @@ Read from `@deepseek-ai/dsh-plugin-manager` and `@deepseek-ai/dsh-app-boot`
   scanned 2026-09-26). The shop therefore reads the capability off the
   running app-boot's exports, never off a version number.
 
+Amended 2026-10-19: from 0.2.1 the list in the rule's result is named
+`requirements`, where 0.1.7 to 0.2.0 named it `peers`, and a key in it is a dsh
+peer's name or `engines.dsh` — which 0.2.1 lets decide alone when a manifest
+declares one. dsh-plugin-manager's `IncompatiblePlugin`, the answer to a
+refused install, was renamed the same way. Both of the shop's adapters,
+`peerCheckOf` for the prediction and `incompatibleList` for an install's
+answer, now read either name through `refusedRequirements` into the shop's own
+`peers` field, so everything past them reads one name; the card writes the
+`engines.dsh` key as `dsh <range>`. Read off 0.2.1-rc.2 on 2026-10-19; see
+[2026-10-19-dsh-021-readiness.md](2026-10-19-dsh-021-readiness.md) section 4,
+which also records what the prediction still cannot see.
+
 ### B1.2 What the catalog records
 
 `dshPeers` on npm entries: the manifest's harness peers with their ranges
