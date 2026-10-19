@@ -4,14 +4,14 @@ import {
   INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, activationNoticeKey, categoryKey, entryKey, formatSize, formatStars,
   uninstallActivationNoticeKey,
   authorOf, blockerBadgeKey, blockersOf, harnessVerdictOf, hasGithubHome, heldBy, isCustomLicense, isShopLike, listedOnShelf, missingPeersOf,
-  nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall,
+  nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall, restartBlockedNoticeKey,
   installPhaseKey, reduceInstall, type InstallView,
   reviewHashPin, shelfOrderLocaleKey, shelfTime, SHELF_ORDERS, sortByStars, starsOf, tierKey, utcDay, orderShelf,
   RESTART_STABLE_MS, RESTART_WAIT_MS, restartMonitorVerdict, answeredByAnotherProcess, settledByRestart, updateAwaitsRestart,
   versionLabel, versionLabelKey,
 } from '../../src/client/present.ts'
 import { en, zh } from '../../src/client/locales.ts'
-import type { CatalogEntry, HarnessVerdict, ShopVersionResult } from '../../src/host/index.ts'
+import type { CatalogEntry, HarnessVerdict, RestartBlockedReason, ShopVersionResult } from '../../src/host/index.ts'
 import type { InstallState } from '../../src/shared/install-state.ts'
 
 const entry: CatalogEntry = {
@@ -262,6 +262,49 @@ describe('uninstallActivationNoticeKey', () => {
 
   it('names the live state', () => {
     expect(uninstallActivationNoticeKey('live')).toBe('uninstalledLiveNotice')
+  })
+})
+
+describe('restartBlockedNoticeKey', () => {
+  // The reasons are enumerated through an object the compiler holds to the
+  // union's members: `satisfies Record<…, true>` rejects a missing member and
+  // an unknown one alike, so a reason added to `RestartBlockedReason` without a
+  // line here fails the typecheck. A literal array would pass over it, and the
+  // loop below would go on proving the reasons it happened to list.
+  const REASONS = {
+    desktop: true,
+    windows: true,
+    systemd: true,
+    'from-default-profile': true,
+    'port-zero': true,
+  } satisfies Record<RestartBlockedReason, true>
+  // Sound because of the line above: the keys are exactly the union's members.
+  const reasons = Object.keys(REASONS) as RestartBlockedReason[]
+
+  it('names a copy key present in both locales for every reason the host reports', () => {
+    for (const reason of reasons) {
+      const key = restartBlockedNoticeKey(reason)
+      expect(Object.keys(zh), `${reason} names ${key}, which zh lacks`).toContain(key)
+      expect(Object.keys(en), `${reason} names ${key}, which en lacks`).toContain(key)
+    }
+  })
+
+  it('gives every reason its own copy rather than a neighbour’s', () => {
+    // The boolean this type replaced had one string for every cause, and it
+    // named systemd. Two reasons sharing a key would be that defect again.
+    expect(new Set(reasons.map(restartBlockedNoticeKey)).size).toBe(reasons.length)
+  })
+
+  it('names the --from-default-profile copy, which tells the reader to restart without the flag', () => {
+    const key = restartBlockedNoticeKey('from-default-profile')
+    expect(key).toBe('restartBlockedFromDefaultProfileNotice')
+    // The copy is the remedy. A reader who restarts dsh by hand with the flag
+    // again recreates the profile, so each locale has to name the flag the
+    // notice is about and say what the restart must leave out.
+    expect(en[key], 'en names the flag').toContain('--from-default-profile')
+    expect(en[key], 'en carries the remedy').toContain('without that flag')
+    expect(zh[key], 'zh names the flag').toContain('--from-default-profile')
+    expect(zh[key], 'zh carries the remedy').toContain('去掉该参数')
   })
 })
 

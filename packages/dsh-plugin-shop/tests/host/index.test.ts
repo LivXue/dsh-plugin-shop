@@ -1886,11 +1886,12 @@ describe('restart guard (systemd)', () => {
     // at mount and what a press actually gets are one decision, read twice.
     // While `version()` answered a boolean it covered two of the three static
     // refusals, and the client had one string for all of them.
-    // One shape for all three, so the array stays homogeneous and each case
+    // One shape for every row, so the array stays homogeneous and each case
     // states every input the predicate reads rather than inheriting some.
     const cases: Array<{ reason: RestartBlockedReason; detail: string; options: Partial<ShopGatewayOptions> }> = [
       { reason: 'windows', detail: 'not supported on Windows', options: { platform: 'win32', env: {}, ppid: 4321, restartArgv: ['web'] } },
       { reason: 'systemd', detail: 'systemd service', options: { platform: 'linux', env: { INVOCATION_ID: 'abc' }, ppid: 1, restartArgv: ['web'] } },
+      { reason: 'from-default-profile', detail: '--from-default-profile', options: { platform: 'linux', env: {}, ppid: 4321, restartArgv: ['rescue', '--from-default-profile', 'web'] } },
       { reason: 'port-zero', detail: '--port 0', options: { platform: 'linux', env: {}, ppid: 4321, restartArgv: ['web', '--port', '0'] } },
     ]
     for (const { reason, detail, options } of cases) {
@@ -1900,6 +1901,85 @@ describe('restart guard (systemd)', () => {
       expect(result.ok).toBe(false)
       if (!result.ok) expect(result.detail).toContain(detail)
     }
+  })
+})
+
+describe('restart guard (--from-default-profile)', () => {
+  // From dsh 0.2.1, `--from-default-profile <name>` replaces an existing custom
+  // profile with a fresh copy of the shipped template on every launch, and the
+  // restart re-runs the launch argv verbatim: pressing Restart in a dsh
+  // launched that way deleted every plugin in the profile, this shop included.
+  // Measured 2026-10-19 in throwaway homes; 0.2.0 refused to boot such a
+  // profile instead (design 2026-10-19-dsh-021-readiness §3).
+  const DETAIL = 'dsh-plugin-shop: restart is not supported when dsh was launched with --from-default-profile;'
+    + ' from dsh 0.2.1 a restart would recreate the profile from its template and delete every plugin installed in it,'
+    + ' this shop included. Restart dsh manually without that flag to apply the change'
+
+  // Pinned as the table above pins them: the argv and the supervisor's env and
+  // ppid here, the profile and the platform through `gatewayOptions()`, so
+  // nothing is inherited from the machine the suite runs on.
+  const launched = (restartArgv: string[], options: Partial<ShopGatewayOptions> = {}): ShopGateway => new ShopGateway(stubCtx(), {
+    ...gatewayOptions(), env: {}, ppid: 4321, restartArgv, restartExitDelayMs: 5, fetchLatestVersion: async () => null, ...options,
+  })
+
+  it('refuses to restart a dsh launched with --from-default-profile, in either spelling', async () => {
+    const exit = vi.fn<() => void>()
+    for (const argv of [
+      ['rescue', '--from-default-profile', 'web'],
+      ['rescue', '--from-default-profile=web'],
+      // 0.2.1-rc.2 rejects a bare flag at its parser ("argument missing",
+      // measured 2026-10-19), so a running dsh was not launched this way. The
+      // shop refuses it anyway: an argument it cannot place is still the
+      // flag, and a refusal is the cheap side of being wrong.
+      ['rescue', '--from-default-profile'],
+    ]) {
+      const gateway = launched(argv, { exit })
+      expect((await gateway.version()).restartBlocked, argv.join(' ')).toBe('from-default-profile')
+      expect(await gateway.restart(), argv.join(' ')).toEqual({ ok: false, detail: DETAIL })
+    }
+    // The refusal comes before the commit: nothing was torn down.
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(exit).not.toHaveBeenCalled()
+  })
+
+  it('leaves a launch that merely names a profile like the flag alone', async () => {
+    // `--profile from-default-profile` selects a profile called that. The
+    // flag is a whole argument, or one that continues with `=`; the name of a
+    // profile is neither.
+    expect((await launched(['--profile', 'from-default-profile']).version()).restartBlocked).toBeNull()
+  })
+
+  it('names this reason ahead of --port 0, because it is the one that deletes the plugins', async () => {
+    // Both gates are shut. `--port 0` strands the page on a dead origin, and
+    // nothing is lost; this one recreates the profile, and its copy is the
+    // one that says what a restart by hand must leave out.
+    const gateway = launched(['rescue', '--from-default-profile', 'web', '--port', '0'])
+    expect((await gateway.version()).restartBlocked).toBe('from-default-profile')
+    expect(await gateway.restart()).toEqual({ ok: false, detail: DETAIL })
+  })
+
+  it('names this reason ahead of systemd, whose copy sends the reader to an override that cannot help', async () => {
+    // Order, not just membership: the systemd gate is shut here too, and its
+    // copy ends "set allowRestart: true", which the reader would do and still
+    // be refused. That override unlocks the systemd reason only, so the second
+    // gateway, which sets it, is still refused for this one.
+    const argv = ['rescue', '--from-default-profile', 'web']
+    const unit = launched(argv, { env: { INVOCATION_ID: 'abc' }, ppid: 1 })
+    expect((await unit.version()).restartBlocked).toBe('from-default-profile')
+    expect(await unit.restart()).toEqual({ ok: false, detail: DETAIL })
+    const overridden = launched(argv, { env: { INVOCATION_ID: 'abc' }, ppid: 1, allowRestart: true })
+    expect((await overridden.version()).restartBlocked).toBe('from-default-profile')
+    expect(await overridden.restart()).toEqual({ ok: false, detail: DETAIL })
+  })
+
+  it('names this reason ahead of Windows, whose remedy is the manual restart that recreates the profile', async () => {
+    // Every remedy after `desktop` is "restart dsh manually", and a reader
+    // launched with the flag would restart it with the flag, which on 0.2.1
+    // recreates the profile. This is the copy that says "without that flag", so
+    // a Windows reader needs it as much as a POSIX one.
+    const gateway = launched(['rescue', '--from-default-profile', 'web'], { platform: 'win32' })
+    expect((await gateway.version()).restartBlocked).toBe('from-default-profile')
+    expect(await gateway.restart()).toEqual({ ok: false, detail: DETAIL })
   })
 })
 
@@ -1967,11 +2047,16 @@ describe('the desktop profile, which dsh refuses to manage from its CLI', () => 
   }
 
   it("reports restartBlocked: 'desktop' ahead of every other reason, and restart refuses without exiting", async () => {
-    // First in the gate: the platform, the supervisor and the port only say
-    // how a restart would go, and in this profile none would be allowed.
+    // First in the gate: the platform, the supervisor, the port and the launch
+    // flag only say how a restart would go, and in this profile none would be
+    // allowed. Every one of those gates is shut here, so a reason checked ahead
+    // of this one is the only way the answer could differ. No real launch
+    // holds them all at once; the case is built to pin the order.
     const exit = vi.fn<() => void>()
     const gateway = new ShopGateway(stubCtx(), {
       ...gatewayOptions(), profile: 'desktop', platform: 'win32', exit, restartExitDelayMs: 5,
+      env: { INVOCATION_ID: 'abc' }, ppid: 1,
+      restartArgv: ['rescue', '--from-default-profile', 'web', '--port', '0'],
       fetchLatestVersion: async () => null,
     })
     expect((await gateway.version()).restartBlocked).toBe('desktop')

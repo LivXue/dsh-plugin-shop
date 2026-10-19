@@ -65,15 +65,16 @@ export function installPhaseKey(phase: 'downloading' | 'installing'): ShopLocale
 /** Why the shop cannot restart dsh, as a locale key.
  *
  * A sibling of `activationNoticeKey` and exhaustive for the same reason: the
- * switch has no default, so a fourth reason added to `RestartBlockedReason` is
- * a type error here rather than a card that silently keeps the third one's
- * copy. That is the whole point of the type — the single boolean this replaced
+ * switch has no default, so a reason added to `RestartBlockedReason` is a type
+ * error here rather than a card that silently keeps a neighbour's copy. That
+ * is the whole point of the type — the single boolean this replaced
  * had ONE string for three causes, and it named systemd, so a Windows reader
  * was told to restart a service they do not run and to set an override that
  * could not have helped. */
 export function restartBlockedNoticeKey(reason: RestartBlockedReason): ShopLocaleKey {
   switch (reason) {
     case 'desktop': return 'restartBlockedDesktopNotice'
+    case 'from-default-profile': return 'restartBlockedFromDefaultProfileNotice'
     case 'windows': return 'restartBlockedWindowsNotice'
     case 'systemd': return 'restartBlockedSystemdNotice'
     case 'port-zero': return 'restartBlockedPortZeroNotice'
