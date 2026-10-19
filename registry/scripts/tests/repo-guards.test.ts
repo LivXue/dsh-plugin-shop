@@ -8,7 +8,7 @@
  * confirms it. A convention no test enforces is a convention that drifts
  * silently, which is what readme-pins.test.ts exists to prove. */
 
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -19,6 +19,15 @@ import vitestConfig from '../../../vitest.config.ts'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const read = (relative: string): string => readFileSync(join(repoRoot, relative), 'utf8')
+
+/** Every workflow, by file name, read from the directory at call time rather
+ * than listed. A hand-kept list is how windows.yml, added on 2026-09-08, ran
+ * for six weeks with pins the guards written on 2026-09-04 never read.
+ * Filtered the way strip-types.test.ts filters it. */
+const workflowNames = (): string[] =>
+  readdirSync(join(repoRoot, '.github', 'workflows'))
+    .filter(file => file.endsWith('.yml') || file.endsWith('.yaml'))
+    .sort()
 
 /** The `paths:` filter of one trigger of one workflow.
  *
@@ -141,9 +150,9 @@ describe('a test-only change does not buy a harvest', () => {
     dir: glob.replace(/\/?\*.*$/, ''),
   }))
 
-  // Every path-filtered workflow in the repository, so that "runs somewhere"
-  // below is a question asked of all of them rather than of a favourite.
-  const WORKFLOWS = ['daily.yml', 'plugin.yml', 'windows.yml']
+  // Every workflow in the repository, so that "runs somewhere" below is a
+  // question asked of all of them rather than of a favourite.
+  const WORKFLOWS = workflowNames()
 
   // Files the build genuinely reads: a review file, the pipeline's source, the
   // root manifest, the workflow itself. They are asserted from the same fold,
@@ -379,7 +388,10 @@ describe('the pointer cache window', () => {
 })
 
 describe('workflow action pins', () => {
-  const workflows = ['.github/workflows/daily.yml', '.github/workflows/plugin.yml']
+  // Every workflow, not the two this block was written against: a mutation
+  // setting windows.yml's setup-node to the moving `@v7` left these tests
+  // green until they read the directory.
+  const workflows = workflowNames().map(name => `.github/workflows/${name}`)
 
   it('pins every action to a full commit SHA and names the version in a comment', () => {
     // A major tag is a moving reference, and whoever can move it runs code in
@@ -387,6 +399,9 @@ describe('workflow action pins', () => {
     // pnpm/action-setup, a third-party action, installs the very binary that
     // later runs publish:catalog. The trailing comment is not decoration: it
     // is how the file stays readable, and it is what Dependabot rewrites.
+    // The rule cannot pass by reading nothing: daily.yml holds the pins that
+    // `publish` runs.
+    expect(workflows, 'no workflow file was read').toContain('.github/workflows/daily.yml')
     for (const file of workflows) {
       const uses = [...read(file).matchAll(/^[ \t]*(?:-[ \t]*)?uses:[ \t]*(\S+)[ \t]*(?:#[ \t]*(\S+))?/gm)]
       expect(uses.length, `${file} declares no actions`).toBeGreaterThan(0)
@@ -438,9 +453,11 @@ describe('workflow action pins', () => {
     expect(dependabot).toMatch(/interval:\s*weekly/)
   })
 
-  it('uses one SHA per action across both workflows', () => {
-    // daily.yml checks out three times and plugin.yml once; four different
-    // pins of actions/checkout would be four things to review.
+  it('uses one SHA per action across every workflow', () => {
+    // Most jobs check out the repository, and each different pin of
+    // actions/checkout would be one more thing to review. For the artifact
+    // pair it is more than review: a round-trip pinned apart from `publish`
+    // proves a pair production does not use.
     const byAction = new Map<string, Set<string>>()
     for (const file of workflows) {
       for (const match of read(file).matchAll(/uses:[ \t]*([\w.-]+\/[\w.-]+)@([0-9a-f]{40})/g)) {
