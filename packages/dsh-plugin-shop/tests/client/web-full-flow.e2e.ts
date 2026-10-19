@@ -90,15 +90,15 @@
  * arms were asserted by nothing, and the divergence they now pin was found
  * as an opaque 10s timeout on a host behaving exactly as designed.
  *
- * Written against harnesses 0.1.5-rc.3, 0.1.7-rc.2 and 0.2.0-rc.2: the versions
- * `.github/workflows/plugin.yml` installs globally, one per leg of its `dsh`
- * matrix, and therefore the ones every selector below was measured on. The
- * two are held together mechanically: `repo-guards.test.ts` fails the build
- * if this line and that matrix name different versions. The pin has moved
- * twice already, and both times the mismatch surfaced as an opaque timeout
- * rather than as a diff someone could read. Each leg also names its harness
- * in DSH_SHOP_EXPECT_DSH, and the boot below fails when the `dsh` it launched
- * answers any other `--version`.
+ * Written against harnesses 0.1.5-rc.3, 0.1.7-rc.2, 0.2.0-rc.2 and 0.2.1-rc.2:
+ * the versions `.github/workflows/plugin.yml` installs globally, one per leg of
+ * its `dsh` matrix, and therefore the ones every selector below was measured
+ * on. The two are held together mechanically: `repo-guards.test.ts` fails the
+ * build if this line and that matrix name different versions. The pin has
+ * moved twice already, and both times the mismatch surfaced as an opaque
+ * timeout rather than as a diff someone could read. Each leg also names its
+ * harness in DSH_SHOP_EXPECT_DSH, and the boot below fails when the `dsh` it
+ * launched answers any other `--version`.
  *
  * Pinned selectors (all verified against the live app, zh-CN):
  * - the app root frame: `[class*="frame"]` — the frame class is CSS-module
@@ -108,7 +108,10 @@
  *   `seedOnboarding` turns both off before dsh boots, because they mask the
  *   page until dismissed and dismissing them is a race no timeout wins
  *   reliably. `expectNoDialog` is the tripwire.
- * - settings trigger: `page.getByRole('button', { name: '设置', exact: true })`
+ * - settings trigger: `settingsEntry` — the sidebar foot's
+ *   `page.getByRole('button', { name: '设置', exact: true })` through
+ *   0.2.1-alpha.1; from 0.2.1-rc.1 that button is the Account menu (`账号菜单`,
+ *   its text 更多) and `openSettings` presses its `menuitem` 设置
  * - settings modal: `page.getByRole('dialog', { name: '设置' })`
  * - plugins section: `dialog.getByRole('button', { name: PLUGINS_SECTION })` —
  *   插件 on 0.1.5-rc.3, 内置插件 from 0.1.7-rc.2 on (see the constant)
@@ -351,9 +354,18 @@ async function openDshPluginsPage(app: Page, needed: Locator, dshVersion: string
   }
 }
 
+/** The sidebar foot's way into Settings on this harness: a Settings button
+ * (设置) through 0.2.1-alpha.1; from 0.2.1-rc.1 the Account menu (账号菜单,
+ * its visible text 更多), whose items are 设置, 意见反馈 and 登录 (measured on
+ * 0.2.1-rc.1 and 0.2.1-rc.2, 2026-10-19). */
+function settingsEntry(app: Page, dshVersion: string): Locator {
+  return app.getByRole('button', { name: gte(dshVersion, '0.2.1-rc.1') ? '账号菜单' : '设置', exact: true })
+}
+
 /** Open Settings from the sidebar foot and return its dialog. */
-async function openSettings(app: Page): Promise<Locator> {
-  await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
+async function openSettings(app: Page, dshVersion: string): Promise<Locator> {
+  await settingsEntry(app, dshVersion).click({ timeout: 15_000 })
+  if (gte(dshVersion, '0.2.1-rc.1')) await app.getByRole('menuitem', { name: '设置', exact: true }).click({ timeout: 15_000 })
   const settings = app.getByRole('dialog', { name: '设置' })
   await settings.waitFor({ state: 'visible', timeout: 10_000 })
   return settings
@@ -1222,9 +1234,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await probe.goto(webUrl, { waitUntil: 'load' })
       await waitForFirstRun(probe, launchedDshVersion)
       await probe.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-      await probe.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
-      const inventory = probe.getByRole('dialog', { name: '设置' })
-      await inventory.waitFor({ state: 'visible', timeout: 10_000 })
+      const inventory = await openSettings(probe, launchedDshVersion)
       await openPluginList(inventory)
       await expandGlobalPlane(inventory)
       const liveEntry = inventory.locator(`[data-plugin-entry="${entryId}"]`)
@@ -1438,8 +1448,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await app.goto(webUrl, { waitUntil: 'load' })
       await waitForFirstRun(app, launchedDshVersion)
       await app.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-      await app.getByRole('button', { name: '设置', exact: true })
-        .waitFor({ state: 'visible', timeout: 30_000 })
+      await settingsEntry(app, launchedDshVersion).waitFor({ state: 'visible', timeout: 30_000 })
       await expectNoDialog(app)
 
       // The shop's own page, from its row in dsh's sidebar (design
@@ -1466,7 +1475,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       }
       // Settings has no shop section any more (design
       // 2026-10-16-shop-sidebar-page §2).
-      const settings = await openSettings(app)
+      const settings = await openSettings(app, launchedDshVersion)
       // Read once the dialog shows its plugins section, so each absence below
       // is read off a drawn section list rather than an empty one.
       await settings.getByRole('button', { name: PLUGINS_SECTION }).waitFor({ state: 'visible', timeout: 10_000 })
@@ -1794,7 +1803,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // Built-in plugins is read there, and Settings closes again. The
       // in-place re-read itself (G-9) is the unit case in
       // ShopTab.client.spec.tsx.
-      const settings = await openSettings(app)
+      const settings = await openSettings(app, launchedDshVersion)
       await openPluginList(settings)
       // What Built-in plugins holds without the shop (design §5.1, amended
       // 2026-10-15), read on every leg: 0.1.7-rc.2 and later register
@@ -1865,7 +1874,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // entry. What proves the snapshot rendered is `expandGlobalPlane`'s own
       // postcondition, a visible card whose id carries the `include:` prefix,
       // so the absence below is an absence and not an unrendered list.
-      const settings3 = await openSettings(app)
+      const settings3 = await openSettings(app, launchedDshVersion)
       await openPluginList(settings3)
       await expandGlobalPlane(settings3)
       expect(await settings3.locator(`[data-plugin-entry="${liveId}"]`).count()).toBe(0)
@@ -1918,7 +1927,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         // snapshot, and the config fixture has no hot entry in it.
         // `expandGlobalPlane`'s postcondition is again what separates that
         // from a Loader plane that simply has not rendered.
-        const settings = await openSettings(app)
+        const settings = await openSettings(app, launchedDshVersion)
         await openPluginList(settings)
         await expandGlobalPlane(settings)
         expect(await settings.locator('[data-plugin-entry="include:shop:mkt-e2e-config"]').count()).toBe(0)
@@ -2403,6 +2412,19 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       if (managerPath) {
         expect(await card.locator('[data-shop-log-line]').first().textContent())
           .toBe("via dsh's plugin manager: install dsh-shop-e2e-update@2.0.0")
+      }
+      // On 0.2.1-rc.1 and later dsh's plugin manager refuses to update an
+      // installed package in place, so the shop continues this update through
+      // dsh's CLI inside the same record, which gains one line naming the
+      // refusal and the command (design 2026-10-19-dsh-021-readiness §2). The
+      // line is what tells that continuation from a manager that updated in
+      // place: both end in the same restart notice and the same version on
+      // disk.
+      if (gte(launchedDshVersion, '0.2.1-rc.1')) {
+        const lines = await card.locator('[data-shop-log-line]').allTextContents()
+        expect(lines, JSON.stringify(lines)).toContain(
+          "dsh-plugin-shop: dsh's plugin manager updates no installed package in place (already-installed); running `dsh plugin --profile web add dsh-shop-e2e-update@2.0.0` instead",
+        )
       }
 
       // What the reader is told instead: restart, and why.

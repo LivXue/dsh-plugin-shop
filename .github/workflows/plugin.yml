@@ -45,22 +45,24 @@ jobs:
     #
     # The `dsh` axis, added 2026-09-27, is that pin. Each version is a
     # harness the e2e was RUN against before it was listed here, and each leg
-    # installs exactly its own entry. 0.2.0-rc.2 has been npm's `latest` since
-    # 2026-09-29, and its `next` too. 0.1.5-rc.3, `latest` before it, is the
-    # only leg left on the CLI path. 0.1.7-rc.2 and 0.2.0-rc.2 run the half of
-    # the suite 0.1.5 never reaches (the refusal branch, the 0.1.7 UI fixes,
-    # the harness-package badge), each on its own version of dsh's settings UI.
+    # installs exactly its own entry. 0.2.1-rc.2 has been npm's `latest` since
+    # 2026-10-17, and its `next` too; 0.2.0-rc.2 held both from 2026-09-29.
+    # 0.1.5-rc.3, `latest` before that, is the only leg whose installs still
+    # use the CLI. 0.1.7-rc.2, 0.2.0-rc.2 and 0.2.1-rc.2 run the half of the
+    # suite 0.1.5 never reaches (the refusal branch, the 0.1.7 UI fixes, the
+    # harness-package badge), each on its own version of dsh's settings UI.
     # repo-guards.test.ts reads this list, holds it equal to the e2e contract
     # header's, and fails when the shop's own harness peers refuse an entry.
     #
     # `fail-fast: false` because the legs answer different questions.
-    # Cancelling Windows the moment Linux goes red, or one harness the moment
-    # the other does, throws away the signal this matrix was added to produce.
+    # Cancelling Windows the moment Linux goes red, or every other harness the
+    # moment one goes red, throws away the signal this matrix was added to
+    # produce.
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        dsh: ['0.1.5-rc.3', '0.1.7-rc.2', '0.2.0-rc.2']
+        dsh: ['0.1.5-rc.3', '0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-rc.2']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -129,10 +131,11 @@ jobs:
       # needs for its own screen readers is one it cannot rename silently.
       #
       # Recorded for the next reader: the floor is COMPILED against but no
-      # longer RUN against. This pin is the only harness the e2e ever sees, so
-      # the lower end of the peer range is asserted by the build rather than
-      # observed. That is a known gap, not an oversight — closing it means a
-      # second e2e job on the floor, which is a decision, not a comment.
+      # longer RUN against. The only harnesses the e2e ever sees are the `dsh`
+      # axis's entries, and every one of them is above the floor, so the lower
+      # end of the peer range is asserted by the build rather than observed.
+      # That is a known gap, not an oversight — closing it means a second e2e
+      # job on the floor, which is a decision, not a comment.
       # 0.1.5-rc.3 SINCE 2026-09-23, and the reason is not a feature: rc.1 and
       # rc.2 no longer BOOT from a global install. On 2026-09-22 the harness
       # published 0.1.5-rc.3 of dsh and of its plugin packages together
@@ -167,6 +170,14 @@ jobs:
       # (预览版说明) compares a new acknowledgement version that a seed written
       # for 0.1 does not carry. The run behind this entry passed after both
       # changes (design 2026-10-05-dsh-020-readiness).
+      #
+      # 0.2.1-rc.2 JOINED THEM 2026-10-19 as a fourth, on the same terms, and
+      # it too could not have joined unchanged. Its sidebar foot has no
+      # Settings button, only the Account menu whose first item opens the
+      # dialog; its plugin manager refuses to update an installed package in
+      # place, so an update continues through dsh's CLI; and its refusals list
+      # `requirements` where 0.2.0's listed `peers`. The run behind this entry
+      # passed after those changes (design 2026-10-19-dsh-021-readiness).
       - run: npm install -g @deepseek-ai/dsh@${{ matrix.dsh }}
       - run: dsh --version
       # The web full-flow e2e (P2 exit criterion) needs a playwright browser;

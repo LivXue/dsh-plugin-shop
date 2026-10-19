@@ -43,7 +43,11 @@ code joins `ManagementError` in `types.d.ts`). `hmr` is enabled by the same
 condition as the plugin manager itself, so every profile the shop reaches the
 manager from has it. The manager offers no update or replace operation, and
 dsh's own Plugins page updates a non-official plugin by removing it and
-installing it again.
+installing it again. The guard first appears in the published
+dsh-plugin-manager 0.2.1-alpha.3 (`lib/index.js:1990`), and alpha.4 through
+rc.2 carry the same line at `:1991`; no earlier version has it. The e2e
+asserts the shop's continuation from 0.2.1-rc.1, inside that range. This was
+read from the unpacked packages on 2026-10-19, not run.
 
 Which installed package a spec names is `specPackageName`'s answer
 (`lib/index.js:1373`): the name of a registry spec (`name@version`) or of a
