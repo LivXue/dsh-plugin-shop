@@ -146,8 +146,9 @@ measures it for real.
 every entry, looks up the profile manifest's dependency spec by name
 (`ownDependencySpec`), skipping the entry when the spec does not match
 (`installedSpecMatches`). A shadowed github entry has no catalog row (the
-pipeline refuses it `shadowed-by-npm`, `pipeline.ts:227-231`), so the loop
-never visits it — but the profile manifest still holds its spec. The reader
+pipeline refuses it `shadowed-by-npm`: `npmShadowOf` decides it, and
+`selectEntries` records the row), so the loop never visits it — but the
+profile manifest still holds its spec. The reader
 who installed it yesterday now has a dependency that no card names, no
 switch toggles, no Uninstall removes.
 

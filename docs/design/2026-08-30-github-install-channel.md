@@ -4,8 +4,10 @@ Status: **decided and implemented (2026-08-30).** This document proposed
 listing installable dsh plugin *repositories* alongside npm packages, using
 `dsh`'s native `github:owner/repo` install form. The five open questions were
 answered: pin commits (not tags); ship end to end in one step; npm wins the
-bundle-name dedup; `verified.yml` repo entries ship with the install path;
-no repo-freshness gate. The authority spec
+bundle-name dedup (**narrowed 2026-10-19**: only over a repository of the owner
+the npm package's `repository` names, or when that field is not a plain GitHub
+URL — `2026-10-19-npm-shadow-by-owner.md`); `verified.yml` repo entries ship
+with the install path; no repo-freshness gate. The authority spec
 (`2026-08-18-dsh-plugin-shop-design.md`) is amended in the same change that
 implements this. English only, per convention.
 
@@ -62,7 +64,10 @@ npm, which our catalog today cannot see at all.
   the topic — the gate below is the filter.
 - Replacing npm entries: when a repository's `package.json` name matches an
   existing npm entry, the npm entry wins (it carries real semver); the
-  repository appears only as a fallback when no npm entry exists.
+  repository appears only as a fallback when no npm entry exists
+  (**narrowed 2026-10-19**: only over a repository of the owner the npm
+  package's `repository` names, or when that field is not a plain GitHub URL —
+  `2026-10-19-npm-shadow-by-owner.md`).
 
 ## 3. Harvest
 
@@ -93,7 +98,9 @@ impure-shell split:
 - **Pure** (`repo-gate.ts`): the gate below.
 - **Union:** repo names (owner/slug) and npm names are disjoint keyspaces, but
   entries are deduplicated by *bundle name* (the `name` field of the repo's
-  `package.json`), with npm entries winning.
+  `package.json`), with npm entries winning (**narrowed 2026-10-19**: only over
+  a repository of the owner the npm package's `repository` names, or when that
+  field is not a plain GitHub URL — `2026-10-19-npm-shadow-by-owner.md`).
 - **Determinism:** same rules as npm — sort by name before emit, no
   clock-dependent fields in the hashed content. Star counts for repos flow
   through the existing `stars` sidecar, keyed by the repo full name. Repo
@@ -279,7 +286,10 @@ the same way a package named `dsh-store` is).
 2. **First-cut scope.** Recommend phased (flag → measure → install path →
    flip), accepting that repo entries appear on the shelf only at step 3.
 3. **Deduplication rule.** Confirm "npm wins by bundle name" (a repo whose
-   manifest name already ships as an npm package is not listed separately).
+   manifest name already ships as an npm package is not listed separately;
+   **narrowed 2026-10-19**: only when the package's `repository` names a
+   repository of the repo's owner, or is not a plain GitHub URL —
+   `2026-10-19-npm-shadow-by-owner.md`).
 4. **verified.yml for repos.** Ship with the install path (step 2) or later?
 5. **Repo freshness.** Should the gate require recent activity (`pushed_at`
    within N months) to keep dead repos off the shelf, or is harvest-time

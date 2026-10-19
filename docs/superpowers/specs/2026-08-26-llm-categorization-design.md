@@ -137,10 +137,21 @@ harvest → classify(pending derived names) → append categories.yml
   of that state. The price is one day of lag — classify runs before build, so a
   repository discovered by today's build is classified by tomorrow's run. That
   is the "unclassified, retried on the next build" state D4 already defines.
-- **npm shadows GitHub**, exactly as `pipeline.ts` composes the catalog: a repo
-  candidate whose name is an ACCEPTED npm name is skipped, because that name's
-  row describes the npm package. Accepted, not merely present — a repo whose
-  npm namesake the gate rejected is listed on its own and gets classified.
+- *(amended 2026-10-19)* **An npm package shadows its own owner's
+  repositories**, exactly as `pipeline.ts` composes the catalog
+  (design 2026-10-19-npm-shadow-by-owner §2, §4): a repo candidate of an
+  ACCEPTED npm name is skipped only when `npmShadowOf` hides it, that is, when
+  it is the package's own repository or another of its owner's, or when the
+  package's `repository` is not a plain GitHub URL, so there is nothing to
+  compare. That name's row then describes the npm package. Another owner's
+  repository of the name is not hidden: it goes on to the gate, and when it is
+  listed as a derived entry its name is live and, with no row yet, asked about.
+  The classifier applies the build's rule to the committed snapshot, so a
+  repository whose owner changed since the last build, by a transfer or an
+  account rename, reaches it one run late, as a newly discovered one does (the
+  lag above).
+  Accepted, not merely present — a repo whose npm namesake the gate rejected is
+  listed on its own and gets classified.
 - One question per **name**, not per candidate: 83 of the 2704 GitHub bundle
   names are claimed by a fork as well as an original (measured 2026-09-01).
 - The categories commit happens **before** the pipeline runs, so a later
