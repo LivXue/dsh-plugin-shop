@@ -2636,8 +2636,10 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     // hot mount would re-run the cached OLD module under the new version's
     // name — measured, in web-full-flow.e2e.ts. So nothing is disabled and
     // nothing is mounted: the instance that is running keeps running until
-    // the restart that loads the new files. (This case used to pin the swap
-    // that did the disabling, retries included.)
+    // the restart that loads the new files, or on dsh 0.2.1 until a profile
+    // reconcile replaces it first (design 2026-10-19-dsh-021-readiness §2).
+    // (This case used to pin the swap that did the disabling, retries
+    // included.)
     const entry: LoaderEntryLike = {
       id: 'dsh-hello-plugin-row',
       options: { name: 'dsh-hello-plugin/host' },
@@ -4215,14 +4217,18 @@ describe("installs and updates through dsh's pluginManager", () => {
     expect(status.log[0]).toBe("via dsh's plugin manager: update dsh-plugin-shop@9.9.9")
   })
 
-  // dsh-plugin-manager 0.2.1-rc.2's answer to an install of a name the profile
-  // already depends on (design 2026-10-19-dsh-021-readiness §2, measured
-  // 2026-10-19): installBundle throws `already-installed` before pnpm runs,
-  // with no diagnostic. `beforePnpm` is the rest of what dsh does then: it
+  // dsh-plugin-manager 0.2.1-rc.2's answer to the shop's
+  // `installBundle(spec, { requestId })` for a name the profile already depends
+  // on (design 2026-10-19-dsh-021-readiness §2), exactly, read from its
+  // lib/index.js on 2026-10-19: `change()` (:2373) starts the answer from the
+  // request installBundle hands it (:2096-2100) plus `changed` and
+  // `application`; the guard (:1991) throws `ManagementFailure` before
+  // `registries` or a pnpm result is set; the catch makes `application`
+  // `failed` and `error` `managementError`'s `{ code }` (:1301-1310); nothing
+  // changed on disk. `beforePnpm` is the rest of what dsh does then: it
   // streams nothing and lands nothing.
   const refusedInPlace = (spec: string): object => ({
-    changed: false, application: 'failed', stage: 'install', target: spec, error: { code: 'already-installed' }, registries: [null],
-    packageResult: { exitCode: null, output: '', truncated: false, logPath: '/l' },
+    stage: 'install', target: spec, enabled: true, changed: false, application: 'failed', error: { code: 'already-installed' },
   })
   const beforePnpm = { output: () => [], lands: false }
   /** The line the record gains when the shop continues such an update
@@ -4263,8 +4269,9 @@ describe("installs and updates through dsh's pluginManager", () => {
   })
 
   it('does not continue a fresh install dsh refuses as already-installed', async () => {
-    // The shop saw no such name in the profile, so this process may have
-    // imported it, where the CLI path's hot mount assumes it never did.
+    // The shop saw no such name in the profile while dsh refuses one as
+    // installed, so the two disagree about what the profile holds, and
+    // refusing is the safe side.
     const { gateway, cliDir } = managedGateway(refusedInPlace('dsh-managed@1.0.0'), { ...beforePnpm, dependencies: {} })
     expect(await installAndSettle(gateway, managed)).toEqual({
       found: true,

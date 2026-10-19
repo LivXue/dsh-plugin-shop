@@ -1500,14 +1500,16 @@ export class ShopGateway extends TypertRemoteService {
     if (manager !== null) {
       // An update dsh's plugin manager refuses in place continues through
       // dsh's CLI, in this same record (design 2026-10-19-dsh-021-readiness
-      // §2): from 0.2.1-rc.2 the manager answers `already-installed` for a
-      // spec naming a package the profile depends on, and has no other way to
-      // update one, while `dsh plugin add` over it updates it as before (both
-      // measured 2026-10-19). Keyed on dsh's code, never on its version or the
-      // spec's form, so a dsh that updates in place again keeps being used.
-      // Not for a fresh install: the CLI path's hot mount assumes a name this
-      // process never imported, and here it may have. Not on the desktop
-      // profile, which dsh's CLI refuses.
+      // §2): from dsh 0.2.1 (dsh-plugin-manager 0.2.1-alpha.3 on) the manager
+      // answers `already-installed` for a spec naming a package the profile
+      // depends on, and has no other way to update one, while `dsh plugin add`
+      // over it updates it as before (§2 says what was read and what was
+      // measured). Keyed on dsh's code, never on its version or the spec's
+      // form, so a dsh that updates in place again keeps being used. Not for a
+      // fresh install: the shop saw no such name installed while dsh refuses
+      // one as installed, so the two disagree about what the profile holds,
+      // and refusing is the safe side. Not on the desktop profile, which dsh's
+      // CLI refuses.
       const continues = isUpdate && !isDesktopProfile(this.profile)
       let refusedInPlace = false
       const managed = this.startManagerInstall(manager, spec, `install ${spec}`, raw => {
@@ -1516,9 +1518,12 @@ export class ShopGateway extends TypertRemoteService {
         // refusal, imported nothing. One that reached `enable` has filled
         // Node's module cache, whether dsh composed the package or failed to
         // enable it, so the next install of this name in this process must not
-        // read as live. An update imports nothing new: dsh answers it without
-        // loading the new files (spec section 2), and `alreadyImported`
-        // already holds for it.
+        // read as live. An update records nothing here: `alreadyImported`
+        // already holds for it. Through 0.2.0 dsh answered an update without
+        // loading the new files (spec section 2); on 0.2.1 one its guard lets
+        // through is reconciled and may replace the running plugin in place
+        // (design 2026-10-19-dsh-021-readiness §2). Either way this process
+        // imported the name before.
         if (!isUpdate && change.stage === 'enable') this.imported.add(args.name)
         if (continues && change.errorCode === 'already-installed') refusedInPlace = true
         return managerOutcome(raw, this.outcomeContext(args.name, isUpdate ? 'update' : 'install', alreadyImported, this.packageHasClientHalf(args.name)))
@@ -1575,10 +1580,12 @@ export class ShopGateway extends TypertRemoteService {
         // import the package's URL again and Node would answer with the module
         // it cached, re-running the old code under the new version's name
         // (measured 2026-09-26, web-full-flow.e2e.ts). So the running instance
-        // keeps running until the restart that loads the new files — and a
-        // plugin the user had disabled stays disabled, which the swap this
-        // replaced did not guarantee: it mounted the new rows under a `mkt-`
-        // id that no user-layer row names.
+        // keeps running until the restart that loads the new files, or on dsh
+        // 0.2.1 until a profile reconcile replaces it first (design
+        // 2026-10-19-dsh-021-readiness §2) — and a plugin the user had
+        // disabled stays disabled, which the swap this replaced did not
+        // guarantee: it mounted the new rows under a `mkt-` id that no
+        // user-layer row names.
         if (alreadyImported) return { activation: 'restart' as const, restartReason: 'already-loaded' as const }
         const hot = this.hot ?? { mount: hotMount, unmount: hotUnmount }
         // Recorded before the mount rather than on its success: the import is

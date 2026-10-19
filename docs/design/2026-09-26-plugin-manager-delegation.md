@@ -93,17 +93,23 @@ own self-update). dsh-plugin-manager 0.2.1-rc.2's `installBundle` throws
 spec names a package the profile already depends on (`lib/index.js:1989-1991`).
 A registry spec and a local directory name their package; any other spec names
 one only when it equals that package's saved spec, so an update of a github
-entry to a new commit passes the guard and is updated in place as before (read
-from the source, not measured; design 2026-10-19-dsh-021-readiness §2). `hmr`
-is enabled by the same condition as the service itself, so every profile the
-shop reaches the service from has the guard. There is still no update or
-replace operation; dsh's own Plugins page updates a non-official plugin by
-removing it and installing it again. `dsh plugin add` over an installed package
-still rewrites it, and the running dsh keeps the old code until it restarts, on
-0.2.1-rc.2 as on 0.2.0-rc.2. The same release names the `incompatible-version`
-list `requirements` where the table above, measured on 0.1.7-rc.2, shows
-`peers` (design 2026-10-19-dsh-021-readiness §4). Measured 2026-10-19; what the
-shop does about the refusal is in section 4 and in
+entry to a new commit passes the guard. It then goes through `installBundle`'s
+`publishAndReload` and dsh-hmr's `reconcileProfile`, not 0.2.0's
+`restart-required` (read from the source, not measured; design
+2026-10-19-dsh-021-readiness §2). `hmr` is enabled by the same condition as the
+service itself, so every profile the shop reaches the service from has the
+guard. There is still no update or replace operation; dsh's own Plugins page
+updates a non-official plugin by removing it and installing it again.
+`dsh plugin add` over an installed package still rewrites it, and the running
+dsh keeps the old code only until it reconciles the profile: on 0.2.1-rc.2
+dsh-hmr's `reconcileProfile`, which the service runs after each change it makes
+and a patch edit runs too, replaces a running plugin whose loaded files changed
+on disk (one whose module reaches dsh's own static graph, or that no Loader
+entry starts, it leaves pending until a restart), where 0.2.0-rc.2 replaced
+none. The same release names the
+`incompatible-version` list `requirements` where the table above, measured on
+0.1.7-rc.2, shows `peers` (design 2026-10-19-dsh-021-readiness §4). Measured
+2026-10-19; what the shop does about the refusal is in section 4 and in
 [2026-10-19-dsh-021-readiness.md](2026-10-19-dsh-021-readiness.md) §2.
 
 ## 3. The boundary
@@ -183,23 +189,27 @@ Amended 2026-10-19, the two update rows. When the service answers
 `already-installed`, as dsh-plugin-manager 0.2.1-rc.2 answers an update whose
 spec names the installed package (an npm entry, or the shop's own self-update;
 section 2, and design 2026-10-19-dsh-021-readiness §2), the same install record
-continues through the CLI, `dsh plugin --profile <p> add <spec>`. The record
-keeps the mechanism line and whatever dsh streamed, gains one line naming the
-refusal and that command, and from then on carries the command's state, detail
-and activation: `restart` with reason `already-loaded` for a catalog update, as
-the CLI path has always reported one, and `restart` for the shop itself. The
-CLI step waits its turn in the profile's queue like any command, and the record
-stays one, so the client keeps polling the id it was given and the restart gate
+continues through the CLI, `dsh plugin --profile <p> add <spec>`, run by the
+dsh `dshCommand` picks (readiness §2). The record keeps the mechanism line and
+whatever dsh streamed, gains one line naming the refusal and that command, and
+from then on carries the command's state, detail and activation: `restart` with
+reason `already-loaded` for a catalog update, as the CLI path has always
+reported one, and `restart` for the shop itself. That restart is a correct
+instruction, but on 0.2.1 the next reconcile in the session can make the new
+code live first, and the notice is then stale (readiness §2). The CLI step
+waits its turn in the profile's queue like any command, and the record stays
+one, so the client keeps polling the id it was given and the restart gate
 counts the CLI step as running. The continuation is keyed on dsh's code, never
-on its version, so a dsh whose service updates in place keeps being used, and
-an update the service does not refuse, a github entry's to a new commit among
-them, goes as the rows above say. It is not a remove-then-install. It never
-runs for a fresh install, a name the shop did not see installed, because the
-CLI path's hot mount assumes a name this process never imported; nor in the
-desktop profile (section 7). Where it does not run, section 5's rule 4 reads
-the code with its own sentence, "this dsh updates no installed package in
-place: uninstall it, then install it again". Design
-2026-10-19-dsh-021-readiness §2.
+on its version, so a dsh whose service updates in place keeps being used. An
+update the service does not refuse, a github entry's to a new commit among
+them, goes through the service and, on 0.2.1, through the same reconcile: the
+row's restart is still reported, but the new code may already be live. It is
+not a remove-then-install. It never runs for a fresh install, a name the shop
+did not see installed: the shop and dsh then disagree about what the profile
+holds, and refusing is the safe side. Nor does it run in the desktop profile
+(section 7). Where it does not run, section 5's rule 4 reads the code with its
+own sentence, "this dsh updates no installed package in place: uninstall it,
+then install it again". Design 2026-10-19-dsh-021-readiness §2.
 
 ## 5. Reading the result
 
