@@ -254,6 +254,13 @@ Windows, a systemd unit without the override, or `--port 0` (amended
 2026-09-14; it read "when a supervisor owns the process", which was one
 of the three and the only one the copy named).
 
+Amended 2026-10-19: a dsh launched with `--from-default-profile` is one
+more cause. From dsh 0.2.1 that flag recreates the profile from its
+template on every launch, so a restart would delete every plugin in it,
+this shop included. The host names it ahead of Windows, systemd and
+`--port 0`, and the notice tells the reader to restart dsh themselves
+without the flag (design 2026-10-19-dsh-021-readiness §3).
+
 **The page is never reloaded without being asked.** A reload discards
 whatever the reader was in the middle of — a conversation, a form, an
 upload. The shop knows a reload would help; it does not know that now is

@@ -115,6 +115,13 @@ from the restart's argv. The restarted process would then no longer run the
 command the reader chose, and their next launch with the flag recreates the
 profile anyway.
 
+It is checked right after `desktop`, ahead of `windows`, `systemd` and
+`port-zero`. It has no override, so naming the overridable `systemd` reason
+first would send the reader to `allowRestart: true` and still refuse them.
+And every later reason's remedy is a manual restart, which a reader launched
+with the flag would run with it, so this reason's copy is the one they need.
+`desktop` stays first: dsh refuses to launch that profile from its CLI at all.
+
 ## 4. A refusal lost its list
 
 **Measured.** app-boot 0.2.1's `evaluatePluginCompatibility` returns

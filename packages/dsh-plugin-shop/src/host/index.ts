@@ -234,7 +234,7 @@ export type ShopRestartResult = RestartOutcome
  * restart was impossible after it had become possible. Static here, dynamic
  * there; the split is the whole reason this is a separate predicate rather
  * than a cache of `restart()`'s answer. */
-export type RestartBlockedReason = 'desktop' | 'windows' | 'systemd' | 'port-zero'
+export type RestartBlockedReason = 'desktop' | 'from-default-profile' | 'windows' | 'systemd' | 'port-zero'
 
 /** Each blocked reason's author-readable refusal, written once.
  *
@@ -243,10 +243,11 @@ export type RestartBlockedReason = 'desktop' | 'windows' | 'systemd' | 'port-zer
  * WHY a restart is impossible. They did: `version()` reported a boolean that
  * covered two of the refusals, the client had one string for that boolean, and
  * that string named systemd — so a Windows user was told to restart a systemd
- * service and to set an override that the platform check, being the first gate
- * of the three, could never reach. */
+ * service and to set an override that the platform check, being checked ahead
+ * of the systemd one, could never reach. */
 const RESTART_BLOCKED_DETAIL: Record<RestartBlockedReason, string> = {
   desktop: 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh refuses to restart it from here; restart the app to apply the change',
+  'from-default-profile': 'dsh-plugin-shop: restart is not supported when dsh was launched with --from-default-profile; from dsh 0.2.1 a restart would recreate the profile from its template and delete every plugin installed in it, this shop included. Restart dsh manually without that flag to apply the change',
   windows: 'dsh-plugin-shop: restart is not supported on Windows yet; restart dsh manually to apply the change',
   systemd: 'dsh-plugin-shop: restart is disabled because this process is a systemd service — a restart would kill the takeover helper along with the unit, and the service would not come back. Set allowRestart: true in the shop row config to override.',
   'port-zero': 'dsh-plugin-shop: restart is not supported when dsh was launched with --port 0; restart dsh manually',
@@ -1230,14 +1231,32 @@ export class ShopGateway extends TypertRemoteService {
    *
    * The order is load-bearing for the copy a reader sees. The desktop
    * profile first: dsh itself refuses to launch it, so no platform,
-   * supervisor or port could make a restart possible there. Then Windows,
-   * because the platform check has no override and reporting the systemd one
-   * there sends a Windows user to set `allowRestart: true`, which this gate
-   * would still refuse.
+   * supervisor or port could make a restart possible there, and the remedy
+   * is the app. Then `from-default-profile` and Windows, both ahead of
+   * systemd, because neither has an override and reporting the systemd one
+   * there sends the reader to set `allowRestart: true`, which this gate would
+   * still refuse. And `from-default-profile` ahead of Windows, because every
+   * remedy after `desktop` is "restart dsh manually", which a reader launched
+   * with the flag would do with the flag, and on 0.2.1 that recreates the
+   * profile: its copy is the one that says "without that flag", and a
+   * Windows, systemd or `--port 0` reader needs it as much as any other.
    *
    * - `desktop`: dsh's CLI refuses `--profile desktop` ("managed exclusively
    *   by the Electron application"), so the relaunch would exit at once and
    *   leave nothing on the port; the app restarts it.
+   * - `from-default-profile`: from dsh 0.2.1, `--from-default-profile <name>`
+   *   replaces an existing custom profile with a fresh copy of the shipped
+   *   template on every launch, and the relaunch re-runs this argv verbatim,
+   *   so it would delete every plugin in the profile, this shop included.
+   *   Measured 2026-10-19 in throwaway homes: 0.2.1-rc.2 booted a relaunched
+   *   profile that had held the shop with no dependencies, while 0.2.0-rc.2
+   *   refused to boot an existing profile at all, so there the restarted dsh
+   *   failed to come back. Both spellings are the flag:
+   *   `--from-default-profile <name>` and `--from-default-profile=<name>`. It
+   *   is left in the argv rather than stripped: the restarted process would no
+   *   longer run the command the reader chose, and their next launch with the
+   *   flag recreates the profile anyway. No override (design
+   *   2026-10-19-dsh-021-readiness §3).
    * - `windows`: the handoff helper is a POSIX shell one-liner (restart.ts)
    *   and there is no `sh` on Windows. That spawn fails ASYNCHRONOUSLY, so
    *   committing would answer `ok: true`, exit this process, and leave nothing
@@ -1245,11 +1264,12 @@ export class ShopGateway extends TypertRemoteService {
    * - `systemd`: under a unit the two-phase handoff kills itself, because the
    *   main process exiting also kills the unit's cgroup and takes the detached
    *   helper with it; the service never comes back. Overridable, and the only
-   *   one of the three that is.
+   *   one that is.
    * - `port-zero`: the OS hands the NEW process a fresh port the browser
    *   cannot know, so a restart would strand the client on a dead origin. */
   private staticRestartBlock(): RestartBlockedReason | null {
     if (isDesktopProfile(this.profile)) return 'desktop'
+    if (this.restartArgv.some(arg => arg === '--from-default-profile' || arg.startsWith('--from-default-profile='))) return 'from-default-profile'
     if (!this.restartPlatformSupported()) return 'windows'
     if (detectSupervisor(this.env, { ppid: this.ppid }) === 'systemd' && !this.allowRestartConfigured()) return 'systemd'
     const portIndex = this.restartArgv.indexOf('--port')
