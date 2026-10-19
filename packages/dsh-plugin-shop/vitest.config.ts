@@ -6,6 +6,9 @@ export default defineConfig({
     // package's vitest run (P2 exit criterion); the default include pattern
     // only matches *.test.* and *.spec.*.
     include: ['tests/**/*.{test,spec,e2e}.?(c|m)[jt]s?(x)'],
+    // A jsdom spec's `window.event` as a browser keeps it, so React schedules
+    // an update made outside an event as a page does; the file says why.
+    setupFiles: ['tests/setup/window-event.ts'],
     // Above every deadline the host tests set for THEMSELVES, which vitest's
     // 5 s default sat underneath. Ten `Date.now() + 5000`/`+ 15000` polling
     // loops in `index.test.ts` could therefore never reach their own

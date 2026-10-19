@@ -4962,17 +4962,6 @@ describe('the page keeps the reader\'s place across leaving and returning (desig
     b.catalog.mockImplementation(() => new Promise(resolve => { answer = resolve }))
     const page = pageFor(b)
     const { container } = renderTab({ ...b.injected, page })
-    // React reads `window.event` to choose an update's priority. The answer
-    // comes outside any event, so as in a browser it must read undefined; in
-    // this environment a click handled earlier can leave it set, since React
-    // writes it back after an event and the test globals keep what is
-    // written. Restored afterwards, so later cases see what they saw before.
-    const eventProperty = Object.getOwnPropertyDescriptor(window, 'event')
-    onTestFinished(() => {
-      if (eventProperty === undefined) Reflect.deleteProperty(window, 'event')
-      else Object.defineProperty(window, 'event', eventProperty)
-    })
-    Object.defineProperty(window, 'event', { configurable: true, get: () => undefined, set: () => {} })
     // Outside act, as `waitFor` runs: React renders the shelf and runs its
     // effects on its own scheduler, and the case resumes on the commit's own
     // DOM mutation, before the effects' task.
