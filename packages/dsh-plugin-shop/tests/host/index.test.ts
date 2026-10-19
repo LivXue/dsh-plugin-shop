@@ -172,6 +172,39 @@ describe('two catalog entries share one name (G-1)', () => {
     }])
   })
 
+  // An npm entry and a github entry of one name, which the catalog lists
+  // once an npm package hides only its own owner's repositories (design
+  // 2026-10-19-npm-shadow-by-owner §5). A profile holds one dependency per
+  // name, so every spec form must land on exactly one of the two rows.
+  function gatewayWithNpmTwin(dir: string, sibling: CatalogEntry, dependencies: Record<string, string>): ShopGateway {
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-pair-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: Object.keys(dependencies) } }, dependencies }))
+    const npmTwin: CatalogEntry = { ...alice, version: '2.0.0', integrity: 'sha512-x', source: 'npm', repo: undefined }
+    return new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [sibling, npmTwin], denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+  }
+
+  it.each([['an npm range', '^2.0.0'], ['a spec it cannot attribute', 'file:../fork']])(
+    'gives %s to the npm entry alone, beside its github namesake', async (_, spec) => {
+      const gateway = gatewayWithNpmTwin(mkdtempSync(join(TEMP_ROOT, 'dsh-pair-npm-')), bob, { 'dsh-foo': spec })
+      await gateway.catalog({})
+      expect(await gateway.installed()).toEqual([{
+        name: 'dsh-foo', source: 'npm', installed: spec, latest: '2.0.0', outdated: false, enabled: true,
+      }])
+    })
+
+  it('gives a release tarball URL to its rescued github entry alone', async () => {
+    const url = 'https://github.com/bob/dsh-foo/releases/download/v1.0.0/p.tgz'
+    const rescued: CatalogEntry = { ...bob, version: 'v1.0.0', tarball: { url, sha256: 'f'.repeat(64) } }
+    const gateway = gatewayWithNpmTwin(mkdtempSync(join(TEMP_ROOT, 'dsh-pair-tarball-')), rescued, { 'dsh-foo': url })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{
+      name: 'dsh-foo', source: 'github', repo: 'bob/dsh-foo', installed: url, latest: 'v1.0.0', outdated: false, enabled: true,
+    }])
+  })
+
   it('forgets the identity pin on uninstall', async () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-dup-uninstall-'))
     mkdirSync(join(dir, 'cache'), { recursive: true })

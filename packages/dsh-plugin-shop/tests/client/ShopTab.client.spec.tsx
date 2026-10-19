@@ -3591,6 +3591,28 @@ describe('ShopTab duplicate catalog names', () => {
     }))
   })
 
+  it('refuses only the npm card while its github namesake is installed', async () => {
+    const base = snapshot().plugins[0]
+    if (base === undefined) throw new Error('the fixture snapshot has no entry')
+    const npmFoo = { ...base, name: 'dsh-foo', version: '2.0.0' }
+    const bob = { ...base, name: 'dsh-foo', version: 'b'.repeat(40), source: 'github' as const, repo: 'bob/dsh-foo', repository: 'https://github.com/bob/dsh-foo' }
+    const { injected } = bench({ ...snapshot(), plugins: [bob, npmFoo] }, [{
+      name: 'dsh-foo', source: 'github', repo: 'bob/dsh-foo', installed: 'b'.repeat(40), latest: 'b'.repeat(40), outdated: false, enabled: true,
+    }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelectorAll('[data-shop-entry="dsh-foo"]')).toHaveLength(2))
+    const refused = [...container.querySelectorAll('[data-shop-entry="dsh-foo"] [data-shop-refused]')]
+    expect(refused).toHaveLength(1)
+    expect(refused[0]?.getAttribute('data-shop-blocker-kind')).toBe('name-taken')
+    // The card with the npm mark carries the refusal; the other one reads as installed and is not refused.
+    const cards = [...container.querySelectorAll('[data-shop-entry="dsh-foo"]')]
+    const npmCard = cards.find(card => card.querySelector('[data-shop-source-npm]') !== null)
+    const githubCard = cards.find(card => card !== npmCard)
+    expect(npmCard?.querySelector('[data-shop-refused]')).toBeTruthy()
+    expect(githubCard?.querySelector('[data-shop-installed]')).toBeTruthy()
+    expect(githubCard?.querySelector('[data-shop-refused]')).toBeNull()
+  })
+
   it('sends the identity on a plain shelf install too', async () => {
     const { injected, install } = bench(snapshot({ tier: 'verified' }))
     const { container } = renderTab(injected)
