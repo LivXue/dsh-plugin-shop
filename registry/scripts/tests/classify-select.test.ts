@@ -3,7 +3,7 @@ import { parseRegistryConfig } from '../src/config.ts'
 import { gate } from '../src/gate.ts'
 import { gateRepo } from '../src/repo-gate.ts'
 import { selectPending } from '../src/classify-select.ts'
-import { withholdRepoPeers } from '../src/pipeline.ts'
+import { selectEntries, withholdRepoPeers } from '../src/pipeline.ts'
 import type { Candidate, RepoCandidate } from '../src/types.ts'
 
 const commit = 'a'.repeat(40)
@@ -82,11 +82,14 @@ describe('selectPending', () => {
     expect(liveNames.has('dsh-repo-plugin')).toBe(true)
   })
 
-  it('skips a repo candidate shadowed by an accepted npm package of the same name', () => {
+  it('skips the repository an accepted npm package names as its source', () => {
     // pipeline.ts lists npm and records the repo as shadowed-by-npm. Classifying
     // it would attach a category derived from the repo description to a name the
     // catalog serves from npm. The npm entry here is declared, so the name is
-    // live in neither half: an author-declared category owns the row.
+    // live in neither half: an author-declared category owns the row. The repo
+    // is the `you/npm-plugin` the fixture package declares; another owner's
+    // repository of the name is listed beside the package, not hidden by it
+    // (the case below).
     const declared = npm({
       name: 'dsh-same-name',
       catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
@@ -95,16 +98,44 @@ describe('selectPending', () => {
     // a rejected npm package does not shadow, and this test would then pass
     // while proving nothing. (`summary.zh` is required in a declared section.)
     expect(gate(declared, config).ok).toBe(true)
-    const { pending, liveNames } = selectPending([declared], [repo({ name: 'dsh-same-name' })], config)
+    const { pending, liveNames } = selectPending(
+      [declared],
+      [repo({ name: 'dsh-same-name', repo: 'you/npm-plugin', repository: 'https://github.com/you/npm-plugin' })],
+      config,
+    )
     expect(pending).toEqual([])
     expect(liveNames.has('dsh-same-name')).toBe(false)
   })
 
+  it('classifies another owner\'s repository beside an accepted npm namesake', () => {
+    // The same declared package as above, and the default `someone/…`
+    // repository, which is derived. The package does not name it and its owner
+    // does not own it, so pipeline.ts lists it beside the package and its name
+    // is live: the row has to survive the prune, and it is asked for if it has
+    // none.
+    const declared = npm({
+      name: 'dsh-same-name',
+      catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+    })
+    expect(gate(declared, config).ok).toBe(true)
+    const { pending, liveNames } = selectPending([declared], [repo({ name: 'dsh-same-name' })], config)
+    expect(pending).toEqual([{ name: 'dsh-same-name', description: 'A repo plugin.', keywords: [] }])
+    expect(liveNames.has('dsh-same-name')).toBe(true)
+  })
+
   it('still classifies a repo whose npm namesake the gate rejected', () => {
-    // The shadow set is the ACCEPTED npm names, exactly as pipeline.ts builds
-    // it: a rejected npm package leaves the repository listed on its own.
+    // The shadow map holds only the ACCEPTED npm packages, each name with the
+    // repository it declares, built by the same `acceptedNpmRepositories` as
+    // pipeline.ts's: a rejected npm package is not in it and leaves the
+    // repository listed on its own. The repo is the one the rejected package
+    // names as its source, so an accepted package would hide it and only the
+    // rejection explains the result.
     const rejected = npm({ name: 'dsh-same-name', hasBundle: false })
-    const { pending, liveNames } = selectPending([rejected], [repo({ name: 'dsh-same-name' })], config)
+    const { pending, liveNames } = selectPending(
+      [rejected],
+      [repo({ name: 'dsh-same-name', repo: 'you/npm-plugin', repository: 'https://github.com/you/npm-plugin' })],
+      config,
+    )
     expect(pending.map(p => p.name)).toEqual(['dsh-same-name'])
     expect(liveNames.has('dsh-same-name')).toBe(true)
   })
@@ -180,5 +211,67 @@ describe('a github repository whose peers alone cross the payload budget', () =>
     const emitted = selectPending([], passthrough, config)
     expect(raw.liveNames.has('dsh-heavy-peers')).toBe(false)
     expect(emitted.liveNames.has('dsh-heavy-peers')).toBe(false)
+  })
+})
+
+describe('selectPending agrees with selectEntries', () => {
+  // Both build the accepted-npm map with acceptedNpmRepositories and ask
+  // npmShadowOf which repositories it hides (design
+  // 2026-10-19-npm-shadow-by-owner §4). If they read it differently, a name the
+  // build lists drops out of `liveNames` and the next prune deletes its
+  // category row. The agreement is on the same inputs, which is what this case
+  // gives both; in production the classifier's repositories are a build
+  // behind, the lag §4 names.
+  it('makes liveNames exactly the names of the derived entries the build lists', () => {
+    // Each verdict alone decides one name. Four names each have a DECLARED
+    // npm package, which never makes its name live, and exactly one
+    // repository, so the name is live exactly when that repository is not
+    // hidden. A derived npm package would make its name live whatever became
+    // of its repositories, and hide the verdicts on them.
+    const declared = (name: string, repository: string): Candidate => npm({
+      name,
+      repository,
+      catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+    })
+    const npmCandidates = [
+      declared('dsh-own', 'https://github.com/you/dsh-own'),
+      declared('dsh-same-owner', 'https://github.com/you/dsh-same-owner'),
+      // Not a github.com URL, so a repository of this name cannot be compared
+      // with it.
+      declared('dsh-gitee', 'https://gitee.com/you/dsh-gitee'),
+      declared('dsh-other-owner', 'https://github.com/you/dsh-other-owner'),
+      // Derived, and so live on the npm side: the one name the build lists
+      // twice, as this package and another owner's repository.
+      npm({ name: 'dsh-twice', repository: 'https://github.com/you/dsh-twice' }),
+    ]
+    const at = (name: string, fullName: string): RepoCandidate =>
+      repo({ name, repo: fullName, repository: `https://github.com/${fullName}` })
+    const repoCandidates = [
+      at('dsh-own', 'you/dsh-own'), // the package's own repository: hidden
+      at('dsh-same-owner', 'you/dsh-same-owner-next'), // a different owner/name of its owner: hidden
+      at('dsh-gitee', 'someone/dsh-gitee'), // nothing to compare: hidden
+      at('dsh-other-owner', 'someone/dsh-other-owner'), // another owner's: listed
+      at('dsh-twice', 'someone/dsh-twice'), // another owner's, beside a derived package: listed
+    ]
+    // What makes each verdict visible: every npm package is accepted (a
+    // rejected one hides nothing), the first four as declared, and every
+    // repository passes the gate on its own as derived (a rejected one would
+    // stay out of liveNames whether it was hidden or not).
+    const verdictOf = (result: ReturnType<typeof gate> | ReturnType<typeof gateRepo>): string =>
+      result.ok ? result.accepted.metadata : result.rejection.code
+    expect(npmCandidates.map(candidate => verdictOf(gate(candidate, config))))
+      .toEqual(['declared', 'declared', 'declared', 'declared', 'derived'])
+    expect(repoCandidates.map(candidate => verdictOf(gateRepo(candidate, config))))
+      .toEqual(['derived', 'derived', 'derived', 'derived', 'derived'])
+
+    const { liveNames } = selectPending(npmCandidates, repoCandidates, config)
+    const { entries } = selectEntries(npmCandidates, repoCandidates, config, '2026-08-18T00:00:00.000Z')
+    // A name is live once however many entries carry it: `dsh-twice` is an npm
+    // entry and another owner's repository entry.
+    const listed = [...new Set(entries.filter(entry => entry.metadata === 'derived').map(entry => entry.name))].sort()
+    expect([...liveNames].sort()).toEqual(listed)
+    // The names themselves: two readers that drifted the same way, or both
+    // returned nothing, would still agree with each other.
+    expect(listed).toEqual(['dsh-other-owner', 'dsh-twice'])
   })
 })

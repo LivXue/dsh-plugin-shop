@@ -270,7 +270,7 @@ describe('the shop excludes its own repository', () => {
   // package.json carries workspace: specifiers — but that is an accident of
   // how the monorepo is wired, not a decision. Drop the workspace dep and the
   // shop would list itself. And once the npm gate excludes the published
-  // package by name, pipeline.ts no longer records it in `npmNames`, so the
+  // package by name, pipeline.ts no longer records it in `acceptedNpm`, so the
   // repository stops being shadowed and reaches this gate on its own.
 
   it('rejects its own repository whatever else the manifest says', () => {

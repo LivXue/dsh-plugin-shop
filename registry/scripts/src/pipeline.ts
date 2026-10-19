@@ -2,7 +2,8 @@ import { gate, type Accepted } from './gate.ts'
 import { gateRepo, type RepoAccepted } from './repo-gate.ts'
 import { assignTier, assignRepoTier } from './tier.ts'
 import { emit, SCHEMA_VERSION, type Artifacts, type StarsPointer } from './emit.ts'
-import { compareStrings, firstSeenKey, repoUnit } from './identity.ts'
+import { compareStrings, firstSeenKey } from './identity.ts'
+import { acceptedNpmRepositories, npmShadowOf } from './npm-shadow.ts'
 import type { RegistryConfig } from './config.ts'
 import type { Candidate, Entry, Rejection, RepoCandidate } from './types.ts'
 
@@ -204,12 +205,21 @@ export function selectEntries(
   // candidate before the gate — what build.ts used to do — gave a package
   // rejected for weeks and then listed the date of its first HARVEST (B-9).
   //
-  // npm first: its entries own the bundle names (npm wins by design — real
-  // semver beats a commit pin), and repo candidates for the same name are
-  // recorded as shadowed, not silently dropped. Only ACCEPTED npm names
-  // shadow, so a denied npm package leaves its repository to be judged on its
-  // own merits (B-6).
-  const npmNames = new Set<string>()
+  // npm first: an npm package wins over its own repository by design (real
+  // semver beats a commit pin), so a repository candidate of an accepted
+  // package's bundle name is recorded as shadowed, not silently dropped, when
+  // `npmShadowOf` says the package covers it: the package's own repository,
+  // the other repositories of its owner, and — when the package's
+  // `repository` is not a plain GitHub URL, so there is nothing to compare —
+  // every repository of the name. Another owner's repository goes on to the
+  // repo gate, and is listed beside the package only if it passes there
+  // (design 2026-10-19-npm-shadow-by-owner §2). `selectPending` builds the
+  // same map and asks the same function, so the classifier gives a candidate
+  // the verdict the build gives it; it reads the committed `repo-state.json`,
+  // one build behind this harvest, so it judges a repository that changed
+  // owner in between a run after this build does (§4). The map holds only the
+  // gate's ACCEPTED npm packages, so a denied npm package hides nothing and
+  // leaves its repository to be judged on its own merits (B-6).
   const accepted: Accepted[] = []
   for (const candidate of candidates) {
     const result = gate(candidate, config)
@@ -217,20 +227,14 @@ export function selectEntries(
       rejections.push(result.rejection)
       continue
     }
-    npmNames.add(candidate.name)
     accepted.push(result.accepted)
   }
+  const acceptedNpm = acceptedNpmRepositories(accepted)
   const acceptedRepos: RepoAccepted[] = []
   for (const repoCandidate of repoCandidates) {
-    if (npmNames.has(repoCandidate.name)) {
-      rejections.push({
-        // The same unit `repo-gate.ts` names, so a monorepo's shadowed
-        // subpackages are distinguishable rows instead of N identical ones
-        // whose order followed the harvest (C-6).
-        name: repoUnit(repoCandidate),
-        code: 'shadowed-by-npm',
-        detail: `The npm package ${repoCandidate.name} is already listed; the repository is not listed separately.`,
-      })
+    const shadow = npmShadowOf(repoCandidate, acceptedNpm)
+    if (shadow !== null) {
+      rejections.push(shadow)
       continue
     }
     const result = gateRepo(repoCandidate, config)
