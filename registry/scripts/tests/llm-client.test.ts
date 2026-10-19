@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { classifyPackages, CLASSIFY_BATCH_SIZE, CLASSIFY_BUDGET_MS, GATEWAY_REQUEST_TIMEOUT_MS } from '../src/llm-client.ts'
 import { headersThenStalledBody } from './stalling-fetch.ts'
 
-const options = { baseUrl: 'http://gateway.example/v1', model: 'deepseek-v4-flash', apiKey: 'k' }
+const options = { baseUrl: 'http://gateway.example/v1', model: 'deepseek-flash', apiKey: 'k' }
 
 const item = (i: number) => ({ name: `dsh-pkg-${i}`, description: 'Does things.', keywords: ['dsh-plugin'] })
 
@@ -20,7 +20,7 @@ describe('classifyPackages', () => {
     expect(calls[0]?.url).toBe('http://gateway.example/v1/chat/completions')
     expect((calls[0]?.init.headers as Record<string, string>).Authorization).toBe('Bearer k')
     const body = JSON.parse(String(calls[0]?.init.body))
-    expect(body.model).toBe('deepseek-v4-flash')
+    expect(body.model).toBe('deepseek-flash')
     expect(body.temperature).toBe(0)
     expect(body.max_tokens).toBe(16384)
     expect(result.classified.get('dsh-pkg-0')).toBe('tool')

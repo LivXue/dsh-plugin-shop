@@ -2,7 +2,7 @@
  * LLM classification client — the second module that reaches the network.
  *
  * Thin OpenAI-compatible layer over `POST {baseUrl}/chat/completions` with a
- * Bearer key. The model is a reasoning model (probe: 171 of 174 completion
+ * Bearer key. D3's probe found a reasoning model (171 of 174 completion
  * tokens were reasoning), so items are classified in batches of
  * {@link CLASSIFY_BATCH_SIZE} to amortize that cost (spec
  * 2026-08-26-llm-categorization-design.md §3).
@@ -31,7 +31,7 @@ export const CLASSIFY_BATCH_SIZE = 20
 const CONCURRENCY = 4
 /**
  * The completion budget per batch. It covers REASONING as well as output on
- * this model (D3: 171 of 174 completion tokens were reasoning), and reasoning
+ * D3's probed model (171 of 174 completion tokens were reasoning), and reasoning
  * length does not follow input length — so 4096 truncated whole batches at
  * random: the 2026-09-01 backfill lost 1049 of 2724 names that way, with the
  * gateway answering 200 every time and description length identical between

@@ -65,7 +65,7 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   // rotate-able classification credential and the transport choice belongs to
   // the gateway owner. Point LLM_BASE_URL at an https mirror when one exists.
   const baseUrl = process.env.LLM_BASE_URL ?? 'http://8.141.31.123:3000/v1'
-  const model = process.env.LLM_MODEL ?? 'deepseek-v4-flash'
+  const model = process.env.LLM_MODEL ?? 'deepseek-flash'
   const apiKey = process.env.LLM_API_KEY ?? ''
   const npmToken = process.env.NPM_TOKEN
   // Read through the same helper build.ts reads with, so the two steps can

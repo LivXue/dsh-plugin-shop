@@ -174,7 +174,7 @@ jobs:
           # gateway owner's transport choice. Switch to https when the mirror
           # gains TLS.
           LLM_BASE_URL: http://8.141.31.123:3000/v1
-          LLM_MODEL: deepseek-v4-flash
+          LLM_MODEL: deepseek-flash
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       - run: pnpm build:catalog -- --harvest-from dist/harvest.json
         env:
