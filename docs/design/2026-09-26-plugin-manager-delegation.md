@@ -85,6 +85,27 @@ Read from the service source (0.1.7-rc.2, `lib/index.js`), not measured:
   `@deepseek-ai/dsh-plugin-manager/operations`, which does not include it.
   Read from dsh-plugin-manager 0.1.7-rc.2's source on 2026-09-28.
 
+Amended 2026-10-19: from dsh 0.2.1 the update this section describes, in the
+table's same-name row and in the first and third bullets above, is refused for
+an update whose spec names the installed package (an npm entry, or the shop's
+own self-update). dsh-plugin-manager 0.2.1-rc.2's `installBundle` throws
+`already-installed` before pnpm runs whenever the `hmr` service exists and the
+spec names a package the profile already depends on (`lib/index.js:1989-1991`).
+A registry spec and a local directory name their package; any other spec names
+one only when it equals that package's saved spec, so an update of a github
+entry to a new commit passes the guard and is updated in place as before (read
+from the source, not measured; design 2026-10-19-dsh-021-readiness §2). `hmr`
+is enabled by the same condition as the service itself, so every profile the
+shop reaches the service from has the guard. There is still no update or
+replace operation; dsh's own Plugins page updates a non-official plugin by
+removing it and installing it again. `dsh plugin add` over an installed package
+still rewrites it, and the running dsh keeps the old code until it restarts, on
+0.2.1-rc.2 as on 0.2.0-rc.2. The same release names the `incompatible-version`
+list `requirements` where the table above, measured on 0.1.7-rc.2, shows
+`peers` (design 2026-10-19-dsh-021-readiness §4). Measured 2026-10-19; what the
+shop does about the refusal is in section 4 and in
+[2026-10-19-dsh-021-readiness.md](2026-10-19-dsh-021-readiness.md) §2.
+
 ## 3. The boundary
 
 ### 3.1 Detection
@@ -156,6 +177,29 @@ service rather than the shop's own writer also returns `overridden`, which the
 shop's writer cannot see. The bundle-selection read and the
 `setBundleEnabled` call arrive first, in the smaller change that fixes the
 invisible bundle switch (remaining item 3).
+
+Amended 2026-10-19, the two update rows. When the service answers
+`installStart` for an installed name, or `updateStart`, with
+`already-installed`, as dsh-plugin-manager 0.2.1-rc.2 answers an update whose
+spec names the installed package (an npm entry, or the shop's own self-update;
+section 2, and design 2026-10-19-dsh-021-readiness §2), the same install record
+continues through the CLI, `dsh plugin --profile <p> add <spec>`. The record
+keeps the mechanism line and whatever dsh streamed, gains one line naming the
+refusal and that command, and from then on carries the command's state, detail
+and activation: `restart` with reason `already-loaded` for a catalog update, as
+the CLI path has always reported one, and `restart` for the shop itself. The
+CLI step waits its turn in the profile's queue like any command, and the record
+stays one, so the client keeps polling the id it was given and the restart gate
+counts the CLI step as running. The continuation is keyed on dsh's code, never
+on its version, so a dsh whose service updates in place keeps being used, and
+an update the service does not refuse, a github entry's to a new commit among
+them, goes as the rows above say. It is not a remove-then-install. It never
+runs for a fresh install, a name the shop did not see installed, because the
+CLI path's hot mount assumes a name this process never imported; nor in the
+desktop profile (section 7). Where it does not run, section 5's rule 4 reads
+the code with its own sentence, "this dsh updates no installed package in
+place: uninstall it, then install it again". Design
+2026-10-19-dsh-021-readiness §2.
 
 ## 5. Reading the result
 
@@ -328,6 +372,14 @@ switching go through the service when it is present. Restart stays refused
 there, because the app owns the process (`RestartBlockedReason` `desktop`).
 Without the service, today's refusals stand: `desktop-profile` for an
 install, and `DESKTOP_PROFILE_DETAIL` for the rest.
+
+Amended 2026-10-19: in this profile an update the service refuses in place,
+as dsh-plugin-manager 0.2.1-rc.2 does (section 2), is not continued through
+the CLI as it is in any other profile (section 4), because the CLI refuses
+this one. The refusal stands, the shop's own update's included, and reads as
+every `already-installed` refusal does: "this dsh updates no installed
+package in place: uninstall it, then install it again", which names no
+command. Design 2026-10-19-dsh-021-readiness §2.
 
 No detail may hand a desktop reader a `dsh plugin` command, because the CLI
 refuses that profile. Two details print one today. The undo in

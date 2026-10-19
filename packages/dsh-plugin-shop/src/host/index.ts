@@ -43,7 +43,7 @@ import {
 } from './peers.ts'
 import { compatibilityMap, peerVerdictsOf, type HarnessVerdict, type PeerVerdict } from './compatibility.ts'
 import { readRunningHarness, type RunningHarness } from './harness.ts'
-import { ManagerLogs, messageOf, startManagerOperation } from './manager-runner.ts'
+import { continueAfter, ManagerLogs, messageOf, startManagerOperation } from './manager-runner.ts'
 import { asPluginManager, codeReason, forDesktopReader, managerOutcome, readChange, thrownTail, type ManagerChange, type ManagerOutcome, type OutcomeContext, type PluginManagerLike } from './plugin-manager.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
@@ -270,6 +270,15 @@ const DESKTOP_PROFILE_DETAIL = 'dsh-plugin-shop: the desktop profile is managed 
  * refused. */
 const switchWhileBusyDetail = (name: string): string => 'dsh-plugin-shop: an install, update or uninstall is still running'
   + ` in this profile, and dsh holds the profile until it ends; switch ${name} after it finishes.`
+
+/** The line a record gains when dsh's plugin manager refuses an update in
+ * place and the shop continues it through dsh's CLI (design
+ * 2026-10-19-dsh-021-readiness §2): what dsh refused, and the command that
+ * runs instead. It names a `dsh plugin` command, so it never reaches a
+ * desktop reader: the continuation does not run in that profile. */
+function cliFallbackLine(profile: string, spec: string): string {
+  return `dsh-plugin-shop: dsh's plugin manager updates no installed package in place (already-installed); running \`dsh plugin --profile ${profile} add ${spec}\` instead`
+}
 
 /** `shop/version` result (§7.3): the RUNNING shop version (from the shipped
  * package.json, not the manifest's range), the npm latest when the check
@@ -1489,7 +1498,20 @@ export class ShopGateway extends TypertRemoteService {
     // which dsh runs cannot change while it runs (see `harnessRead`).
     const harness = await this.runningHarness()
     if (manager !== null) {
-      const running = this.startManagerInstall(manager, spec, `install ${spec}`, raw => {
+      // An update dsh's plugin manager refuses in place continues through
+      // dsh's CLI, in this same record (design 2026-10-19-dsh-021-readiness
+      // §2): from 0.2.1-rc.2 the manager answers `already-installed` for a
+      // spec naming a package the profile depends on, and has no other way to
+      // update one, while `dsh plugin add` over it updates it as before (both
+      // measured 2026-10-19). Keyed on dsh's code, never on its version or the
+      // spec's form, so a dsh that updates in place again keeps being used.
+      // Not for a fresh install: the CLI path's hot mount assumes a name this
+      // process never imported, and here it may have. Not on the desktop
+      // profile, which dsh's CLI refuses.
+      const continues = isUpdate && !isDesktopProfile(this.profile)
+      let refusedInPlace = false
+      const managed = this.startManagerInstall(manager, spec, `install ${spec}`, raw => {
+        const change = readChange(raw)
         // An answer that stopped at stage `install`, a pnpm failure or a
         // refusal, imported nothing. One that reached `enable` has filled
         // Node's module cache, whether dsh composed the package or failed to
@@ -1497,16 +1519,35 @@ export class ShopGateway extends TypertRemoteService {
         // read as live. An update imports nothing new: dsh answers it without
         // loading the new files (spec section 2), and `alreadyImported`
         // already holds for it.
-        if (!isUpdate && readChange(raw).stage === 'enable') this.imported.add(args.name)
+        if (!isUpdate && change.stage === 'enable') this.imported.add(args.name)
+        if (continues && change.errorCode === 'already-installed') refusedInPlace = true
         return managerOutcome(raw, this.outcomeContext(args.name, isUpdate ? 'update' : 'install', alreadyImported, this.packageHasClientHalf(args.name)))
       }, () => this.postInstallHazard(args.name, harness, ' It is on disk: uninstall it from the shop to undo this install.'))
+      // The continuation is an update's, so its CLI step mounts nothing and
+      // reports the restart that path always has for one.
+      const running = continueAfter(managed, () => refusedInPlace, () => this.startCliInstall(args.name, spec, harness, true), cliFallbackLine(this.profile, spec))
       // Tracked first: the operation is already queued, so a pin write that
       // throws must not leave it running where no poll or restart gate sees it.
       this.track(running)
       this.recordGithubPin(entry)
       return { ok: true, installId: running.installId, state: running.status().state }
     }
-    const running = startInstall({
+    const running = this.startCliInstall(args.name, spec, harness, alreadyImported)
+    this.recordGithubPin(entry)
+    this.track(running)
+    return { ok: true, installId: running.installId, state: running.status().state }
+  }
+
+  /**
+   * One install of `name` through dsh's CLI, `dsh plugin --profile <p> add
+   * <spec>` (§7.2): the path every install takes when dsh offers no plugin
+   * manager, and the one that continues an update the manager refuses in
+   * place (design 2026-10-19-dsh-021-readiness §2). `alreadyImported` is
+   * whether this process may already hold the package's module, which rules
+   * out a hot mount. The caller tracks the record and records any pin, once.
+   */
+  private startCliInstall(name: string, spec: string, harness: RunningHarness, alreadyImported: boolean): RunningInstall {
+    return startInstall({
       profile: this.profile,
       spec,
       dshBin: this.dshBin,
@@ -1515,7 +1556,7 @@ export class ShopGateway extends TypertRemoteService {
       // its own before/after snapshots of the profile's dependencies, through
       // the same resolution the confirm uses, so a miss reports the difference
       // and can name what actually landed.
-      expectedName: args.name,
+      expectedName: name,
       // §7.2 step 5's new phase: an install that finds a command already
       // queued for this profile warms pnpm's store from OUTSIDE the mutex
       // while it waits. Best-effort — the install below is unchanged by it.
@@ -1524,7 +1565,7 @@ export class ShopGateway extends TypertRemoteService {
       // cannot see. Reporting it beats a done install that kills the next
       // boot; the package stays on disk, so the detail says how to undo it.
       alsoConfirm: () => this.postInstallHazard(
-        args.name, harness, ` It is on disk: run \`dsh plugin --profile ${this.profile} remove ${args.name}\` to undo this install.`,
+        name, harness, ` It is on disk: run \`dsh plugin --profile ${this.profile} remove ${name}\` to undo this install.`,
       ),
       // After the bundle lands, bring it up hot — unless this process may
       // already hold its module (see `alreadyImported`). A failed mount falls
@@ -1543,11 +1584,11 @@ export class ShopGateway extends TypertRemoteService {
         // Recorded before the mount rather than on its success: the import is
         // what fills the cache, and a mount that fails after importing — an
         // activation that throws, a timeout — has filled it all the same.
-        this.imported.add(args.name)
+        this.imported.add(name)
         const result = await hot.mount(
           { plugin: (plugin, config) => (this.home as unknown as { plugin(plugin: unknown, config: unknown): { await(): Promise<unknown>; dispose(): Promise<unknown> | void } }).plugin(plugin, config) },
           this.profileDirResolved(),
-          args.name,
+          name,
         )
         if (!result.ok) {
           return { activation: 'restart' as const, ...(result.reason !== null ? { restartReason: result.reason } : {}) }
@@ -1563,14 +1604,11 @@ export class ShopGateway extends TypertRemoteService {
           activation: activationOf({
             hostLive: true,
             clientLive: true,
-            hasClientHalf: this.packageHasClientHalf(args.name),
+            hasClientHalf: this.packageHasClientHalf(name),
           }),
         }
       },
     })
-    this.recordGithubPin(entry)
-    this.track(running)
-    return { ok: true, installId: running.installId, state: running.status().state }
   }
 
   /**
@@ -2123,15 +2161,35 @@ export class ShopGateway extends TypertRemoteService {
     }
     const spec = `dsh-plugin-shop@${args.version}`
     if (manager !== null) {
+      // The shop is always installed, so every self-update is an update, and
+      // one dsh's plugin manager refuses in place continues through dsh's
+      // CLI as a plugin's does (see `install`), except on the desktop
+      // profile.
+      const continues = !isDesktopProfile(this.profile)
+      let refusedInPlace = false
       // The host half running here is the shop's own, so its update never
       // goes live: dsh answers with a restart and loads nothing (measured on
       // 0.1.7-rc.2).
-      const running = this.startManagerInstall(manager, spec, `update ${spec}`, raw =>
-        managerOutcome(raw, this.outcomeContext('dsh-plugin-shop', 'update', true, true)))
+      const managed = this.startManagerInstall(manager, spec, `update ${spec}`, raw => {
+        if (continues && readChange(raw).errorCode === 'already-installed') refusedInPlace = true
+        return managerOutcome(raw, this.outcomeContext('dsh-plugin-shop', 'update', true, true))
+      })
+      const running = continueAfter(managed, () => refusedInPlace, () => this.startCliSelfUpdate(spec), cliFallbackLine(this.profile, spec))
       this.track(running)
       return { ok: true, installId: running.installId, state: running.status().state }
     }
-    const running = startInstall({
+    const running = this.startCliSelfUpdate(spec)
+    this.track(running)
+    return { ok: true, installId: running.installId, state: running.status().state }
+  }
+
+  /** The shop's own update through dsh's CLI: the path when dsh offers no
+   * plugin manager, and the one that continues a self-update the manager
+   * refuses in place (design 2026-10-19-dsh-021-readiness §2). It passes no
+   * `afterDone`, so it reports a restart: a host half cannot swap itself live
+   * (§8). The caller tracks the record. */
+  private startCliSelfUpdate(spec: string): RunningInstall {
+    return startInstall({
       profile: this.profile,
       spec,
       dshBin: this.dshBin,
@@ -2140,8 +2198,6 @@ export class ShopGateway extends TypertRemoteService {
       // gets the same download phase as a queued plugin install.
       prefetcher: this.prefetcher,
     })
-    this.track(running)
-    return { ok: true, installId: running.installId, state: running.status().state }
   }
 }
 

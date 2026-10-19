@@ -45,11 +45,18 @@ manager from has it. The manager offers no update or replace operation, and
 dsh's own Plugins page updates a non-official plugin by removing it and
 installing it again.
 
-**Effect.** Every update from the shop's Updatable section, and the shop's own
-self-update, failed on 0.2.1-rc.2 with "dsh refused the update of `<name>`
-(already-installed).", in 0.8.7 and 0.9.0-beta.1 alike: their host halves are
-identical. A self-update to a 9.9.9 served by a local registry failed on
-0.2.1-rc.2 and succeeded on 0.2.0-rc.2.
+Which installed package a spec names is `specPackageName`'s answer
+(`lib/index.js:1373`): the name of a registry spec (`name@version`) or of a
+local directory. Any other spec, a `github:` one included, names an installed
+package only when it equals that package's saved spec. So an update of a
+github entry to a new commit passes this guard, and pnpm updates it in place
+as on 0.2.0. This was read from the source on 2026-10-19, not measured.
+
+**Effect.** Every update of an npm entry from the shop's Updatable section, and
+the shop's own self-update, failed on 0.2.1-rc.2 with "dsh refused the update
+of `<name>` (already-installed).", in 0.8.7 and 0.9.0-beta.1 alike: their host
+halves are identical. A self-update to a 9.9.9 served by a local registry
+failed on 0.2.1-rc.2 and succeeded on 0.2.0-rc.2.
 
 **The CLI has no such guard.** `dsh plugin --profile <p> add <spec>` over an
 installed package rewrites it on 0.2.1-rc.2, as before: the upgrade from 0.8.7
