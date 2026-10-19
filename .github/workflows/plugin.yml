@@ -47,10 +47,10 @@ jobs:
     # harness the e2e was RUN against before it was listed here, and each leg
     # installs exactly its own entry. 0.2.1-rc.2 has been npm's `latest` since
     # 2026-10-17, and its `next` too; 0.2.0-rc.2 held both from 2026-09-29.
-    # 0.1.5-rc.3, `latest` before that, is the only leg whose installs still
-    # use the CLI. 0.1.7-rc.2, 0.2.0-rc.2 and 0.2.1-rc.2 run the half of the
-    # suite 0.1.5 never reaches (the refusal branch, the 0.1.7 UI fixes, the
-    # harness-package badge), each on its own version of dsh's settings UI.
+    # 0.1.5-rc.3, `latest` before that, is the only leg whose fresh installs
+    # still use the CLI. 0.1.7-rc.2, 0.2.0-rc.2 and 0.2.1-rc.2 run the half of
+    # the suite 0.1.5 never reaches (the refusal branch, the 0.1.7 UI fixes,
+    # the harness-package badge), each on its own version of dsh's settings UI.
     # repo-guards.test.ts reads this list, holds it equal to the e2e contract
     # header's, and fails when the shop's own harness peers refuse an entry.
     #

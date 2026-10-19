@@ -27,9 +27,10 @@ trees, and by running the shop on both in private prefixes.
   upgrade from 0.8.7 to 0.9.0-beta.1, 8 of 8; no console error, warning or
   page error beyond the hand checks' own aborted `installStart`, the same as on
   0.2.0-rc.2.
-- **Changed and breaking:** in-place updates (section 2), the meaning of
-  `--from-default-profile` (section 3) and the shape of a refusal (section 4).
-  Settings moved (section 5), which breaks only the suite.
+- **Changed and breaking:** in-place updates, and a profile reconcile that now
+  replaces a running plugin whose files changed on disk (section 2), the
+  meaning of `--from-default-profile` (section 3) and the shape of a refusal
+  (section 4). Settings moved (section 5), which breaks only the suite.
 - **New and optional:** `plugins.add.actions`, one row per contribution in the
   Plugins page's Add-plugin menu, and `plugins.tab`, the optional plugin
   market's Discover tab. Neither is used here (section 6).
@@ -52,9 +53,14 @@ read from the unpacked packages on 2026-10-19, not run.
 Which installed package a spec names is `specPackageName`'s answer
 (`lib/index.js:1373`): the name of a registry spec (`name@version`) or of a
 local directory. Any other spec, a `github:` one included, names an installed
-package only when it equals that package's saved spec. So an update of a
-github entry to a new commit passes this guard, and pnpm updates it in place
-as on 0.2.0. This was read from the source on 2026-10-19, not measured.
+package only when it equals that package's saved spec. So an update of a github
+entry to a new commit passes this guard. It then goes on through
+`installBundle`'s `publishAndReload` (`lib/index.js:2093-2094`), and so through
+dsh-hmr's `reconcileProfile` (below), where 0.2.0-rc.2's `installBundle`
+answered `restart-required` for an installed name (`lib/index.js:1801`). The
+shop still reports a restart with reason `already-loaded`, by
+`managerOutcome`'s rule for a name this process imported, but the new code may
+already be live. This was read from the source on 2026-10-19, not measured.
 
 **Effect.** Every update of an npm entry from the shop's Updatable section, and
 the shop's own self-update, failed on 0.2.1-rc.2 with "dsh refused the update
@@ -64,11 +70,63 @@ failed on 0.2.1-rc.2 and succeeded on 0.2.0-rc.2.
 
 **The CLI has no such guard.** `dsh plugin --profile <p> add <spec>` over an
 installed package rewrites it on 0.2.1-rc.2, as before: the upgrade from 0.8.7
-to 0.9.0-beta.1 went through it. After such an update of a package the running
-dsh imported at boot, the running dsh keeps the old code until it restarts, on
-0.2.1-rc.2 exactly as on 0.2.0-rc.2: the e2e's update fixture stayed at one
-`1.0.0` activation for 20 s after a CLI update to 2.0.0 landed. So the restart
-the shop reports for an update remains true.
+to 0.9.0-beta.1 went through it. The shop runs the `dsh` its PATH finds on
+POSIX, and on Windows, through node, the running dsh's own entry, or failing
+that the first `@deepseek-ai/dsh` beside a PATH entry (`dshCommand` and
+`resolveDshScript` in `src/host/dsh-cli.ts`). So on 0.2.1 an update the manager
+refuses depends on that binary, where on 0.2.0 it ran in-process, through the
+manager: a missing dsh fails with the CLI path's own detail, and a different
+version on PATH is not detected.
+
+**Until the next reconcile.** After such an update of a package the running dsh
+imported at boot, the running dsh keeps the old code at first: the e2e's update
+fixture stayed at one `1.0.0` activation for 20 s after a CLI update to 2.0.0
+landed, on 0.2.1-rc.2 as on 0.2.0-rc.2. On 0.2.1 that lasts only until dsh
+reconciles the profile. dsh-hmr 0.2.1-rc.2's `reconcileProfile`
+(`lib/index.js:1307-1385`) replaces a running plugin whose loaded files changed
+on disk (`planReplacement`, `:1214`; `stopPlanned`, `:1274`); only a changed
+module whose importers reach dsh's own static graph, or one whose plugin no
+Loader entry starts, stays loaded until a restart. dsh-plugin-manager
+0.2.1-rc.2 runs it after each change it makes, through `reload`
+(`lib/index.js:2360`): from `setPluginEnabled` (`:1936`), `setBundleEnabled`
+(`:1952`), `installBundle` (`:2094`), `removeBundle` (`:2146`, `:2159`) and
+`setVersionExemption` (`:1646`). A change to a watched patch file runs it too
+(dsh-hmr `:849-873`), and a change to the profile manifest does only when
+`dsh.profile.bundles` changed, so the CLI's update alone does not. 0.2.0-rc.2
+has no such replacement: its dsh-hmr has only `reconcileProfilePatches`.
+Measured 2026-10-19: the same fixture, CLI-updated to 2.0.0 while dsh ran,
+stayed at 1.0.0 for 10 s and activated 2.0.0 within 5 s of a no-op comment
+added to `profiles/web/cordis.patch.yml` on 0.2.1-rc.2; on 0.2.0-rc.2 the same
+trigger left 1.0.0 running.
+
+So the restart the shop reports for an update stays a correct instruction, but
+the next reconcile in that session can make the new code live first: any
+switch, install or uninstall, from the shop or from dsh's own Plugins page, or
+a patch edit. The card's restart notice is then stale. dsh's guard fires
+exactly where `hmr` exists, which is where this replacement runs: the
+continuation recreates on disk the state the guard keeps the manager from
+making.
+
+**A shop installed from a `file:` spec.** On 0.2.1-rc.2 a shop whose saved
+spec is `file:`, a local directory or a tarball alike, fared worse: after its
+continued self-update and then a reconcile before the restart, every shop RPC
+the page made answered `gateway/service-unavailable` (`active Service "shop"
+is unavailable`), the page showed only the catalog-unreadable retry, and no
+Restart was offered, which leaves restarting dsh by hand (that recovery was
+not tried). A shop installed from the registry by name kept its old code and
+its Restart offer (the same `bootId`, pending 9.9.9), while the same reconcile
+replaced the e2e's update fixture beside it. The same trigger without the
+update, and the same sequence on 0.2.0-rc.2, were fine. Measured 2026-10-19 by
+the final review: install the shop, boot `dsh web`, continue its self-update
+to a 9.9.9 served by a local registry, append a comment to
+`profiles/web/cordis.patch.yml`, then read the shop's RPCs, with the e2e's
+update fixture beside it showing that the reconcile ran. This project's checks
+install the shop from `file:` specs: the self-update probe from a directory,
+and the hand check from the pack's tarball, which dsh saves as
+`file:…/dsh-plugin-shop-<version>.tgz`. The probe restarts straight after the
+update and passes, and the hand check never self-updates, so a check that
+reconciles between a self-update and its restart must not read this as a shop
+regression.
 
 **Decision.** An update — `installStart` for a name the profile holds — and a
 self-update (`updateStart`) that dsh's plugin manager refuses with
@@ -86,15 +144,19 @@ self-update (`updateStart`) that dsh's plugin manager refuses with
 - The continuation is keyed on dsh's structured code, never on its version: a
   dsh that updates in place through its manager again keeps being used.
 
+The decision stands with the reconcile above: without it no npm update, the
+shop's own included, works on 0.2.1, and the restart it reports stays correct.
+Remove-then-install stays rejected for the reasons below.
+
 What it is not:
 
 - **Not remove-then-install.** The plugin would be down between the two calls,
   `removeBundle` can refuse with `bundle-in-use`, and the shop cannot remove
   itself: removing its own bundle unloads the gateway that holds the record.
 - **Not for a fresh install.** A name the shop did not see as installed but
-  dsh refuses as `already-installed` fails with the sentence below. The CLI
-  path's hot mount assumes a name this process never imported, and here it may
-  have.
+  dsh refuses as `already-installed` fails with the sentence below: the shop
+  and dsh then disagree about what the profile holds, and refusing is the safe
+  side.
 - **Not on the desktop profile.** dsh's CLI refuses that profile
   (`isDesktopProfile`), so the refusal stands, and reads as every
   `already-installed` refusal now reads: "this dsh updates no installed

@@ -140,12 +140,35 @@ These block a real launch, not the code.
     `globalThis`, and gains two buttons on dsh's Plugins page (0.1.7 and
     later). [2026-10-16-shop-sidebar-page.md](../design/2026-10-16-shop-sidebar-page.md).
     Two things wait:
-    - a row in dsh's Add plugin menu needs `plugins.add.actions` in a dsh
-      `latest`; none declares it yet (0.2.0-rc.2 on 2026-10-17), though
-      `next`, 0.2.1-rc.2, does, so the wait is for 0.2.1 to reach `latest`
-      (sources in that design's §2 item 3);
+    - a row in dsh's Add plugin menu needs `plugins.add.actions`, which
+      0.2.1-rc.2 declares, and 0.2.1-rc.2 became `latest` on 2026-10-17, so
+      the row no longer waits on dsh, only on being built (sources in that
+      design's §2 item 3; item 11);
     - a running install is not found again after a page reload (that
       design's §5.8).
+11. **dsh 0.2.1 — readiness built on `fix/dsh-021-readiness`, 2026-10-19,
+    not released.** npm's `latest` became 0.2.1-rc.2 on 2026-10-17
+    ([2026-10-19-dsh-021-readiness.md](../design/2026-10-19-dsh-021-readiness.md)).
+    The branch reads the refusal list under its new name, blocks the in-page
+    restart of a dsh launched with `--from-default-profile`, continues an
+    update dsh's plugin manager refuses in place through the CLI, and runs
+    the e2e on a fourth leg. Still open, each in that design:
+    - `engines.dsh` in the catalog: 0.2.1 lets it decide alone, and the
+      prediction judges peers only (§4, the known gap);
+    - `plugins.add.actions` and `plugins.tab` are unused (§1, §6; item 10);
+    - measure a github or tarball update through 0.2.1's manager before the
+      beta is promoted: such a spec passes the already-installed guard, and
+      the reconcile after it may make the new code live before the restart
+      the shop reports (§2). A tarball URL from the local registry passes
+      the guard the way a github spec does, so it can be measured offline;
+    - a shop installed with `file:` stops answering after a continued
+      self-update and a reconcile before the restart (§2);
+    - on the desktop profile the shop's own self-update fails with "uninstall
+      it, then install it again" (§2), to settle with the open review item
+      R45, the desktop sentence in `desktopBuildsDetail`;
+    - `packages/dsh-plugin-shop/scripts/shoot-readme-screenshots.ts:183`
+      presses the 设置 button, which 0.2.1 moved into the Account menu (§5),
+      so it times out there: fix it at the 0.9.0 promotion that reshoots.
 
 ## P1 — the Host half (done 2026-08-25)
 
