@@ -1015,6 +1015,18 @@ describe('refusedPeersText', () => {
     expect(refusedPeersText({ '@deepseek-ai/dsh': '', '@deepseek-ai/dsh-base': '  ' }))
       .toBe('@deepseek-ai/dsh "", @deepseek-ai/dsh-base "  "')
   })
+
+  it('names an engines.dsh requirement as dsh and its range', () => {
+    // dsh 0.2.1 lists a package's `engines.dsh` among what it refuses, under
+    // that literal key (design 2026-10-19-dsh-021-readiness, section 4). The
+    // key is a manifest path, not something a reader asked for by name; the
+    // sentence says "it requires dsh >=0.3.0", and every other key reads as
+    // before.
+    expect(refusedPeersText({ 'engines.dsh': '>=0.3.0', '@deepseek-ai/dsh-app-boot': '^0.1.5' }))
+      .toBe('dsh >=0.3.0, @deepseek-ai/dsh-app-boot ^0.1.5')
+    // A blank `engines.dsh` is refused too, and is quoted like any blank range.
+    expect(refusedPeersText({ 'engines.dsh': ' ' })).toBe('dsh " "')
+  })
 })
 
 describe('blockerBadgeKey and readsIncompatible', () => {

@@ -7,6 +7,7 @@
 import { activationOf, type Activation } from './activation.ts'
 import { allowVersionCommand } from './compatibility.ts'
 import { installFailureDetail, REFUSAL_OPENER } from './executor.ts'
+import { refusedRequirements } from './harness.ts'
 import type { HotRestartReason } from './hot.ts'
 
 /** The operations the shop calls. `cancelInstall` is optional because only
@@ -35,6 +36,11 @@ export function asPluginManager(service: unknown): PluginManagerLike | null {
   return service as PluginManagerLike
 }
 
+/** One entry of dsh's `incompatible` list. `peers` is what the package
+ * declared and the running dsh does not meet, read under whichever name that
+ * dsh gives it, `requirements` from 0.2.1 and `peers` before
+ * (`refusedRequirements`): a key is a dsh peer's package name or
+ * `engines.dsh`. */
 export interface ManagerIncompatible { name: string; version: string; runtimeVersion: string; peers: Record<string, string> }
 
 /** The facts of one answer, each checked for its type. */
@@ -69,10 +75,7 @@ function incompatibleList(value: unknown): ManagerIncompatible[] {
     const version = text(entry.version)
     const runtimeVersion = text(entry.runtimeVersion)
     if (name === null || version === null || runtimeVersion === null) return []
-    const peers = Object.fromEntries(
-      Object.entries(record(entry.peers)).filter((pair): pair is [string, string] => typeof pair[1] === 'string'),
-    )
-    return [{ name, version, runtimeVersion, peers }]
+    return [{ name, version, runtimeVersion, peers: refusedRequirements(entry) }]
   })
 }
 

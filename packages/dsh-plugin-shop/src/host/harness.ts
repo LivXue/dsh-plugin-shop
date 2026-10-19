@@ -40,13 +40,19 @@ import { packageDirectory } from './peers.ts'
 const APP_BOOT = '@deepseek-ai/dsh-app-boot'
 
 /** One package's harness peers as the running dsh judges them: app-boot's
- * `evaluatePluginCompatibility` result, the shape 0.1.7 returns. */
+ * `evaluatePluginCompatibility` result, in the shape 0.1.7 returns, whichever
+ * name the running dsh gives its list (`peerCheckOf`). */
 export interface PeerIssue {
   name: string
   version: string
   /** The dsh version the check judged against — app-boot's own. */
   runtimeVersion: string
-  /** The refused peers, each with the range the package declared. */
+  /** What the package asked of dsh and the running one does not meet, each
+   * with the range the package declared. A key is a dsh peer's package name,
+   * or the literal `engines.dsh`. dsh names this list `requirements` from
+   * 0.2.1 and `peers` before it (design 2026-10-19-dsh-021-readiness, section
+   * 4); `refusedRequirements` reads either into this field, so every consumer
+   * keeps reading the one name. */
   peers: Record<string, string>
   /** Whether the profile holds dsh's exact-version exemption for this
    * package on this dsh, in which case dsh accepts the install anyway. */
@@ -180,6 +186,37 @@ async function appBootFacts(dshDir: string): Promise<{ templates: ProfileTemplat
   }
 }
 
+/** `value` when it is a non-null object, else null. */
+const objectOrNull = (value: unknown): Record<string, unknown> | null =>
+  typeof value === 'object' && value !== null ? value as Record<string, unknown> : null
+
+/**
+ * The list a refusal names, read off one answer of dsh's compatibility check
+ * or of its plugin manager, under whichever name the dsh that gave the answer
+ * uses: `requirements` from 0.2.1, `peers` from 0.1.7 to 0.2.0. app-boot's
+ * `evaluatePluginCompatibility` and dsh-plugin-manager's `IncompatiblePlugin`
+ * were renamed together (design 2026-10-19-dsh-021-readiness, section 4, read
+ * off 0.2.1-rc.2's own types and code on 2026-10-19). A key is a dsh peer's
+ * package name or the literal `engines.dsh`; a value is the range the package
+ * declared.
+ *
+ * `requirements` is read first, and only when it holds an object: an answer
+ * whose `requirements` is anything else is not in the newer shape, so its
+ * `peers` is tried. Only the entries whose range is a string are kept, as
+ * `incompatibleList` always kept them, so one malformed range costs its own
+ * entry and not the rest of the list. An answer naming neither reads as an
+ * empty list, never as a throw.
+ */
+export function refusedRequirements(answer: Readonly<Record<string, unknown>>): Record<string, string> {
+  const list = objectOrNull(answer.requirements) ?? objectOrNull(answer.peers)
+  if (list === null) return {}
+  return Object.fromEntries(Object.entries(list).filter((pair): pair is [string, string] => typeof pair[1] === 'string'))
+}
+
+/** What app-boot's check answers for a refused manifest, before its list is
+ * read: 0.2.1 names the list `requirements`, 0.1.7 to 0.2.0 name it `peers`. */
+type CheckAnswer = Omit<PeerIssue, 'peers'> & { requirements?: unknown; peers?: unknown }
+
 /**
  * The peer check an app-boot exports, bound to its own version (see
  * `PeerCheck.evaluate`), or null when it exports only part of one — a rule
@@ -187,6 +224,10 @@ async function appBootFacts(dshDir: string): Promise<{ templates: ProfileTemplat
  * or when its manifest carries no version, which is the one `evaluate`
  * judges by. Never throws, so a check that cannot be formed costs the
  * templates and the patch-list answer nothing.
+ *
+ * What `evaluate` hands back is app-boot's answer with the shop's own `peers`
+ * filled from whichever name the list came under (`refusedRequirements`), so
+ * a dsh that renames it again costs this function and nothing past it.
  */
 function peerCheckOf(exported: { evaluatePluginCompatibility?: unknown; readProfileVersionExemptions?: unknown }, appBootDir: string): PeerCheck | null {
   const { evaluatePluginCompatibility: evaluate, readProfileVersionExemptions: exemptions } = exported
@@ -203,9 +244,15 @@ function peerCheckOf(exported: { evaluatePluginCompatibility?: unknown; readProf
   }
   if (typeof version !== 'string' || version.length === 0) return null
   const runtime = version
-  const judge = evaluate as (manifest: unknown, exemptions: unknown, runtimeVersion: string) => PeerIssue | undefined
+  const judge = evaluate as (manifest: unknown, exemptions: unknown, runtimeVersion: string) => CheckAnswer | null | undefined
   return {
-    evaluate: (manifest, profileExemptions) => judge(manifest, profileExemptions, runtime),
+    evaluate: (manifest, profileExemptions) => {
+      const answer = judge(manifest, profileExemptions, runtime)
+      // dsh answers `undefined` for a manifest it accepts. A null says the
+      // same, and there is no list to read off it.
+      if (answer === undefined || answer === null) return undefined
+      return { ...answer, peers: refusedRequirements(answer) }
+    },
     exemptions: exemptions as PeerCheck['exemptions'],
   }
 }

@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { readRunningHarness, type RunningHarness } from '../../src/host/harness.ts'
+import { readRunningHarness, refusedRequirements, type PeerIssue, type RunningHarness } from '../../src/host/harness.ts'
 import { fileTempRoot } from './temp-root.ts'
 
 const TEMP_ROOT = fileTempRoot('harness')
@@ -118,6 +118,26 @@ function readInChild(script: string, cwd?: string): SerializedHarness {
 
 /** A `RunningHarness` as a child process reports it: `peerCheck` as presence. */
 type SerializedHarness = Omit<RunningHarness, 'peerCheck'> & { peerCheck: boolean }
+
+/**
+ * What the peer check of the dsh at `bin` answers for each of `manifests`,
+ * read in a child `node` for the reason `readInChild` gives: the check is
+ * app-boot's own function, which JSON cannot carry out of the child. An answer
+ * of `undefined` prints as the string "undefined", where JSON would write it
+ * as `null` in an array — the one answer a case here has to tell from a real
+ * null. A child that does not exit 0 fails the case with its stderr.
+ */
+function evaluateInChild(bin: string, manifests: readonly unknown[], exemptions: Record<string, string[]> = {}): unknown[] {
+  const source = [
+    `const { readRunningHarness } = await import(${JSON.stringify(HARNESS_MODULE)})`,
+    `const { peerCheck } = await readRunningHarness(${JSON.stringify(bin)})`,
+    `const answers = ${JSON.stringify(manifests)}.map(manifest => peerCheck.evaluate(manifest, ${JSON.stringify(exemptions)}))`,
+    `console.log(JSON.stringify(answers.map(answer => answer === undefined ? 'undefined' : answer)))`,
+  ].join('\n')
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', source], { encoding: 'utf8' })
+  expect(child.status, child.stderr).toBe(0)
+  return JSON.parse(child.stdout) as unknown[]
+}
 
 describe('readRunningHarness', () => {
   it('reads the version and the template table of the dsh that owns the script', () => {
@@ -307,6 +327,73 @@ describe('readRunningHarness', () => {
     expect(readInChild(bin).peerCheck).toBe(true)
   })
 
+  it("reads the requirements app-boot 0.2.1 answers with into the issue's peers", () => {
+    // dsh 0.2.1 names the unmet list `requirements`, where 0.1.7 to 0.2.0
+    // named it `peers` (design 2026-10-19-dsh-021-readiness, section 4,
+    // measured on app-boot 0.2.1-rc.2). The fixture answers as 0.2.1 does and
+    // carries no `peers` key at all for `p`, so a `peers` in what the child
+    // prints can only have been read off `requirements` by the adapter. Before
+    // it, every refused card on 0.2.1 read "it requires ." with an empty list.
+    //
+    // `both-lists` is the one answer that carries both names, which no dsh
+    // gives. The adapter builds the issue by spreading app-boot's answer and
+    // then writing `peers` over it, so an answer holding both is the input on
+    // which that order decides: `requirements`, the newer name, must win, as
+    // it does in `refusedRequirements`'s own table. Spread the other way round
+    // and the answer's raw `peers` would overwrite the list read off
+    // `requirements`, which nothing else here would notice.
+    const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'requirements-check-')), { version: '0.2.1-rc.2' })
+    installAppBoot(join(dshDir, 'node_modules'), null, [
+      `export const PROFILE_TEMPLATES = ${JSON.stringify(RC3_EXPORT)}`,
+      'export function evaluatePluginCompatibility(manifest, exemptions, runtimeVersion) {',
+      '  const answer = { name: manifest.name, version: manifest.version, runtimeVersion: `fixture:${runtimeVersion}`, requirements: manifest.peerDependencies, exempted: Object.hasOwn(exemptions, manifest.name) }',
+      '  return manifest.name === "both-lists" ? { ...answer, peers: { a: "1" } } : answer',
+      '}',
+      'export function readProfileVersionExemptions(dir) { return { [dir]: ["fixture-runtime"] } }',
+      '',
+    ].join('\n'))
+
+    const issues = evaluateInChild(bin, [
+      { name: 'p', version: '1.0.0', peerDependencies: { '@deepseek-ai/dsh': '^9' } },
+      { name: 'both-lists', version: '1.0.0', peerDependencies: { a: '2' } },
+    ], { p: ['x'] }) as PeerIssue[]
+
+    expect(issues).toHaveLength(2)
+    expect(issues[0]?.peers).toEqual({ '@deepseek-ai/dsh': '^9' })
+    // The rest of app-boot's answer still comes through as it gave it.
+    expect(issues[0]).toMatchObject({ name: 'p', version: '1.0.0', runtimeVersion: 'fixture:0.1.5-rc.3', exempted: true })
+    expect(issues[1]?.peers, 'an answer that carries both lists').toEqual({ a: '2' })
+  })
+
+  it('reads a compatible answer, whether app-boot spells it undefined or null, as no issue', () => {
+    // dsh answers `undefined` when every requirement is met. The adapter takes
+    // the list off whatever comes back, so a null must be an absent answer
+    // before that, not a value it reads a list from. The third manifest is the
+    // control: this fixture does refuse one.
+    const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'compatible-check-')), { version: '0.2.1-rc.2' })
+    installAppBoot(join(dshDir, 'node_modules'), null, [
+      `export const PROFILE_TEMPLATES = ${JSON.stringify(RC3_EXPORT)}`,
+      'export function evaluatePluginCompatibility(manifest) {',
+      '  if (manifest.name === "undefined-answer") return undefined',
+      '  if (manifest.name === "null-answer") return null',
+      '  return { name: manifest.name, version: manifest.version, runtimeVersion: "fixture", requirements: manifest.peerDependencies, exempted: false }',
+      '}',
+      'export function readProfileVersionExemptions() { return {} }',
+      '',
+    ].join('\n'))
+    const manifest = (name: string, peerDependencies: Record<string, string>) => ({ name, version: '1.0.0', peerDependencies })
+
+    const answers = evaluateInChild(bin, [
+      manifest('undefined-answer', {}),
+      manifest('null-answer', {}),
+      manifest('refused', { '@deepseek-ai/dsh': '^9' }),
+    ])
+
+    expect(answers).toHaveLength(3)
+    expect(answers.slice(0, 2)).toEqual(['undefined', 'undefined'])
+    expect(answers[2]).toMatchObject({ name: 'refused', peers: { '@deepseek-ai/dsh': '^9' } })
+  })
+
   it('offers no peer check when app-boot exports only one of the two functions', () => {
     // Half a check is no check: a verdict needs the rule AND the exemptions,
     // or it would refuse what the profile has already allowed.
@@ -375,5 +462,24 @@ describe('readRunningHarness', () => {
       without: { dshVersion: '0.1.5-rc.3', templates: {}, patchLists: null, peerCheck: null },
       with: { dshVersion: '0.1.5-rc.3', templates: RC3_TABLE, patchLists: false, peerCheck: null },
     })
+  })
+})
+
+describe('refusedRequirements', () => {
+  // The list a refusal names, under whichever key the dsh that answered gives
+  // it: `requirements` from 0.2.1, `peers` from 0.1.7 to 0.2.0. A key is a dsh
+  // peer's package name or the literal `engines.dsh`; a value is the range the
+  // package declared (design 2026-10-19-dsh-021-readiness, section 4).
+  it.each([
+    ['requirements, whose key may be engines.dsh', { requirements: { 'engines.dsh': '>=0.3.0' } }, { 'engines.dsh': '>=0.3.0' }],
+    ['peers, as dsh 0.1.7 to 0.2.0 name it', { peers: { '@deepseek-ai/dsh': '^0.1.7' } }, { '@deepseek-ai/dsh': '^0.1.7' }],
+    ['requirements, not peers, when both are there', { requirements: { a: '2' }, peers: { a: '1' } }, { a: '2' }],
+    ['requirements, even an empty one, when both are there', { requirements: {}, peers: { a: '1' } }, {}],
+    ['only the entries whose range is a string', { requirements: { a: 3, b: '1' } }, { b: '1' }],
+    ['peers when requirements is null', { requirements: null, peers: { a: '1' } }, { a: '1' }],
+    ['peers when requirements is no object', { requirements: 'none', peers: { a: '1' } }, { a: '1' }],
+    ['nothing when the answer names neither', {}, {}],
+  ])('reads %s', (_case, answer, expected) => {
+    expect(refusedRequirements(answer)).toEqual(expected)
   })
 })
