@@ -614,5 +614,10 @@ line's `owners verified V of T` shows it.
 - **Channel moves.** Residue the GitHub channel lists today (10 per
   keyword on 2026-10-04) becomes npm-listed, and its GitHub entry
   becomes `shadowed-by-npm`. The dry run's report diff should show
-  exactly that and nothing else.
+  exactly that and nothing else. (**Narrowed 2026-10-19**: the GitHub
+  entry is shadowed only when the npm package's `repository` names a
+  repository of its owner, or is not a plain GitHub URL. One whose
+  package names another owner's repository, as after a transfer or an
+  account rename, stays listed beside the package, and the diff shows
+  that pair as well — `2026-10-19-npm-shadow-by-owner.md`.)
 - **State churn.** A few hundred lines a day in a committed file.

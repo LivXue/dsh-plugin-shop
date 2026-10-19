@@ -297,9 +297,10 @@ export function gate(
   // Denied by npm name, or by the repository this package declares. A denial
   // names a PROJECT, and a project has two published spellings: `evil/dsh-x`
   // on GitHub and `dsh-x` on npm. Checking only the name let the author of a
-  // denied repository publish the same code to npm, win the bundle name (npm
-  // wins by design), and get the repository reported `shadowed-by-npm` while
-  // `denied[]` — the list the Host's install gate consults — stayed empty.
+  // denied repository publish the same code to npm, win the bundle name (an
+  // npm package wins over its own repository by design), and get the
+  // repository reported `shadowed-by-npm` while `denied[]` — the list the
+  // Host's install gate consults — stayed empty.
   //
   // Case-folded on the repo side, as everywhere else on that keyspace. The
   // declared repository is attacker-controlled text, so `githubOwnerName`
@@ -420,11 +421,15 @@ export function gate(
   //
   // "as an npm package" (A-2): a name verified by `reviewedCommit` or
   // `reviewedSha256` belongs to a GITHUB entry, which is a different
-  // identity. Skipping at distance 0 let any npm publisher take that bundle
-  // name, shadow the verified repository (`shadowed-by-npm`) and inherit its
-  // shelf position and `added` date. `allowed-similar.yml` — the npm-name
-  // form — is the human escape when the npm package really is the same
-  // project.
+  // identity. Without the hold at distance 0, any npm publisher could take
+  // that bundle name: a package naming the verified repository, or another
+  // of its owner's, as its source would shadow it (`shadowed-by-npm`) and
+  // take its place on the shelf, as would one whose `repository` is not a
+  // plain GitHub URL, and one naming another owner's repository would be
+  // listed beside it under the reviewed name
+  // (design 2026-10-19-npm-shadow-by-owner).
+  // `allowed-similar.yml` — the npm-name form — is the human escape when the
+  // npm package really is the same project.
   //
   // The `reviewedVersion !== undefined` half is DEFENCE IN DEPTH, not a live
   // branch: since a github review is keyed by its repository, an npm name

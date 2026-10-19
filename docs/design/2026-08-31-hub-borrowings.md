@@ -59,7 +59,12 @@ Today a repo whose root manifest declares no `dsh.bundle` is rejected
   keeps working.
 - **npm-published subpackages**: already covered — the npm entry wins by
   bundle name (existing dedup). The git-subdir form only adds the
-  unpublished ones.
+  unpublished ones. (**Narrowed 2026-10-19**: the npm entry wins only over
+  a subpackage of a repository of the owner its `repository` names, or when
+  that field is not a plain GitHub URL. A subpackage of another owner's
+  repository is gated on its own and, if it passes, listed beside the npm
+  entry of its name, so the git-subdir form adds it too —
+  `2026-10-19-npm-shadow-by-owner.md`.)
 - **Rejection detail** for a monorepo with no listable subpackage stays
   `no-bundle`, with the detail extended to say why (root has no bundle and
   no installable subpackage).
