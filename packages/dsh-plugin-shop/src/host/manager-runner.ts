@@ -209,3 +209,83 @@ export function startManagerOperation(options: ManagerOperationOptions): Running
   })
   return { installId: requestId, status, finished }
 }
+
+/**
+ * `first`, continued by the record `next` starts when `first` ends refused,
+ * as one record under `first`'s id: design 2026-10-19-dsh-021-readiness,
+ * section 2. dsh-plugin-manager 0.2.1-rc.2 refuses an update in place as
+ * `already-installed`, and the gateway continues such an update through
+ * dsh's CLI. One record, so the client keeps polling the id it was given,
+ * and the restart gate and eviction, which read every tracked record, see
+ * the command that runs.
+ *
+ * While `first` runs, this is `first`. Whether it continues is decided once,
+ * when `first` ends: the first `status()` read or `first.finished` settling
+ * that sees `first` terminal asks `refused`, and that answer is kept. So a
+ * caller may set its flag while reading the answer that ends `first`, and a
+ * flag flipped after that changes neither `status()` nor `finished`, which
+ * answer from that one decision. Not refused, this stays `first`. Refused,
+ * `next` runs, exactly once, at that same read or finish, so no read between
+ * the refusal and the next command reports the refusal. From then on the
+ * record is `next`'s, its state, detail and activation, with `first`'s log,
+ * then `bridge`, then `next`'s log. That log joins two bounded logs and the
+ * bridge, so a continued record can carry about twice `MAX_LOG_LINES` and
+ * `MAX_LOG_BYTES`, where one record of `startManagerOperation` carries at most
+ * one line over them.
+ */
+export function continueAfter(first: RunningInstall, refused: () => boolean, next: () => RunningInstall, bridge: string): RunningInstall {
+  // Set before `next` runs, never after it returns: a read made from inside
+  // `next`, while it starts the command, must find this set and not start it
+  // a second time (the branch in `status()` that answers such a read). A
+  // `next` that throws is remembered either way, by the record the catch
+  // below makes in its place.
+  let begun = false
+  /** Whether `first` ended refused: `refused`'s answer, asked once, by the
+   * first read or finish that sees `first` terminal. */
+  let refusal: boolean | undefined
+  /** The log `first` ended on, and the record carrying on from it: what
+   * `next` returned, or the failure it threw. */
+  let continued: { readonly head: readonly string[]; readonly running: RunningInstall } | undefined
+
+  const behind = (head: readonly string[], tail: InstallStatus): InstallStatus => ({ ...tail, log: [...head, bridge, ...tail.log] })
+
+  const status = (): InstallStatus => {
+    if (continued !== undefined) return behind(continued.head, continued.running.status())
+    // Only a read made from inside `next`, before it has returned: the
+    // continuation is under way, with no line of its own yet.
+    if (begun) return { state: 'running', log: [...first.status().log, bridge] }
+    const own = first.status()
+    if (!isTerminalInstallState(own.state)) return own
+    refusal ??= refused()
+    if (!refusal) return own
+    begun = true
+    let running: RunningInstall
+    try {
+      running = next()
+    } catch (error) {
+      // Starting the next command threw before it was a record. The record
+      // ends failed with the reason, rather than reading as the refusal or
+      // throwing out of a status read.
+      const failed: InstallStatus = { state: 'failed', log: [], detail: `dsh-plugin-shop: ${messageOf(error)}` }
+      running = { installId: first.installId, status: () => failed, finished: Promise.resolve(failed) }
+    }
+    continued = { head: own.log, running }
+    return behind(own.log, running.status())
+  }
+
+  const finished = first.finished.then(async (own): Promise<InstallStatus> => {
+    // The read every poll makes, made here as well: when no read has seen
+    // `first` end, this one decides, and starts `next` if `first` ended
+    // refused.
+    status()
+    const now = continued
+    if (now === undefined) return own
+    return behind(now.head, await now.running.finished)
+  })
+  // The executor's guard for its own records (spawnPluginCli): `finished`
+  // carries a rejection of `first`'s or `next`'s, and this handler keeps one
+  // nobody awaits from reaching node as an unhandled rejection, which would
+  // take the host and every install in flight with it.
+  void finished.catch(() => {})
+  return { installId: first.installId, status, finished }
+}

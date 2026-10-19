@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { inProfileQueue } from '../../src/host/executor.ts'
-import { ManagerLogs, MECHANISM_PREFIX, startManagerOperation } from '../../src/host/manager-runner.ts'
+import { inProfileQueue, type InstallStatus, type RunningInstall } from '../../src/host/executor.ts'
+import { continueAfter, ManagerLogs, MECHANISM_PREFIX, startManagerOperation } from '../../src/host/manager-runner.ts'
 import type { ManagerOutcome } from '../../src/host/plugin-manager.ts'
 import type { Prefetcher } from '../../src/host/prefetch.ts'
 import { isTerminalInstallState } from '../../src/shared/install-state.ts'
@@ -366,5 +366,216 @@ describe('startManagerOperation', () => {
     finish({})
     expect((await running.finished).state).toBe('done')
     expect(cancel).toHaveBeenCalledWith('r23')
+  })
+})
+
+/** A record whose status a case sets by hand, and whose `finished` it settles
+ * by hand: what `continueAfter` composes, with no command behind it. */
+function handRecord(installId: string, status: InstallStatus): RunningInstall & {
+  set: (next: InstallStatus) => void
+  settle: () => void
+  reject: (error: Error) => void
+} {
+  let current = status
+  let resolveFinished!: (value: InstallStatus) => void
+  let rejectFinished!: (error: Error) => void
+  const finished = new Promise<InstallStatus>((resolve, reject) => {
+    resolveFinished = resolve
+    rejectFinished = reject
+  })
+  return {
+    installId,
+    status: () => current,
+    finished,
+    set: next => { current = next },
+    settle: () => { resolveFinished(current) },
+    reject: error => { rejectFinished(error) },
+  }
+}
+
+/** One turn of the event loop: every promise settled so far has run its
+ * handlers by the time it resolves. */
+const turn = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0))
+
+describe('continueAfter', () => {
+  const BRIDGE = 'dsh-plugin-shop: the first command was refused; running the next one instead'
+  const refusal: InstallStatus = { state: 'failed', log: ['first: started', 'first: refused'], detail: 'the first command was refused' }
+  const landed: InstallStatus = { state: 'done', log: ['next: + x 1.0.0'], activation: 'restart', restartReason: 'already-loaded' }
+
+  it('reads as the next record from the first read after the refusal, never as the refusal', () => {
+    // Review Focus 2: a poll that lands between dsh's refusal and the next
+    // command must not see the record fail, or the client stops polling on a
+    // failure the record is about to leave.
+    const first = handRecord('first-1', refusal)
+    const next = vi.fn(() => handRecord('next-1', { state: 'running', log: [] }))
+    const running = continueAfter(first, () => true, next, BRIDGE)
+    expect(running.status().state).toBe('running')
+    expect(next).toHaveBeenCalledOnce()
+  })
+
+  it('stays the first record, its finish included, when that ends without the refusal, and never starts the next', async () => {
+    const first = handRecord('first-2', { state: 'running', log: ['first: started'] })
+    const next = vi.fn(() => handRecord('next-2', { state: 'running', log: [] }))
+    const running = continueAfter(first, () => false, next, BRIDGE)
+    expect(running.installId).toBe('first-2')
+    expect(running.status()).toEqual({ state: 'running', log: ['first: started'] })
+    const failed: InstallStatus = { state: 'failed', log: ['first: started', 'first: pnpm broke'], detail: 'pnpm failed' }
+    first.set(failed)
+    expect(running.status()).toEqual(failed)
+    first.settle()
+    expect(await running.finished).toEqual(failed)
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it("reads as the next record, live, behind the first record's log and the bridge", () => {
+    const first = handRecord('first-3', refusal)
+    const second = handRecord('next-3', { state: 'running', log: ['next: installing'] })
+    const running = continueAfter(first, () => true, () => second, BRIDGE)
+    expect(running.installId).toBe('first-3')
+    expect(running.status()).toEqual({ state: 'running', log: ['first: started', 'first: refused', BRIDGE, 'next: installing'] })
+    // The next record's activation and reason, and no detail: the refusal's
+    // own detail does not outlive it.
+    second.set({ ...landed, log: ['next: installing', 'next: + x 1.0.0'] })
+    expect(running.status()).toEqual({
+      state: 'done',
+      log: ['first: started', 'first: refused', BRIDGE, 'next: installing', 'next: + x 1.0.0'],
+      activation: 'restart',
+      restartReason: 'already-loaded',
+    })
+    // And the next record's detail when it fails.
+    const failing = continueAfter(handRecord('first-3b', refusal), () => true, () => handRecord('next-3b', {
+      state: 'failed', log: ['next: ERR_PNPM_X'], detail: 'the next command failed',
+    }), BRIDGE)
+    expect(failing.status()).toEqual({
+      state: 'failed', log: ['first: started', 'first: refused', BRIDGE, 'next: ERR_PNPM_X'], detail: 'the next command failed',
+    })
+  })
+
+  it('finishes when the next record does, with the merged status', async () => {
+    const first = handRecord('first-4', { state: 'running', log: ['first: started'] })
+    const second = handRecord('next-4', { state: 'running', log: [] })
+    const running = continueAfter(first, () => true, () => second, BRIDGE)
+    let finishedWith: InstallStatus | undefined
+    void running.finished.then(status => { finishedWith = status })
+    first.set({ ...refusal, log: ['first: started'] })
+    first.settle()
+    await turn()
+    expect(finishedWith).toBeUndefined()
+    second.set(landed)
+    second.settle()
+    expect(await running.finished).toEqual({ ...landed, log: ['first: started', BRIDGE, 'next: + x 1.0.0'] })
+  })
+
+  it('starts the next record once, however many reads reach the refusal before the first record finishes', async () => {
+    const first = handRecord('first-5', { state: 'running', log: [] })
+    const second = handRecord('next-5', { state: 'running', log: [] })
+    const inside: InstallStatus[] = []
+    // A read made from inside `next` while it starts the command sees the
+    // continuation under way, and starts nothing more.
+    const next = vi.fn(() => {
+      inside.push(running.status())
+      return second
+    })
+    const running = continueAfter(first, () => true, next, BRIDGE)
+    // While the first record runs, nothing starts, whatever `refused` says.
+    running.status()
+    running.status()
+    expect(next).not.toHaveBeenCalled()
+    first.set(refusal)
+    for (let read = 0; read < 5; read += 1) running.status()
+    expect(inside).toEqual([{ state: 'running', log: ['first: started', 'first: refused', BRIDGE] }])
+    first.settle()
+    second.set(landed)
+    second.settle()
+    await running.finished
+    running.status()
+    expect(next).toHaveBeenCalledOnce()
+  })
+
+  it('starts the next record once when the first record finishing reaches the refusal before any read', async () => {
+    const first = handRecord('first-6', refusal)
+    const second = handRecord('next-6', { state: 'running', log: [] })
+    const next = vi.fn(() => second)
+    const running = continueAfter(first, () => true, next, BRIDGE)
+    first.settle()
+    await turn()
+    expect(next).toHaveBeenCalledOnce()
+    for (let read = 0; read < 5; read += 1) expect(running.status().state).toBe('running')
+    second.set(landed)
+    second.settle()
+    await running.finished
+    expect(next).toHaveBeenCalledOnce()
+  })
+
+  it('decides once, when the first record ends, whether to continue, so a flag flipped later changes nothing', async () => {
+    // `status()` and `finished` answer from one decision, or a read after a
+    // late flip would start a command the finish had already said was not
+    // coming.
+    const failed: InstallStatus = { state: 'failed', log: ['first: started', 'first: pnpm broke'], detail: 'pnpm failed' }
+    // Decided by the read that sees the first record end...
+    const byRead = handRecord('first-9', { state: 'running', log: ['first: started'] })
+    let readFlag = false
+    const askedByRead = vi.fn(() => readFlag)
+    const nextByRead = vi.fn(() => handRecord('next-9', { state: 'running', log: [] }))
+    const readFirst = continueAfter(byRead, askedByRead, nextByRead, BRIDGE)
+    expect(readFirst.status().state).toBe('running')
+    expect(askedByRead).not.toHaveBeenCalled()
+    byRead.set(failed)
+    expect(readFirst.status()).toEqual(failed)
+    readFlag = true
+    for (let read = 0; read < 3; read += 1) expect(readFirst.status()).toEqual(failed)
+    byRead.settle()
+    expect(await readFirst.finished).toEqual(failed)
+    expect(readFirst.status()).toEqual(failed)
+    expect(nextByRead).not.toHaveBeenCalled()
+    expect(askedByRead).toHaveBeenCalledOnce()
+    // ...or by its finish, when no read came first.
+    const byFinish = handRecord('first-10', failed)
+    let finishFlag = false
+    const askedByFinish = vi.fn(() => finishFlag)
+    const nextByFinish = vi.fn(() => handRecord('next-10', { state: 'running', log: [] }))
+    const finishFirst = continueAfter(byFinish, askedByFinish, nextByFinish, BRIDGE)
+    byFinish.settle()
+    expect(await finishFirst.finished).toEqual(failed)
+    finishFlag = true
+    for (let read = 0; read < 3; read += 1) expect(finishFirst.status()).toEqual(failed)
+    expect(nextByFinish).not.toHaveBeenCalled()
+    expect(askedByFinish).toHaveBeenCalledOnce()
+  })
+
+  it('ends the record failed, with the reason, when starting the next record throws, and never starts it again', async () => {
+    // `next` gates the spec the first record's start already gated, so this
+    // is not expected; the record must still end rather than read as the
+    // refusal, or throw out of a status read.
+    const first = handRecord('first-7', refusal)
+    const next = vi.fn((): RunningInstall => { throw new Error('spawn EACCES') })
+    const running = continueAfter(first, () => true, next, BRIDGE)
+    const failed: InstallStatus = { state: 'failed', log: ['first: started', 'first: refused', BRIDGE], detail: 'dsh-plugin-shop: spawn EACCES' }
+    expect(running.status()).toEqual(failed)
+    expect(running.status()).toEqual(failed)
+    first.settle()
+    expect(await running.finished).toEqual(failed)
+    expect(next).toHaveBeenCalledOnce()
+  })
+
+  it("carries the next record's rejected finish to its own, and never to the process as an unhandled rejection", async () => {
+    // The executor's convention for its own records: `finished` carries the
+    // rejection, and a handler is attached so that nobody awaiting it is no
+    // process death.
+    const unhandled = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    try {
+      const first = handRecord('first-8', refusal)
+      const second = handRecord('next-8', { state: 'running', log: [] })
+      const running = continueAfter(first, () => true, () => second, BRIDGE)
+      first.settle()
+      await turn()
+      second.reject(new Error('the command could not be built'))
+      await turn()
+      expect(unhandled).not.toHaveBeenCalled()
+      await expect(running.finished).rejects.toThrow('the command could not be built')
+    } finally {
+      process.off('unhandledRejection', unhandled)
+    }
   })
 })

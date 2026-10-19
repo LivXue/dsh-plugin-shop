@@ -239,6 +239,13 @@ const CODE_SENTENCE: Record<string, string> = {
   'management-required': 'the plugin belongs to dsh itself',
   unaddressable: "the plugin is not a row of the profile's own patch, so dsh cannot address it",
   'operation-error': 'dsh hit an unexpected error',
+  // From dsh-plugin-manager 0.2.1-rc.2: installBundle refuses a spec naming a
+  // package the profile already depends on wherever the `hmr` service exists
+  // (lib/index.js:1991), and nothing else in the service updates one (design
+  // 2026-10-19-dsh-021-readiness §2, measured 2026-10-19). The gateway carries
+  // an update it refuses on through dsh's CLI, so a reader meets this only
+  // where that cannot run: a fresh install, and the desktop profile.
+  'already-installed': 'this dsh updates no installed package in place: uninstall it, then install it again',
 }
 
 /** What each classified pnpm failure was, as dsh classifies it. */
