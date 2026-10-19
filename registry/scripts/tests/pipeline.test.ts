@@ -358,10 +358,55 @@ describe('runPipeline with repository candidates', () => {
     ])
   })
 
-  it('shadows a repository whose bundle name already ships as an npm package, with a reason', () => {
-    const { report } = runPipeline(candidates, [{ ...repoCandidate, name: 'dsh-hello-plugin' }], config, BUILT_AT)
-    expect(report).toContain('| someone/dsh-repo-plugin | shadowed-by-npm |')
-    expect(report).toContain('already listed')
+  it('shadows the repository the npm package names as its source, with a reason', () => {
+    // The fixture's `dsh-hello-plugin` declares `you/hello-plugin`, so this is
+    // the package's own repository, hidden with no hint: there is no other
+    // plugin to judge (design 2026-10-19-npm-shadow-by-owner §2-§3).
+    const { report, pluginsJson } = runPipeline(candidates, [{
+      ...repoCandidate,
+      name: 'dsh-hello-plugin',
+      repo: 'you/hello-plugin',
+      repository: 'https://github.com/you/hello-plugin',
+    }], config, BUILT_AT)
+    expect(report).toContain(
+      '| you/hello-plugin | shadowed-by-npm | The npm package dsh-hello-plugin names this repository as its source and is already listed; the repository is not listed separately. |',
+    )
+    const parsed = JSON.parse(pluginsJson) as { plugins: { source: string }[] }
+    expect(parsed.plugins.filter(plugin => plugin.source === 'github')).toEqual([])
+  })
+
+  it('lists another owner\'s repository beside the npm package of its name', () => {
+    // `someone/dsh-repo-plugin` is neither the package's repository nor
+    // another of its owner's, so it is a plugin that happens to choose the
+    // same name (issue #88): the gate judges it on its own, and it is listed.
+    const { report, pluginsJson } = runPipeline(candidates, [{ ...repoCandidate, name: 'dsh-hello-plugin' }], config, BUILT_AT)
+    expect(report).not.toContain('shadowed-by-npm')
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string; source: string; repo?: string }[] }
+    const named = parsed.plugins.filter(plugin => plugin.name === 'dsh-hello-plugin')
+    expect(named.map(plugin => [plugin.source, plugin.repo ?? null])).toEqual([
+      ['github', 'someone/dsh-repo-plugin'],
+      ['npm', null],
+    ])
+  })
+
+  it('escapes a | the npm package declares in its repository name', () => {
+    // The sentence quotes the owner and name read out of the package's own
+    // `repository`, which is attacker-controlled text, so it reaches the
+    // report through the same cell writer as every other detail: a backslash
+    // stands before the pipe, where an unescaped one would end the detail
+    // cell early and add a column to the row.
+    const piped = candidates.filter(candidate => candidate.name === 'dsh-hello-plugin')
+      .map(candidate => ({ ...candidate, repository: 'https://github.com/you/hello|plugin' }))
+    expect(piped).toHaveLength(1)
+    const { report } = runPipeline(piped, [{
+      ...repoCandidate,
+      name: 'dsh-hello-plugin',
+      repo: 'you/hello-plugin-next',
+      repository: 'https://github.com/you/hello-plugin-next',
+    }], config, BUILT_AT)
+    expect(report).toContain(
+      '| you/hello-plugin-next | shadowed-by-npm | The npm package dsh-hello-plugin is already listed and names you/hello\\|plugin as its source: a repository of the same owner, either this one under an earlier name or another.',
+    )
   })
 
   it('reports a repository rejection from the repo gate', () => {
@@ -634,7 +679,7 @@ describe('a repo denial survives the author publishing to npm', () => {
     expect(parsed.plugins).toEqual([])
     expect(parsed.denied.map(d => d.name)).toEqual(['dsh-x', 'evil/dsh-x'])
     // And nothing is reported as shadowed: the npm candidate never reached
-    // `npmNames`, so the repository was judged on its own.
+    // `acceptedNpm`, so the repository was judged on its own.
     expect(report).not.toContain('shadowed-by-npm')
   })
 })
@@ -661,17 +706,20 @@ describe('determinism under every perturbation', () => {
     }
   }
 
-  // Four accepted entries sharing two bundle names, two of them subpackages
-  // of one repository, plus two rejected subpackages of another — every tie
-  // the comparators have to break. The first carries the github harness peers
-  // and its manifest version (design
-  // 2026-09-28-bundle-components-and-github-peers, section 6), so every
-  // artifact each case below compares covers both fields.
+  // Five accepted repository entries — four sharing two bundle names, two of
+  // them subpackages of one repository, and a fifth that is another owner's
+  // repository named like the accepted npm package `dsh-hello-plugin` — plus
+  // two rejected subpackages of another repository: every tie the comparators
+  // have to break. The first carries the github harness peers and its
+  // manifest version (design 2026-09-28-bundle-components-and-github-peers,
+  // section 6), so every artifact each case below compares covers both
+  // fields.
   const repos = [
     { ...repoAt('dsh-shared', 'alice/dsh-shared', commitA), dshPeers: { '@deepseek-ai/dsh': '0.1.5-rc.2' }, manifestVersion: '1.0.0' },
     repoAt('dsh-shared', 'bob/dsh-shared', commitB),
     repoAt('dsh-sub', 'carol/monorepo', commitA, 'packages/one'),
     repoAt('dsh-sub', 'carol/monorepo', commitA, 'packages/two'),
+    repoAt('dsh-hello-plugin', 'erin/hello-fork', commitB),
     { ...repoAt('dsh-bad', 'dave/monorepo', commitA, 'packages/x'), hasBundle: false },
     { ...repoAt('dsh-bad', 'dave/monorepo', commitA, 'packages/y'), hasBundle: false },
   ]
@@ -684,7 +732,8 @@ describe('determinism under every perturbation', () => {
   // the clock (Task 10) and the across-clocks comparison below would fail for
   // the right reason. The verified row keeps `dsh-fs-too1` held, exactly as
   // the suite's shared config does, so the accepted set is the three plugins
-  // plus the four repository entries.
+  // plus the five repository entries, one of them another owner's repository
+  // named like an npm package.
   const dated = parseRegistryConfig({
     verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
     denied: '[]',
@@ -697,6 +746,7 @@ describe('determinism under every perturbation', () => {
       '- name: alice/dsh-shared\n  added: 2026-08-01\n',
       '- name: bob/dsh-shared\n  added: 2026-08-02\n',
       '- name: carol/monorepo\n  added: 2026-08-03\n',
+      '- name: erin/hello-fork\n  added: 2026-08-04\n',
     ].join(''),
   })
 
@@ -709,6 +759,10 @@ describe('determinism under every perturbation', () => {
     // independence: it is what would catch a Set or Map iterated in insertion
     // order, or a clock read inside emit.
     const repeated = runPipeline(candidates, repos, dated, BUILT_AT, preexisting, stars)
+    // The byte comparisons below hold just as well when erin's repository is
+    // hidden, so without this they say nothing about an npm package and
+    // another owner's repository of its name sharing one catalog.
+    expect(first.pluginsJson).toContain('erin/hello-fork')
     for (const key of ['pluginsFileName', 'pluginsJson', 'indexJson', 'badgeJson', 'manifestLock', 'report'] as const) {
       expect(second[key], `${key} moved with input order`).toBe(first[key])
       expect(repeated[key], `${key} moved between runs`).toBe(first[key])
@@ -746,17 +800,37 @@ describe('determinism under every perturbation', () => {
   })
 
   it('names each shadowed subpackage by its repo#subdir unit', () => {
-    // C-6: both rows read `dave/monorepo` and were indistinguishable, so their
-    // order in the report followed the harvest.
+    // C-6: both rows read `you/hello-plugin` and were indistinguishable, so
+    // their order in the report followed the harvest. They are subpackages of
+    // the repository the npm package names, which is what hides them.
     const shadowing: Candidate[] = candidates.filter(c => c.name === 'dsh-hello-plugin')
     const { report } = runPipeline(shadowing, [
-      repoAt('dsh-hello-plugin', 'dave/monorepo', commitA, 'packages/y'),
-      repoAt('dsh-hello-plugin', 'dave/monorepo', commitA, 'packages/x'),
+      repoAt('dsh-hello-plugin', 'you/hello-plugin', commitA, 'packages/y'),
+      repoAt('dsh-hello-plugin', 'you/hello-plugin', commitA, 'packages/x'),
     ], dated, BUILT_AT)
     const rows = report.split('\n').filter(line => line.includes('shadowed-by-npm'))
     expect(rows).toHaveLength(2)
-    expect(rows[0]).toContain('| dave/monorepo#packages/x |')
-    expect(rows[1]).toContain('| dave/monorepo#packages/y |')
+    expect(rows[0]).toContain('| you/hello-plugin#packages/x |')
+    expect(rows[1]).toContain('| you/hello-plugin#packages/y |')
+  })
+
+  it('lists each subpackage of another owner\'s repository beside the npm package', () => {
+    // The case above with a monorepo that belongs to someone other than the
+    // package's owner (`you`): none of its subpackages is the package's
+    // source, so each is judged on its own and listed.
+    const shadowing: Candidate[] = candidates.filter(c => c.name === 'dsh-hello-plugin')
+    const { report, pluginsJson } = runPipeline(shadowing, [
+      repoAt('dsh-hello-plugin', 'dave/monorepo', commitA, 'packages/y'),
+      repoAt('dsh-hello-plugin', 'dave/monorepo', commitA, 'packages/x'),
+    ], dated, BUILT_AT)
+    expect(report).not.toContain('shadowed-by-npm')
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string; source: string; repo?: string; subdir?: string }[] }
+    const named = parsed.plugins.filter(plugin => plugin.name === 'dsh-hello-plugin')
+    expect(named.map(plugin => [plugin.source, plugin.repo ?? null, plugin.subdir ?? null])).toEqual([
+      ['github', 'dave/monorepo', 'packages/x'],
+      ['github', 'dave/monorepo', 'packages/y'],
+      ['npm', null, null],
+    ])
   })
 })
 

@@ -170,7 +170,7 @@ export function gateRepo(
 ): { ok: true; accepted: RepoAccepted } | { ok: false; rejection: Rejection } {
   // The unit an author acts on: the repo, or `repo#subdir` for a monorepo
   // subpackage — rejection names must point at the thing to fix. Shared with
-  // pipeline.ts's shadow row so the two spellings cannot drift (C-6).
+  // npm-shadow.ts's `shadowedRow` so the two spellings cannot drift (C-6).
   const unit = repoUnit(candidate)
 
   // Denied by repo or by bundle name. `owner/slug` strings cannot collide

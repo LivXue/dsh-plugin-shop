@@ -12,8 +12,9 @@
  */
 
 import type { RegistryConfig } from './config.ts'
-import { gate } from './gate.ts'
+import { gate, type Accepted } from './gate.ts'
 import type { ClassifyItem } from './llm-client.ts'
+import { acceptedNpmRepositories, npmShadowOf } from './npm-shadow.ts'
 import { gateRepo } from './repo-gate.ts'
 import type { Candidate, RepoCandidate } from './types.ts'
 
@@ -51,14 +52,21 @@ export function selectPending(
   // the same name twice spends two calls to write one row.
   const pending = new Map<string, ClassifyItem>()
 
-  // npm first, as pipeline.ts composes the catalog: its entries own the bundle
-  // names, so the ACCEPTED npm names — declared and derived alike — are what
-  // shadows the repo half.
-  const npmAccepted = new Set<string>()
+  // npm first, as pipeline.ts composes the catalog: an npm package wins over
+  // its own repository, so the ACCEPTED npm packages — declared and derived
+  // alike — are what can hide a repository, and a hidden repository's name
+  // keeps the npm package's row. This function and `selectEntries` both build
+  // the map with `acceptedNpmRepositories` and ask `npmShadowOf` of it (design
+  // 2026-10-19-npm-shadow-by-owner §4), so the two give a candidate the same
+  // verdict. Not always the same candidates: these come from the committed
+  // repo-state.json, one build behind the build's harvest (`repoCandidates`
+  // above), so a repository that changed owner in between is listed or hidden
+  // by the build first and judged here on the next run.
+  const accepted: Accepted[] = []
   for (const candidate of npmCandidates) {
     const result = gate(candidate, config)
     if (!result.ok) continue
-    npmAccepted.add(candidate.name)
+    accepted.push(result.accepted)
     if (result.accepted.metadata !== 'derived') continue
     liveNames.add(candidate.name)
     if (config.categories.has(candidate.name)) continue
@@ -66,11 +74,16 @@ export function selectPending(
       pending.set(candidate.name, { name: candidate.name, description: candidate.description, keywords: candidate.keywords })
     }
   }
+  const acceptedNpm = acceptedNpmRepositories(accepted)
 
   for (const candidate of repoCandidates) {
-    // shadowed-by-npm (pipeline.ts): the npm package is listed and the
-    // repository is not, so this name's row describes the npm package.
-    if (npmAccepted.has(candidate.name)) continue
+    // shadowed-by-npm (pipeline.ts): an accepted npm package hides this
+    // repository, so it is not listed and its name keeps the npm package's
+    // row. Another owner's repository of the name is not hidden: it goes on
+    // to the gate below, and when it is listed there as a derived entry its
+    // name is live and, with no row yet, asked about here. The same
+    // `npmShadowOf` call decides it in `selectEntries`.
+    if (npmShadowOf(candidate, acceptedNpm) !== null) continue
     const result = gateRepo(candidate, config)
     if (!result.ok) continue
     if (result.accepted.metadata !== 'derived') continue
