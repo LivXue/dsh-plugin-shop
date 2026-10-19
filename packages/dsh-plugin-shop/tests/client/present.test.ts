@@ -1242,6 +1242,15 @@ describe('heldBy', () => {
   it('names an npm holder with the token the host refusal uses', () => {
     expect(heldBy(repoEntry, { 'dsh-hello-plugin': '^2.0.0' })).toBe('npm:dsh-hello-plugin')
   })
+
+  it('marks only the sibling that is not installed, for an npm entry and a github entry of one name', () => {
+    const github = { 'dsh-hello-plugin': 'github:Mvyvn/dsh-hello-plugin' }
+    expect(heldBy(entry, github)).toBe('Mvyvn/dsh-hello-plugin')
+    expect(heldBy(repoEntry, github)).toBeUndefined()
+    const npm = { 'dsh-hello-plugin': '^1.0.0' }
+    expect(heldBy(entry, npm)).toBeUndefined()
+    expect(heldBy(repoEntry, npm)).toBe('npm:dsh-hello-plugin')
+  })
 })
 
 describe('installPhaseKey', () => {

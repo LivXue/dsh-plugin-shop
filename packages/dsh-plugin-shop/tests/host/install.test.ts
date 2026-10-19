@@ -220,3 +220,77 @@ describe('validateInstall identity (G-1)', () => {
     expect(result).toMatchObject({ ok: true })
   })
 })
+
+describe('validateInstall with an npm entry and a github entry of one name', () => {
+  // The pair the catalog lists once an npm package hides only its own owner's
+  // repositories (design 2026-10-19-npm-shadow-by-owner §5). The github entry
+  // comes first, which is the catalog's order (`compareEntries`), so a lookup
+  // by name alone would land on it whichever sibling was asked for.
+  const npmFoo: CatalogSnapshot['entries'][number] = {
+    name: 'dsh-foo', version: '2.0.0', integrity: 'sha512-x', publishedAt: null,
+    repository: 'https://github.com/alice/dsh-foo', license: 'MIT',
+    tier: 'community', metadata: 'derived', source: 'npm',
+    added: '2026-08-25',
+  }
+  const bob: CatalogSnapshot['entries'][number] = {
+    ...npmFoo, version: 'b'.repeat(40), integrity: null,
+    source: 'github', repo: 'bob/dsh-foo', repository: 'https://github.com/bob/dsh-foo',
+  }
+  const pair: CatalogSnapshot = {
+    schemaVersion: 6, builtAt: '', entries: [bob, npmFoo], denied: [], stars: {},
+  }
+
+  it('resolves the npm identity to the npm entry', () => {
+    const result = validateInstall(pair, {
+      name: 'dsh-foo', version: '2.0.0', acknowledged: true, source: 'npm',
+    })
+    expect(result).toMatchObject({ ok: true })
+    if (result.ok) expect(result.entry.source).toBe('npm')
+  })
+
+  it('resolves the github identity to the github entry', () => {
+    const result = validateInstall(pair, {
+      name: 'dsh-foo', version: bob.version, acknowledged: true,
+      source: 'github', repo: 'bob/dsh-foo',
+    })
+    expect(result).toMatchObject({ ok: true })
+    if (result.ok) expect(result.entry.repo).toBe('bob/dsh-foo')
+  })
+
+  it('refuses a name-only request as ambiguous', () => {
+    const result = validateInstall(pair, { name: 'dsh-foo', version: '2.0.0', acknowledged: true })
+    expect(result).toMatchObject({ ok: false, code: 'ambiguous-identity' })
+    if (!result.ok) {
+      expect(result.detail).toBe('dsh-plugin-shop: the catalog holds 2 entries named dsh-foo, and this request does not say which one; refresh the shop and try again')
+    }
+  })
+
+  it('refuses the npm sibling while the github one is installed', () => {
+    const result = validateInstall(pair, {
+      name: 'dsh-foo', version: '2.0.0', acknowledged: true, source: 'npm',
+    }, 'github:bob/dsh-foo')
+    expect(result).toMatchObject({ ok: false, code: 'name-taken' })
+    if (!result.ok) expect(result.detail).toContain('bob/dsh-foo')
+  })
+
+  it('refuses the github sibling while the npm one is installed', () => {
+    const result = validateInstall(pair, {
+      name: 'dsh-foo', version: bob.version, acknowledged: true,
+      source: 'github', repo: 'bob/dsh-foo',
+    }, '^2.0.0')
+    expect(result).toMatchObject({ ok: false, code: 'name-taken' })
+    if (!result.ok) expect(result.detail).toContain('npm:dsh-foo')
+  })
+
+  it('lets each sibling update itself', () => {
+    const npm = validateInstall(pair, {
+      name: 'dsh-foo', version: '2.0.0', acknowledged: true, source: 'npm',
+    }, '^1.0.0')
+    expect(npm.ok, npm.ok ? '' : npm.detail).toBe(true)
+    const github = validateInstall(pair, {
+      name: 'dsh-foo', version: bob.version, acknowledged: true,
+      source: 'github', repo: 'bob/dsh-foo',
+    }, 'github:bob/dsh-foo')
+    expect(github.ok, github.ok ? '' : github.detail).toBe(true)
+  })
+})
