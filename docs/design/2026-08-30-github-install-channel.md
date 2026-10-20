@@ -128,9 +128,10 @@ repository the search does not serve is not harvested either way: one the
 state still records publishes `repo-gone`, and is fetched again whenever the
 search serves it again.
 
-**Amendment (2026-10-20): the check reaches a window of 901 to 1,000.** On
-2026-10-20 `topic:deepseek-harness stars:>=1 created:2026-10-04..2026-11-04`
-counted 928 and served 927, its sixth page one row short on every paging. Ten pages are every row the
+**Amendment (2026-10-20): the check reaches a window of 901 to 1,000, and
+pagings are compared by repositories.** On 2026-10-20 `topic:deepseek-harness
+stars:>=1 created:2026-10-04..2026-11-04` counted 928 and served 927, its
+sixth page one row short on every paging. Ten pages are every row the
 1,000-result cap serves, so the paging asked for an eleventh and threw that
 the window had grown past the cap, which it had not, before the check above
 could run; the day's build failed on it. A paging that has read ten pages now
@@ -141,6 +142,26 @@ measures a paging against the higher of the window's probe and the total its
 own pages answered, so a window that grew between the two cannot clear the
 probe's smaller count with a repository unserved; the re-probe lowers that
 floor only when the window shrank since.
+
+Search ordering also moves under a paging. Of seven pagings of that window
+the same day, three served a repository twice in place of another, 8, 1 and
+19 times, so a paging can serve as many rows as the count while missing
+repositories. Counted by rows, such a paging looked whole and the
+repositories it never served published `repo-gone`. Coverage is now counted
+in repositories: a paging short of the count by repositories is paged again,
+whatever its rows, and a gap the second paging repairs is no gap.
+- **An unreadable item counts once.** It counts by the name it carries, so
+  an item served twice covers one slot; only an item with no name at all is
+  counted by its rows.
+- **When two pagings agree on a gap.** Between them they named no more
+  repositories than either paging's named rows: one set read twice, in two
+  orders, whichever of them repeated, and even when the count moved between
+  them.
+- **What is churn.** A repository that left the window as another joined
+  shows as one name more than rows. That is churn, and it throws.
+
+Everything else above stands: the run's total stays within
+`MAX_SEARCH_PHANTOMS`, and the report names each tolerated window.
 
 ## 4. Gate — the anti-80%
 
