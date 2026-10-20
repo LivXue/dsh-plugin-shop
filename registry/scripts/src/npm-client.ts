@@ -567,6 +567,11 @@ export function parsePublisherAxisReport(value: unknown, where: string): Publish
     stepped,
     seeded: names('seeded'),
     evicted: names('evicted'),
+    // Not read yet: Task 4 of the plan
+    // (docs/plans/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md)
+    // parses `judged` here as strictly as `seeded` and `evicted`. Until it
+    // does, no handoff can name a pin to release.
+    judged: [],
     atRiskNames: count('atRiskNames'),
   }
 }
@@ -2914,6 +2919,12 @@ export async function searchByKeywords(
       stepped,
       seeded,
       evicted,
+      // Not measured yet: Task 4 of the plan
+      // (docs/plans/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md)
+      // records what each probed pin's cell showed and fills this from
+      // `judgedPins`. Until it does, no pin is judged and past the window only
+      // an eviction removes one, as before.
+      judged: [],
       atRiskNames: atRiskNameCount(harvestedNames, keyword, reachable),
     })
     // The feed step's line waits for the keyword's final count and sets its

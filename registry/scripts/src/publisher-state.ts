@@ -495,6 +495,33 @@ export interface HarvestedName {
 }
 
 /**
+ * The harvested names a pin may be seeded or earned from: those `carried` does
+ * not hold, in `harvested`'s own order.
+ *
+ * `carried` is what the change feed carries for the keyword. The feed credits a
+ * carrier whenever no search cell serves it, so a pin for its owner buys
+ * nothing the feed does not already give, and the pins had gone to those owners
+ * rather than to the names only a pin can reach (design
+ * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`, §1 and
+ * §4.1). {@link atRiskOwners} and {@link atRiskNameCount} read this list
+ * instead of everything harvested.
+ *
+ * Only `carried`'s keys are read, so the feed's name-to-owner map passes as it
+ * is. An empty one, which is what a run whose feed is unavailable has, returns
+ * every name and leaves both rules what they were before the feed existed.
+ */
+export function seedableNames(
+  harvested: ReadonlyMap<string, HarvestedName>,
+  carried: { has(name: string): boolean },
+): HarvestedName[] {
+  const out: HarvestedName[] = []
+  for (const [name, harvestedName] of harvested) {
+    if (!carried.has(name)) out.push(harvestedName)
+  }
+  return out
+}
+
+/**
  * Whether `name` is reachable ONLY while its rank sits inside the harvest
  * keyword's search window — the shared rule behind {@link atRiskOwners} and
  * {@link atRiskNameCount}.
@@ -720,6 +747,75 @@ export function retainPinned(state: PublisherState, keywords: readonly string[])
 export const MAX_EVICTIONS_PER_RUN = 8
 
 /**
+ * What became of a probed pin's `keywords:K maintainer:U` cell this run.
+ *
+ * - `zero`: the probe answered a total of zero, confirmed or not.
+ * - `over-window`: the answered total is past the search window, so no paging
+ *   reaches all of it.
+ * - `redundant`: the cell was skipped, because the window and refinement cells
+ *   had already served as many of the owner's names as the cell answered.
+ * - `paged`: the cell was paged, on one pass or more.
+ */
+export type PinCell = 'zero' | 'over-window' | 'redundant' | 'paged'
+
+/**
+ * One probed pin as the run saw it: the evidence {@link judgedPins} reads. The
+ * shell measures it and this module judges it, so a fixture can drive every
+ * verdict.
+ */
+export interface PinObservation {
+  readonly maintainer: string
+  readonly cell: PinCell
+  /**
+   * Whether some pass paged the cell in full, serving as many names as the
+   * cell answered. Only a `paged` cell can be whole: a `redundant` one was
+   * never paged.
+   */
+  readonly whole: boolean
+  /**
+   * The names the verdict rests on: the ones the window and refinement cells
+   * served for this owner when the cell was `redundant`, and the ones the
+   * owner's own cell served when it was `paged`.
+   */
+  readonly names: readonly HarvestedName[]
+}
+
+/**
+ * The pinned maintainers this run JUDGED: probed, and shown every name they
+ * hold under the harvest keyword, so seeding's silence about them is an answer
+ * and not a gap in what was paged. Past the window these are the only pins
+ * {@link applyAxisReport} may release (design
+ * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`, §4.2).
+ *
+ * An observation judges its pin when all three hold:
+ * - the cell was `redundant`, or `paged` with `whole` set. Those are the two
+ *   ways a run sees all of an owner's names. A zero total is the registry's
+ *   answer, which the eviction exit owns; a cell over the window was never
+ *   seen whole; and one that served short on every pass left names unshown.
+ * - `names` is not empty. No names is no evidence.
+ * - every name lists at least one keyword. {@link isAtRisk} reads a name
+ *   without keywords as not at risk, so a response that stopped carrying the
+ *   field would leave seeding naming nobody and every probed pin read as
+ *   released at once. Requiring the field is what shows the verdict came from
+ *   the data it reads.
+ *
+ * A pin the run did not probe, such as one past the pinned half of the
+ * budget, has no observation and is not judged. The result is sorted by code
+ * unit and unique, and each name passes {@link isMaintainerName}, the grammar
+ * a handoff's `seeded` and `evicted` are held to.
+ */
+export function judgedPins(observations: readonly PinObservation[]): string[] {
+  const judged = new Set<string>()
+  for (const { maintainer, cell, whole, names } of observations) {
+    if (!isMaintainerName(maintainer)) continue
+    if (cell !== 'redundant' && !(cell === 'paged' && whole)) continue
+    if (names.length === 0 || names.some(name => name.keywords.length === 0)) continue
+    judged.add(maintainer)
+  }
+  return [...judged].sort(compareStrings)
+}
+
+/**
  * What one keyword's publisher axis did in one run, reduced to the fields that
  * decide a WRITE. `npm-client.ts`'s `PublisherAxisReport` extends this with the
  * counters that are only ever printed.
@@ -728,37 +824,55 @@ export interface AxisOutcome {
   readonly keyword: string
   /**
    * Whether `seeded` is the keyword's WHOLE at-risk owner set, which is what
-   * licenses this run to remove a pin that `seeded` does not name.
+   * licenses this run to remove ANY pin that `seeded` does not name.
    *
    * True only when the keyword enumerated whole AND inside its window: every
    * name it has was paged, so a pin `seeded` omits has stopped being at risk
    * (an unpublish, or a package that gained a refinement keyword). It is false
-   * past the window — there `seeded` is only what the window sweep showed, and
-   * the owners this axis exists for are precisely the ones it cannot show —
-   * and false on a tolerated shortfall, where a handful of names went unseen
-   * and one of them may be a pinned owner's only at-risk package. That
-   * shortfall case is why this is not simply `!partitioned`: the cost of
-   * getting it wrong is a pin missing on the day the keyword crosses, which is
-   * the one day this whole mechanism exists for.
+   * past the window — there `seeded` is only what the window sweep showed, so
+   * its silence about an owner says nothing unless something else showed that
+   * owner's names — and false on a tolerated shortfall, where a handful of
+   * names went unseen and one of them may be a pinned owner's only at-risk
+   * package. That shortfall case is why this is not simply `!partitioned`: the
+   * cost of getting it wrong is a pin missing on the day the keyword crosses,
+   * which is the one day this whole mechanism exists for.
+   *
+   * False does not make the probe the only way out. Past the window a pin may
+   * also leave when this run {@link AxisOutcome.judged} it (design
+   * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
+   * §4.2). That is safe, though the sweep's silence about an unprobed owner is
+   * not, because a probed pin's OWN cell shows every name its owner holds
+   * under the keyword, so seeding's verdict on that owner is complete. A pin
+   * no probe judged stays.
    */
   readonly seedingComplete: boolean
   /** At-risk owners observed this run, for the caller to pin. */
   readonly seeded: readonly string[]
   /** Pinned maintainers evicted this run: their cell answered zero. */
   readonly evicted: readonly string[]
+  /**
+   * Pinned maintainers this run judged — see {@link judgedPins} for the rule.
+   * A pin named here that `seeded` does not name is released, which is the exit
+   * the window leaves open (design
+   * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
+   * §4.2). A name that is not pinned is ignored. One also in `evicted` is
+   * never released: either its eviction applies, or the cap refuses it as
+   * suspect and the pin stays.
+   */
+  readonly judged: readonly string[]
   /** Vocabulary positions the rotation walked — see {@link advanceCursor}. */
   readonly stepped: number
 }
 
 /**
- * The committed state after one keyword's axis report: evictions applied,
- * seeds pinned, cursor advanced. The whole per-report transition, in the pure
- * module, because every step of it is a policy decision.
+ * The committed state after one keyword's axis report: evictions and releases
+ * applied, seeds pinned, cursor advanced. The whole per-report transition, in
+ * the pure module, because every step of it is a policy decision.
  *
- * ORDER: evict, then pin. The reverse loses a maintainer that both lists name
- * — `seeded`'s `atRiskOwners` half reads this run's own harvest, so it can
- * name a maintainer whose `maintainer:` probe answered zero (a lagging search
- * index, a rename, a scoped package whose `maintainers` array and the
+ * ORDER: evict, release, then pin. The reverse loses a maintainer that both
+ * lists name — `seeded`'s `atRiskOwners` half reads this run's own harvest, so
+ * it can name a maintainer whose `maintainer:` probe answered zero (a lagging
+ * search index, a rename, a scoped package whose `maintainers` array and the
  * `maintainer:` qualifier disagree). Pinning first lets the probe win over
  * direct evidence, and because `atRiskOwners` is recomputed from scratch every
  * run the two then alternate forever: pinned on odd runs, evicted on even
@@ -766,17 +880,30 @@ export interface AxisOutcome {
  * probed on only half of all runs. Evicting first lets the harvest win, which
  * is the evidence that cannot be a transient index answer. It also lets a
  * freed slot be reused in the SAME run: at the bound, pinning first refuses
- * new residue owners while dead pins still hold the set.
+ * new residue owners while dead pins still hold the set. A release frees a
+ * slot the same way, and a set that is FULL of owners seeding no longer names
+ * is where that matters most.
  *
  * `refused` is what `pinFor` could not take because the set is at {@link
  * MAX_PINNED_PER_KEYWORD} — returned rather than inferred later, because the
  * caller's report is built before this runs and a bound reported from the
  * PRIOR set names the failure one run after it first happened, without ever
  * naming how many owners it cost.
+ *
+ * `released` is what left because `seeded` did not name it: on complete
+ * seeding, any pin it omits; past the window, a pin it omits that this run
+ * judged. A pin the report lists as evicted is never counted here, whether the
+ * eviction applied or the cap refused it. Neither the rule nor the count is
+ * bounded by {@link MAX_EVICTIONS_PER_RUN}, which guards a registry answering
+ * zero for real cells and cannot be triggered through this exit, because a
+ * zero total is never judged. The first run to pass would release most of a
+ * full set, and a bound that small would keep it full for weeks
+ * (design `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
+ * §4.2).
  */
 export function applyAxisReport(
   state: PublisherState, outcome: AxisOutcome,
-): { state: PublisherState; refused: string[]; evictionsRefused: number } {
+): { state: PublisherState; refused: string[]; evictionsRefused: number; released: string[] } {
   // All or nothing, and nothing past the cap: half a suspect eviction list is
   // no safer than all of it, and applying the first 8 of 200 would turn a
   // registry fault into a silent partial one. Enforced here rather than where
@@ -785,23 +912,40 @@ export function applyAxisReport(
   const evicted = outcome.evicted.length > MAX_EVICTIONS_PER_RUN ? [] : outcome.evicted
   const evictionsRefused = outcome.evicted.length > MAX_EVICTIONS_PER_RUN ? outcome.evicted.length : 0
   const keep = new Set(outcome.seeded)
+  const judged = new Set(outcome.judged)
+  const answeredZero = new Set(outcome.evicted)
   // With complete seeding a pin `seeded` does not name is an owner that has
   // stopped being at risk. Without this second exit the pinned set of a
   // keyword that has not yet crossed is MONOTONE: entry runs every run, while
   // the probe exit is `selectPublisherCells`'s alone and that only runs once
   // the keyword partitions. It would climb to the bound and then report itself
   // FULL about a set nothing had ever probed.
-  const stale = outcome.seedingComplete
-    ? [...evicted, ...(state.pinned?.[outcome.keyword] ?? []).filter(user => !keep.has(user))]
-    : evicted
-  let next = unpinFor(state, outcome.keyword, stale)
+  //
+  // Past the window there is a third: a pin this run JUDGED and `seeded` does
+  // not name. The sweep's silence about an unprobed owner proves nothing, but a
+  // judged pin's own cell showed every name its owner holds under the keyword,
+  // so the silence about it is an answer. Without this exit a set the feed-aware
+  // seeding rule has left holding owners it no longer names stays FULL for good
+  // and refuses the owners it should hold.
+  //
+  // Neither exit takes a pin the report lists as evicted, the ones the cap just
+  // refused included: `answeredZero` is the raw list, not `evicted`. A refusal
+  // says those zero answers are not to be trusted, and that distrust has to
+  // reach these exits too, because a pin the report also lists as judged, or
+  // that complete seeding does not name, would otherwise leave through them
+  // although its eviction was refused. The eviction owns such a pin, applied
+  // or not.
+  const released =(state.pinned?.[outcome.keyword] ?? [])
+    .filter(user => !keep.has(user) && !answeredZero.has(user) && (outcome.seedingComplete || judged.has(user)))
+    .sort(compareStrings)
+  let next = unpinFor(state, outcome.keyword, [...evicted, ...released])
   next = pinFor(next, outcome.keyword, outcome.seeded)
   const pinnedNow = new Set(next.pinned?.[outcome.keyword] ?? [])
   // Only names the bound could have taken: one outside the grammar was never a
   // candidate, and reporting it as refused would send a reader looking for a
   // full set that is not there.
   const refused = outcome.seeded.filter(user => isMaintainerName(user) && !pinnedNow.has(user))
-  return { state: advanceCursor(next, outcome.keyword, outcome.stepped), refused, evictionsRefused }
+  return { state: advanceCursor(next, outcome.keyword, outcome.stepped), refused, evictionsRefused, released }
 }
 
 /**
