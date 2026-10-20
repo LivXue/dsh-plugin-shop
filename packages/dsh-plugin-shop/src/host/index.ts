@@ -750,6 +750,19 @@ export class ShopGateway extends TypertRemoteService {
     return asPluginManager((this.ctx as { get?: (name: string) => unknown }).get?.('pluginManager'))
   }
 
+  /** Whether the running harness's profile reconcile replaces a running
+   * plugin whose files changed on disk: dsh-hmr 0.2.1's `reconcileProfile`,
+   * absent on 0.1.7 and 0.2.0 (whose hmr has only
+   * `reconcileProfilePatches`) and on 0.1.5 (no hmr service). Read for what
+   * `managerOutcome` makes of an `applied` answer on a name this process
+   * imported (design 2026-10-19-dsh-021-readiness §2). A harness that offers
+   * no service, or one without the method, answers false and keeps the
+   * restart. */
+  private reconcilesRunningPlugins(): boolean {
+    const service = (this.ctx as { get?: (name: string) => unknown }).get?.('hmr')
+    return typeof (service as { reconcileProfile?: unknown } | null | undefined)?.reconcileProfile === 'function'
+  }
+
   /** "Does this installation provide `spec`?", asked from `anchor`: the
    * harness's own resolution in front of the walk where the harness has one,
    * the walk alone where it has not. */
@@ -1686,7 +1699,11 @@ export class ShopGateway extends TypertRemoteService {
    * profile, whether it is the desktop one, and the deadline a timeout
    * detail names. */
   private outcomeContext(name: string, operation: OutcomeContext['operation'], alreadyImported: boolean, hasClientHalf: boolean): OutcomeContext {
-    return { profile: this.profile, name, operation, alreadyImported, hasClientHalf, desktop: isDesktopProfile(this.profile), timeoutMs: INSTALL_TIMEOUT_MS }
+    return {
+      profile: this.profile, name, operation, alreadyImported, hasClientHalf,
+      reconcilesRunningPlugins: this.reconcilesRunningPlugins(),
+      desktop: isDesktopProfile(this.profile), timeoutMs: INSTALL_TIMEOUT_MS,
+    }
   }
 
   /**

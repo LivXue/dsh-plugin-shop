@@ -57,10 +57,45 @@ package only when it equals that package's saved spec. So an update of a github
 entry to a new commit passes this guard. It then goes on through
 `installBundle`'s `publishAndReload` (`lib/index.js:2093-2094`), and so through
 dsh-hmr's `reconcileProfile` (below), where 0.2.0-rc.2's `installBundle`
-answered `restart-required` for an installed name (`lib/index.js:1801`). The
-shop still reports a restart with reason `already-loaded`, by
-`managerOutcome`'s rule for a name this process imported, but the new code may
-already be live. This was read from the source on 2026-10-19, not measured.
+answered `restart-required` for an installed name (`lib/index.js:1801`).
+
+**Measured 2026-10-20** for a release-rescued entry (a tarball URL, which the
+guard reads the way it reads a `github:` spec), on 0.2.1-rc.2 with 0.2.0-rc.2
+as the control: dsh answers `{"stage":"enable",…,"changed":true,
+"application":"applied",…,"version":"2.0.0","warnings":[]}` — `applied`, no
+`restartReason` — and the new code is live at once: the running 1.0.0 disposed
+at +1.8 s and 2.0.0 applied at +2.0 s. The shop read that answer as a restart
+with reason `already-loaded`, by `managerOutcome`'s rule for a name this
+process imported, and told the reader to restart. That notice was false.
+
+**Why the answer means what it means.** dsh-plugin-manager 0.2.1's `change`
+starts a result at `applied`, and `reload` returns
+`{ warnings, restartReason }` from `hmr.reconcileProfile`, whose reason is a
+profile-wide `restartReason` or the first pending entry's; `change` then
+rewrites `applied` to `restart-required` whenever it got one
+(`lib/index.js:2373-2398`). So an `applied` answer from a harness whose
+`hmr` has `reconcileProfile` says the reconcile left nothing pending: the
+running plugin was replaced, or nothing was running to replace. 0.1.7 and
+0.2.0 have the hmr service without that method (`reconcileProfilePatches`
+only), and 0.1.5 has no hmr at all: there an `applied` answer still means the
+module Node cached is the one running, which is the measured O1 of the
+market-borrowings design.
+
+**Decision (2026-10-20).** `OutcomeContext` gains
+`reconcilesRunningPlugins`, read from the running harness's `hmr` service
+(`typeof hmr.reconcileProfile === 'function'`), and `managerOutcome` keeps its
+restart with reason `already-loaded` for an `applied` answer on a name this
+process imported only when that is false. Where it is true the answer falls
+through to the live/reload rule every other `applied` answer gets. The
+capability is read, never the version. `overridden` keeps the restart: it
+comes from `setPluginEnabled` and says a higher layer decides whether the
+change runs, not that the new code is running.
+
+**Still open.** The shop's own self-update passes the capability through
+unchanged (`startManagerInstall`'s call reads whatever the harness has), and
+on 0.2.1 it does not reach this path at all: the manager refuses it
+`already-installed` and the record continues through the CLI, whose update of
+`file:` specs leaves the shop unavailable until a restart (§2, below).
 
 **Effect.** Every update of an npm entry from the shop's Updatable section, and
 the shop's own self-update, failed on 0.2.1-rc.2 with "dsh refused the update

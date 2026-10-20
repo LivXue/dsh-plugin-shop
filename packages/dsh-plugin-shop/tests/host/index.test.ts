@@ -4088,13 +4088,16 @@ describe("installs and updates through dsh's pluginManager", () => {
     entries?: CatalogEntry[]
     rejectsWith?: Error
     vanishes?: boolean
+    /** Serve an `hmr` service whose `reconcileProfile` makes this harness one
+     * that replaces running plugins at a reconcile (dsh 0.2.1's dsh-hmr). */
+    reconciles?: boolean
     cli?: (dir: string) => string
     restart?: Pick<ShopGatewayOptions, 'exit' | 'restartParentPid' | 'restartExitDelayMs' | 'restartArgv' | 'platform'>
   } = {}): { gateway: ShopGateway; calls: unknown[][]; profileDir: string; cacheDir: string; cliDir: string; emit: (event: string, payload: unknown) => void } {
     const {
       dependencies = {}, profile = 'web', lands = true, hangs = false, importedModules = new Set<string>(),
       output = (spec: string) => [{ stream: 'stdout', text: `+ ${spec}\n` }], prefetcher = fixturePrefetcher(), pinFs, entries = [], rejectsWith,
-      vanishes = false, cli = (dir: string) => fakeDshRecording(dir, 0, { silent: true }), restart = {},
+      vanishes = false, reconciles = false, cli = (dir: string) => fakeDshRecording(dir, 0, { silent: true }), restart = {},
     } = options
     const profileDir = toggleProfile()
     writeManifest(profileDir, dependencies)
@@ -4143,6 +4146,7 @@ describe("installs and updates through dsh's pluginManager", () => {
     let served = false
     const ctx = {
       get: (name: string) => {
+        if (name === 'hmr') return reconciles ? { reconcileProfile: async () => ({ warnings: [], pending: [] }) } : undefined
         if (name !== 'pluginManager' || (vanishes && served)) return undefined
         served = true
         return service
@@ -4203,6 +4207,20 @@ describe("installs and updates through dsh's pluginManager", () => {
     const started = await gateway.install({ name: 'dsh-managed', version: '1.0.0', acknowledged: true })
     if (!started.ok) throw new Error(started.detail)
     expect(await finish(gateway, started.installId)).toMatchObject({ state: 'done', activation: 'restart', restartReason: 'already-loaded' })
+  })
+
+  it('reads an update dsh applied as already running where its hmr reconciles the profile', async () => {
+    // dsh 0.2.1 (design 2026-10-19-dsh-021-readiness §2): a github or
+    // release-rescued update passes dsh's already-installed guard, runs
+    // through publishAndReload -> hmr.reconcileProfile, and answers `applied`
+    // with nothing pending — so the new code is running, and the restart the
+    // shop used to print for it was false (measured 2026-10-20).
+    const { gateway } = managedGateway(applied, { dependencies: { 'dsh-managed': '0.9.0' }, reconciles: true })
+    const started = await gateway.install({ name: 'dsh-managed', version: '1.0.0', acknowledged: true })
+    if (!started.ok) throw new Error(started.detail)
+    const status = await finish(gateway, started.installId)
+    expect(status).toMatchObject({ state: 'done', activation: 'live' })
+    expect(status.restartReason).toBeUndefined()
   })
 
   it('updates the shop itself through installBundle', async () => {
