@@ -294,19 +294,28 @@ describe('a window is enumerated whole, or the harvest stops', () => {
    * the count never moves and the re-probe cannot absorb anything.
    */
   function pagingStub(
-    countFor: (query: string) => number,
+    countFor: (query: string, paging: number) => number,
     itemsFor: (query: string, paging: number) => readonly unknown[],
+    // What the `per_page=1` probes answer, numbered from 1 per query: the
+    // partition's own probe, then the re-probe. Defaults to the pages' count,
+    // which ties the two; a window whose count moves between its probe and its
+    // pages needs them apart (PR #107 review).
+    probeCountFor?: (query: string, probe: number) => number,
   ): { fetchImpl: typeof fetch; pagings: (query: string) => number } {
     const started = new Map<string, number>()
+    const probed = new Map<string, number>()
     const fetchImpl = (async (url: string | URL) => {
       const search = new URL(String(url))
       const query = search.searchParams.get('q') ?? ''
-      const total = countFor(query)
       if (search.searchParams.get('per_page') === '1') {
-        return new Response(JSON.stringify({ total_count: total }), { status: 200 })
+        const probe = (probed.get(query) ?? 0) + 1
+        probed.set(query, probe)
+        const counted = probeCountFor === undefined ? countFor(query, started.get(query) ?? 1) : probeCountFor(query, probe)
+        return new Response(JSON.stringify({ total_count: counted }), { status: 200 })
       }
       const page = Number(search.searchParams.get('page') ?? '1')
       if (page === 1) started.set(query, (started.get(query) ?? 0) + 1)
+      const total = countFor(query, started.get(query) ?? 1)
       const items = itemsFor(query, started.get(query) ?? 1)
       const start = (page - 1) * SEARCH_PAGE_SIZE
       return new Response(
@@ -360,6 +369,46 @@ describe('a window is enumerated whole, or the harvest stops', () => {
     )
     await expect(searchReposByTopic(fetchImpl, sleep, 'token'))
       .rejects.toThrow(/enumerated 249 of 250 .*two pagings served 249 and 248/)
+  })
+
+  it('tolerates a phantom in a window its tenth page ends, instead of asking for an eleventh', async () => {
+    // Measured 2026-10-20: `topic:deepseek-harness stars:>=1
+    // created:2026-10-04..2026-11-04` counted 928 and served 927, one page
+    // short on every paging. Ten pages are all the 1,000-result cap serves, so
+    // the paging asked for an eleventh and threw that the window had grown
+    // past the cap, which it had not, before the phantom check below it could
+    // run: every build failed on it. A phantom in a window of 900 or fewer
+    // ends on an empty page instead, the 251/250 case above.
+    const items = repoItems(927)
+    const { fetchImpl, pagings } = pagingStub(
+      query => (dshPlugin(query) ? 928 : 0),
+      query => (dshPlugin(query) ? items : []),
+    )
+    const { seen, phantoms } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    expect(seen).toHaveLength(927)
+    expect(phantoms).toEqual([{ query: 'topic:dsh-plugin', counted: 928, served: 927 }])
+    expect(pagings('topic:dsh-plugin')).toBe(2)
+  })
+
+  it('pages a window again when its pages answer more than its probe counted', async () => {
+    // PR #107 review: coverage was measured against the partition's probe
+    // alone. Once a window ending at its tenth page stopped throwing, one
+    // that grew between its probe and its pages could clear the probe's
+    // smaller count with a repository unserved, and that one published
+    // repo-gone. The probe counts 928; the pages answer 930; the first paging
+    // serves 929 of the 930 and the second every one.
+    const items = repoItems(930)
+    const unserved = items[500] as { full_name: string }
+    const { fetchImpl, pagings } = pagingStub(
+      query => (dshPlugin(query) ? 930 : 0),
+      (query, paging) => (dshPlugin(query) ? (paging === 1 ? items.filter(item => item !== unserved) : items) : []),
+      (query, probe) => (dshPlugin(query) ? (probe === 1 ? 928 : 930) : 0),
+    )
+    const { seen, phantoms } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    expect(seen.map(entry => entry.repo)).toContain(unserved.full_name)
+    expect(seen).toHaveLength(930)
+    expect(phantoms).toEqual([])
+    expect(pagings('topic:dsh-plugin')).toBe(2)
   })
 
   it('tolerates a run total at the allowance and throws one past it', async () => {

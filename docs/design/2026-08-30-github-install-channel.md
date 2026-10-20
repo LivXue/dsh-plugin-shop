@@ -128,6 +128,20 @@ repository the search does not serve is not harvested either way: one the
 state still records publishes `repo-gone`, and is fetched again whenever the
 search serves it again.
 
+**Amendment (2026-10-20): the check reaches a window of 901 to 1,000.** On
+2026-10-20 `topic:deepseek-harness stars:>=1 created:2026-10-04..2026-11-04`
+counted 928 and served 927, its sixth page one row short on every paging. Ten pages are every row the
+1,000-result cap serves, so the paging asked for an eleventh and threw that
+the window had grown past the cap, which it had not, before the check above
+could run; the day's build failed on it. A paging that has read ten pages now
+stops there when the window answers within the cap, and the check decides
+what it is short of, as it does when a smaller window ends on an empty page.
+Only a window answering more than the cap still throws as outgrown. The check
+measures a paging against the higher of the window's probe and the total its
+own pages answered, so a window that grew between the two cannot clear the
+probe's smaller count with a repository unserved; the re-probe lowers that
+floor only when the window shrank since.
+
 ## 4. Gate — the anti-80%
 
 Every candidate repository passes through, in order, each failure producing an
