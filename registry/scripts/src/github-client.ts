@@ -682,19 +682,31 @@ export async function searchReposByTopic(
       // Parsed plus skipped: an item we could not read still occupies a slot,
       // and counting only the parsed ones is precisely what let one `null`
       // item end a 250-repository window after 99 of them.
-      const pageWindow = async (): Promise<{ enumerated: number; names: Set<string> }> => {
+      const pageWindow = async (): Promise<{ enumerated: number; names: Set<string>; answered: number }> => {
         let enumerated = 0
+        let answered = probed
         const names = new Set<string>()
         for (let page = 1; ; page += 1) {
           if (page > MAX_SEARCH_PAGES) {
-            // The window outgrew the cap between its probe and its pages. The
-            // old bound stopped here in silence and published the first 1,000 —
-            // the same defect as the short-page break, one line down.
-            throw new Error(
-              `github search for ${query} needs page ${page}, past the ${MAX_SEARCH_PAGES} pages the ${GITHUB_SEARCH_CAP}-result cap allows: it enumerated ${enumerated} of ${probed} measured at partition time, so the window has grown past the cap since and the partition is stale`,
-            )
+            // Ten pages are every row the cap serves. A window still answering
+            // more than the cap outgrew it between its probe and its pages; the
+            // old bound stopped here in silence and published the first 1,000,
+            // the same defect as the short-page break below.
+            if (answered > GITHUB_SEARCH_CAP) {
+              throw new Error(
+                `github search for ${query} needs page ${page}, past the ${MAX_SEARCH_PAGES} pages the ${GITHUB_SEARCH_CAP}-result cap allows: it enumerated ${enumerated} of the ${answered} it now answers, ${probed} at partition time, so the window has grown past the cap since and the partition is stale`,
+              )
+            }
+            // One answering within the cap has served every row it will, and
+            // the coverage check below decides what it is short of, as it does
+            // for a smaller window. A window of 901 to 1,000 holding an index
+            // phantom ends here, its tenth page one row short (measured
+            // 2026-10-20: counted 928, served 927); in a smaller window the
+            // same phantom ends on an empty page instead.
+            break
           }
           const { metas, skipped, total } = await searchPage(query, page, fetchImpl, sleep, token)
+          answered = total
           for (const meta of metas) {
             names.add(meta.fullName)
             if (!byName.has(meta.fullName)) byName.set(meta.fullName, meta)
@@ -706,10 +718,14 @@ export async function searchReposByTopic(
           // coverage check below is what decides whether that is acceptable.
           if (metas.length + skipped === 0 || enumerated >= total) break
         }
-        return { enumerated, names }
+        return { enumerated, names, answered }
       }
       const first = await pageWindow()
-      if (first.enumerated < probed) {
+      // Against the higher of the probe's count and what the pages answered:
+      // a window that grew between the two would otherwise clear the probe's
+      // smaller, stale count with a repository unserved (PR #107 review).
+      const floor = Math.max(probed, first.answered)
+      if (first.enumerated < floor) {
         // Safe by CHECK, the shape searchByKeywords uses on the npm half, and
         // for the same reason: the API has no way to prove a window was read
         // whole. The re-probe absorbs churn — these windows are `stars:0` and
@@ -718,7 +734,10 @@ export async function searchReposByTopic(
         // ordinary day, not a broken harvest. It is paid for ONLY on the
         // shortfall path, so a healthy run costs no extra request.
         const after = await probeTotal(query, fetchImpl, sleep, token)
-        const required = Math.min(probed, after)
+        // The re-probe lowers the floor only when the window shrank since: a
+        // repository that left mid-run is not one the pages could serve. It
+        // never takes the floor below the pages' own answer otherwise.
+        const required = Math.min(floor, after)
         if (first.enumerated < required) {
           // Still short against a count that did not move: page it once more.
           // Its repositories are already in `byName`, so a first paging that
