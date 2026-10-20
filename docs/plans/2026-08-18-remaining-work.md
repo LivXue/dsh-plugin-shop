@@ -160,7 +160,13 @@ These block a real launch, not the code.
       beta is promoted: such a spec passes the already-installed guard, and
       the reconcile after it may make the new code live before the restart
       the shop reports (§2). A tarball URL from the local registry passes
-      the guard the way a github spec does, so it can be measured offline;
+      the guard the way a github spec does, so it can be measured offline.
+      → **Measured 2026-10-20, and fixed:** `applied` with no
+      `restartReason`, new code live at +2.0 s; the shop's restart notice
+      was false and `managerOutcome` now reads `applied` as already running
+      where the harness's `hmr` provides `reconcileProfile` (0.2.1 on;
+      0.1.7 and 0.2.0 keep the restart). The fix goes to the beta after
+      0.9.0-beta.2 (§2 has the measurement);
     - a shop installed with `file:` stops answering after a continued
       self-update and a reconcile before the restart (§2);
     - on the desktop profile the shop's own self-update fails with "uninstall

@@ -37,7 +37,7 @@ describe('asPluginManager', () => {
 
 const context: OutcomeContext = {
   profile: 'web', name: 'dsh-managed', operation: 'install',
-  alreadyImported: false, hasClientHalf: false, desktop: false, timeoutMs: 900_000,
+  alreadyImported: false, reconcilesRunningPlugins: false, hasClientHalf: false, desktop: false, timeoutMs: 900_000,
 }
 const desktop: OutcomeContext = { ...context, profile: 'desktop', desktop: true }
 const applied = { changed: true, application: 'applied', stage: 'enable', target: 'dsh-managed', enabled: true, bundle: 'dsh-managed', registries: [null], warnings: [] }
@@ -358,6 +358,38 @@ describe('managerOutcome', () => {
     // new entry ran the module Node had cached. The rule stays.
     expect(managerOutcome(applied, { ...context, alreadyImported: true }))
       .toEqual({ state: 'done', activation: 'restart', restartReason: 'already-loaded' })
+  })
+
+  it('reads an applied update as already running on a harness whose reconcile replaces the plugin', () => {
+    // dsh-hmr 0.2.1's `reconcileProfile` replaces a running plugin whose
+    // files changed on disk, and dsh-plugin-manager 0.2.1 rewrites `applied`
+    // to `restart-required` whenever that reconcile leaves anything pending
+    // (lib/index.js:2388). So on such a harness `applied` says the new code
+    // is already running: measured 2026-10-20 for a release-rescued tarball
+    // update, 1.0.0 disposed at +1.8 s and 2.0.0 applied at +2.0 s. The
+    // restart notice the shop used to print there was false.
+    expect(managerOutcome(applied, { ...context, operation: 'update', alreadyImported: true, reconcilesRunningPlugins: true }))
+      .toEqual({ state: 'done', activation: 'live' })
+    expect(managerOutcome(applied, { ...context, operation: 'update', alreadyImported: true, reconcilesRunningPlugins: true, hasClientHalf: true }))
+      .toEqual({ state: 'done', activation: 'reload' })
+  })
+
+  it('reads an applied reinstall as already running only where the reconcile replaces it', () => {
+    // The same answer arrives for a fresh install of a name this process
+    // imported before (installed, uninstalled, installed again, all in one
+    // session) — and on 0.2.1 reconcileProfile evicts a removed package's
+    // modules, so the reinstall imports the new files rather than Node's
+    // cached ones.
+    expect(managerOutcome(applied, { ...context, alreadyImported: true, reconcilesRunningPlugins: true }))
+      .toEqual({ state: 'done', activation: 'live' })
+  })
+
+  it('keeps the restart for an overridden answer, whatever the harness reconciles', () => {
+    // `overridden` comes from setPluginEnabled, which no install or update
+    // produces, and says a higher layer decides whether the change runs at
+    // all. Nothing here claims the new code is live.
+    expect(managerOutcome({ ...applied, application: 'overridden' }, { ...context, operation: 'update', alreadyImported: true, reconcilesRunningPlugins: true }))
+      .toEqual({ state: 'done', activation: 'restart', restartReason: 'already-loaded', detail: 'Saved, but a higher-priority layer (the home or invocation patch) decides whether it runs.' })
   })
 
   it('fails loudly on an application it does not know', () => {

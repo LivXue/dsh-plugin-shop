@@ -219,6 +219,11 @@ export interface OutcomeContext {
   operation: 'install' | 'update' | 'uninstall'
   /** The gateway's `imported` record holds the name (market borrowings section 1). */
   alreadyImported: boolean
+  /** Whether the running harness replaces a running plugin whose files
+   * changed on disk at a profile reconcile — dsh-hmr 0.2.1's
+   * `reconcileProfile`. False through 0.2.0, whose hmr has only
+   * `reconcileProfilePatches`, and on 0.1.5, which has no hmr service. */
+  reconcilesRunningPlugins: boolean
   hasClientHalf: boolean
   /** The desktop profile, whose readers can run no `dsh plugin` command. */
   desktop: boolean
@@ -458,7 +463,18 @@ function outcomeByRule(change: ManagerChange, context: OutcomeContext): ManagerO
     const note = change.application === 'overridden'
       ? { detail: 'Saved, but a higher-priority layer (the home or invocation patch) decides whether it runs.' }
       : {}
-    if (context.operation !== 'uninstall' && context.alreadyImported) {
+    // On a harness whose reconcile replaces a running plugin (dsh 0.2.1's
+    // dsh-hmr `reconcileProfile`), an `applied` answer says it already has:
+    // dsh-plugin-manager 0.2.1 rewrites `applied` to `restart-required`
+    // whenever that reconcile leaves anything pending (lib/index.js:2388), so
+    // `applied` and `alreadyImported` together say the new code is running.
+    // Measured 2026-10-20 for a release-rescued tarball update: the running
+    // 1.0.0 was disposed at +1.8 s and 2.0.0 applied at +2.0 s. `overridden`
+    // keeps the restart: it comes from setPluginEnabled and says a higher
+    // layer decides whether the change runs at all. Through 0.2.0, and on
+    // 0.1.7, an `applied` answer still means Node's cached old module runs.
+    if (context.operation !== 'uninstall' && context.alreadyImported
+      && !(change.application === 'applied' && context.reconcilesRunningPlugins)) {
       return { state: 'done', activation: 'restart', restartReason: 'already-loaded', ...note }
     }
     return {
