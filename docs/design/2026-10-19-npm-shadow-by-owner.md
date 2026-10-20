@@ -10,7 +10,12 @@ change:
 - the four places `2026-08-30-github-install-channel.md` states that
   rule (§6);
 - the "npm shadows GitHub" bullet of
-  `docs/superpowers/specs/2026-08-26-llm-categorization-design.md` (§6).
+  `docs/superpowers/specs/2026-08-26-llm-categorization-design.md` (§6);
+- the "npm-published subpackages" bullet of `2026-08-31-hub-borrowings.md`
+  (§6);
+- the **Channel moves** risk of `2026-10-04-change-feed-harvest.md` (§6);
+- the code pointer `2026-10-08-archived-flag-and-shadowed-recovery.md` gives
+  for the refusal, which this change moves (§6).
 
 English only, per convention.
 
@@ -26,14 +31,14 @@ Every figure below was measured on 2026-10-19 against these sources:
 
 ## 1. Why
 
-**The rule.** `selectEntries` (`pipeline.ts:207-235`) collects the bundle
-names of the ACCEPTED npm packages. It refuses every repository candidate
+**The rule.** `selectEntries` (`pipeline.ts:207-235` at `cf44ee5`) collects
+the bundle names of the ACCEPTED npm packages. It refuses every repository candidate
 whose bundle name is among them, as `shadowed-by-npm`, with one detail:
 
 > The npm package X is already listed; the repository is not listed
 > separately.
 
-`selectPending` (`classify-select.ts:54-73`) mirrors the rule.
+`selectPending` (`classify-select.ts:54-73` at `cf44ee5`) mirrors the rule.
 
 The channel design chose this rule for one project published on both
 channels: "real semver beats a commit pin". It never considered two projects
@@ -139,15 +144,15 @@ What follows from it:
   The line is a string comparison: the login the package's `repository`
   was written with, against the one the GitHub search returned for the
   candidate. GitHub follows a renamed repository, a transferred one and a
-  renamed account, and a string does not, so each of them breaks the line.
+  renamed account, and a string does not. Only the last two break the line.
   Measured against GitHub's API on 2026-10-19:
-  - A rename keeps the owner, so the row stays hidden, under the same-owner
-    detail. 21 of the 47 same-owner rows (18 of their 44 repositories) are
-    the candidate itself under an earlier name, such as
+  - A rename keeps the owner, so the line holds and the row stays hidden,
+    under the same-owner detail. 21 of the 47 same-owner rows (18 of their
+    44 repositories) are the candidate itself under an earlier name, such as
     `huaxiren6/dsh-email-reader`, now `huaxiren6/DSH-EmailReader`.
-  - A transfer or an account rename changes the owner, so the npm package's
-    own repository reads as another owner's. 28 of the 1,306 other-owner
-    rows are this case. 16 pass the gate and are listed beside their own
+  - A transfer or an account rename changes the owner, so the line breaks:
+    the npm package's own repository reads as another owner's. 28 of the
+    1,306 other-owner rows are this case. 16 pass the gate and are listed beside their own
     npm package, a second card for one project, among them `QIN-SMART/*`,
     now `DEVbyQIN/*` (4 rows), and `acryldev/*`, now `cordisplugins/*` (3
     rows). The other 12 are refused for their own reasons.
@@ -155,10 +160,12 @@ What follows from it:
   Resolving them is not built (§9).
 - **An impersonator is listed too.** Any other owner's same-named
   repository that passes the gate is now listed beside the npm package. The
-  only defence against impersonation is the verified-name hold:
+  only preventive defence against impersonation is the verified-name hold:
   `repo-gate.ts` probes every verified bundle name and holds even an exact
-  match (distance 0), and `verified.yml` is empty by design. This is the
-  same exposure the 304 names already shared by github entries have.
+  match (distance 0), and `verified.yml` is empty by design. After the fact,
+  a `denied.yml` row naming the repository delists it, as it delists any
+  github entry. This is the same exposure the 304 names already shared by
+  github entries have.
 
 ## 3. What the report says
 
@@ -178,10 +185,10 @@ whenever that `owner/name` is not this one's.
   string cannot tell the two apart, and 21 of the 47 rows name this
   repository under an earlier name (§2).
 - **Its repository is not a plain GitHub URL.** "The npm package X is already
-  listed, and the repository it names is not a
-  `https://github.com/<owner>/<name>` URL, so this repository cannot be told
-  apart from it and is not listed separately. If it is a different plugin, a
-  package name of its own has it judged on its own."
+  listed, and the repository it names is not a plain
+  https://github.com/owner/name URL, so this repository cannot be told apart
+  from it and is not listed separately. If it is a different plugin, giving
+  it a package name of its own lets the catalog judge it on its own."
 
 The wording is the builder's, within those facts. Every variant keeps
 "already listed" and the npm package's name.
@@ -206,10 +213,34 @@ So the rule is one exported pure function, and both call it:
 - `selectPending` reads its verdict;
 - `selectEntries` reads its verdict and its detail.
 
-The builder chooses where it lives and what it is called.
+The builder chooses where it lives and what it is called. Both readers also
+build the map it reads, each accepted npm package's name to the repository
+it declares, with one function (`acceptedNpmRepositories`), so a change to
+how that map is built reaches both.
+
+**Same rule, not the same snapshot.** One function gives a candidate the
+same verdict in both readers. It does not give both readers the same
+candidates. The classifier reads the committed `repo-state.json`, one build
+behind the harvest the build gates (`selectPending`'s docstring). A
+repository that changed between the two snapshots is judged by the build
+first and by the classifier on the next run. Under the old rule a changed
+bundle name did that. This rule also reads the owner, so a transfer or an
+account rename does too. For that one build:
+
+- a repository the build now lists has its name classified on the next run,
+  and reads `other` until then if the name has no category row;
+- a repository the build now hides keeps its name's row, or has it asked
+  for, one run longer.
+
+That is the "unclassified, retried next build" state D4 defines, which every
+newly harvested repository already spends one build in, and the next run
+ends it. harness-compatibility §9.8's disagreement recurred on every run.
+Giving the classifier the build's own GitHub harvest would close the lag at
+the price `selectPending`'s docstring declines: GitHub requests in the
+classify step, which could advance the harvest state.
 
 **What the classifier sees.** A newly listed derived entry shares its bundle
-name's category row (`gate.ts:398` and `repo-gate.ts:272` key by name).
+name's category row (`gate` and `gateRepo` look it up by bundle name).
 That is already true of the 304 names that two github entries share today.
 Measured, no newly listed name lacks a row, so the change asks the
 classifier nothing new.
@@ -225,10 +256,11 @@ the shop, not the catalog. So the released shops must already handle an npm
 entry and a github entry of one name, because the first such pair reaches
 them all at once.
 
-**From 0.8.0 on, they do.** The audit (2026-10-19) read two refs:
+**From 0.8.0 on, they do.** The audit (2026-10-19) read two refs, and the
+line numbers below are theirs:
 
-- `origin/main`, whose `src/host` and `src/shared` are byte-identical to
-  v0.8.7's, the npm `latest`;
+- `origin/main` at `cf44ee5`, whose `src/host` and `src/shared` are
+  byte-identical to v0.8.7's, the npm `latest`;
 - v0.8.5, for the install path.
 
 0.8.0 through 0.8.4 carry the same two identity commits (`6f2334a`,
@@ -268,6 +300,10 @@ found:
   well, so one `markets.yml` verdict or one denial covers both siblings. The
   repository gate also denies by bundle name.
 
+0.9.0-beta.2, on `beta` since 2026-10-20, changed `src/host` and `src/client`
+after the audit (dsh 0.2.1 support). §7's shop pins pass unchanged on its
+source, `6864aff`.
+
 **Before 0.8.0, they do not.** Consider the releases between the first that
 reads schema 5 (2026-08-31) and the identity commits. They address an
 install by name (`entries.find(e => e.name === args.name)`, read at
@@ -286,7 +322,7 @@ none exists:
 
 **Two edges, neither new with mixed sources.**
 
-- **"View in shop"** (0.9.0-beta.1 only) finds a card by name
+- **"View in shop"** (0.9.0-beta.1 and 0.9.0-beta.2 only) finds a card by name
   (`ShopDetailAction.tsx:90`).
   - With both siblings on the shelf, it only sets the search, which shows
     both.
@@ -330,7 +366,27 @@ day's newcomers sort above them.
   `docs/superpowers/specs/2026-08-26-llm-categorization-design.md`. Its "npm
   shadows GitHub" bullet no longer says every repository of an accepted npm
   name is skipped: only what `npmShadowOf` hides is, and another owner's
-  repository goes on to the gate.
+  repository goes on to the gate. It also says that the classifier applies
+  the rule to the committed snapshot, so a transfer or an account rename
+  waits one run (§4).
+- **The subpackage design**: `2026-08-31-hub-borrowings.md`. Its
+  "npm-published subpackages" bullet says the npm entry wins by bundle name.
+  It gains the same note: a subpackage of another owner's repository is
+  gated on its own and listed beside the npm entry if it passes, as
+  `pipeline.test.ts`'s "lists each subpackage of another owner's repository
+  beside the npm package" pins.
+- **The change-feed design**: `2026-10-04-change-feed-harvest.md`, its
+  **Channel moves** risk (:614-617). It expected a moved package's GitHub
+  entry to become `shadowed-by-npm`, and nothing else. That holds when the
+  npm package's `repository` names that repository or another of its
+  owner's. When it names another owner's, as after a transfer or an account
+  rename (28 rows on 2026-10-19, §2), the GitHub entry is listed beside the
+  package. The risk now says so, so that a dry run's diff showing such a pair
+  is not read as a regression.
+- **A pointer this change moves**:
+  `2026-10-08-archived-flag-and-shadowed-recovery.md` :149 cited
+  `pipeline.ts:227-231` for the refusal. It now names `npmShadowOf`, which
+  decides it, and `selectEntries`, which records the row.
 - **`gate.ts`'s A-2 comment** says an npm publisher would "shadow the
   verified repository". It now does so by naming that repository, or
   another of its owner's, as its source, or by declaring a `repository`
@@ -343,18 +399,24 @@ day's newcomers sort above them.
   parenthetical now says what the design is: npm wins over its own
   repository.
 - **Checked and still true:**
-  - `2026-10-04-change-feed-harvest.md` :132 and :616;
+  - `2026-10-04-change-feed-harvest.md` :132;
   - `2026-09-26-market-borrowings.md` :543;
+  - `2026-08-31-market-borrowings.md` :126-128, E11: it asserts that no two
+    entries share an install identity, and a same-name npm and github pair
+    does not;
   - the main design's :396;
   - `2026-10-08-archived-flag-and-shadowed-recovery.md`, whose recovery
-    still covers the installs §2 keeps hidden.
+    still covers the installs §2 keeps hidden. Its title for C10 (:7-8),
+    like `2026-09-26-market-borrowings.md` :350's, names the install an npm
+    package strands by shadowing it, which §2 still does for those.
 - **Nothing to change:** `docs/schema.md`, `CONTRIBUTING.md`, the READMEs and
   CLAUDE.md do not state the rule.
-- **Deferred to the next shop change.** Shop source is frozen on this branch
-  (`git diff cf44ee5..HEAD -- packages/dsh-plugin-shop/src` stays empty), so
-  three comments there on the §C10 recovery row keep the old rule until
-  then:
-  - `host/index.ts:322-326`, on `ShopInstalledEntry.shadowed`;
+- **Deferred to the next shop change.** Shop source is frozen on this branch:
+  its commits change nothing under `packages/dsh-plugin-shop/src`. So four
+  comments there on the §C10 recovery row keep the old rule until then
+  (lines as on `6864aff`):
+  - `host/index.ts:332-336`, on `ShopInstalledEntry.shadowed`;
+  - `host/index.ts:1959-1962`, on the uninstall path's shadowed-github arm;
   - `client/ShopTab.tsx:1342-1344`, on `ShadowedSection`;
   - `client/ShopTab.module.css:880-881`, on the shadowed badge.
 
@@ -384,9 +446,12 @@ Registry: the pure core, driven by fixtures.
 - **B-6** still holds: a rejected npm package hides nothing.
 - **`selectPending` agrees with `selectEntries`** on the same fixtures.
   Another owner's derived repository is live, and pending when its name has
-  no row. A hidden one is neither.
-- **Existing cases built on cross-owner pairs** — every npm fixture names a
-  `you/…` repository:
+  no row. A hidden one is neither. The fixtures are the same for both on
+  purpose: §4's lag comes from the inputs, not from the rule.
+- **`acceptedNpmRepositories`** maps each accepted package to the repository
+  it declares, unchanged.
+- **Existing cases built on cross-owner pairs** (lines as on `cf44ee5`) —
+  every npm fixture names a `you/…` repository:
   - `pipeline.test.ts:361` shadows `someone/dsh-repo-plugin` with npm
     `dsh-hello-plugin`;
   - `pipeline.test.ts:748` shadows `dave/monorepo`;
@@ -470,8 +535,19 @@ paths meets a pair.
     answer for.
   - It adds requests to a build whose GitHub half already runs against a
     budget.
-- **Reading `ssh://` and `github:` spellings in `githubOwnerName`.** That
-  would cover 10 of the 23 rows of §2's second case.
+- **Reading `ssh://` and `github:` spellings in `githubOwnerName`.** 11 of
+  the 23 rows of §2's second case carry one (7 `ssh://`, 4 `github:`), from
+  10 npm packages. The other 12 name another host.
+  - 10 of the 11 are the npm package's own repository. They stay hidden
+    either way, and only their detail would change.
+  - One is another owner's: `ventisyn/dsh-approval-gate`, behind the npm
+    package `dsh-approval-gate`, which declares
+    `github:moon09300731/dsh-approval-gate`. It passes the gate on its own,
+    so reading the spelling would list it, an issue #88 row like the 796.
+    It is not a GitHub fork, but it shares its root commit with
+    `moon09300731/dsh-approval-gate` and carries that history on (80
+    commits against 19 on 2026-10-20), so it would be listed as another
+    owner's copy, as the first bullet above already lists copies.
   - Its "no guesses" rule is shared with the stars sidecar and the denial
     check (spec 2026-08-26-github-stars-design.md §2.1).
   - Widening it is its own change, with its own effect on both.
