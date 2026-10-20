@@ -3,10 +3,10 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import {
-  MAINTAINER_MAX_LENGTH, MAX_PINNED_KEYWORDS, MAX_PINNED_PER_KEYWORD, MAX_PUBLISHERS, MIN_PROBE_BUDGET_PER_KEYWORD,
-  PublisherState, advanceCursor, allocateProbeBudgets, applyAxisReport, atRiskNameCount, atRiskOwners, cursorFor,
-  isMaintainerName, mergePublishers, parsePublisherState,
-  pinFor, probeOrder, retainPinned, serializePublisherState, unpinFor,
+  MAINTAINER_MAX_LENGTH, MAX_EVICTIONS_PER_RUN, MAX_PINNED_KEYWORDS, MAX_PINNED_PER_KEYWORD, MAX_PUBLISHERS,
+  MIN_PROBE_BUDGET_PER_KEYWORD, PinObservation, PublisherState, advanceCursor, allocateProbeBudgets, applyAxisReport,
+  atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, judgedPins, mergePublishers, parsePublisherState,
+  pinFor, probeOrder, retainPinned, seedableNames, serializePublisherState, unpinFor,
 } from '../src/publisher-state.ts'
 import { HARVEST_KEYWORDS, PUBLISHER_PROBE_BUDGET_DEFAULT } from '../src/npm-client.ts'
 
@@ -377,6 +377,24 @@ describe('atRiskNameCount', () => {
   })
 })
 
+describe('seedableNames', () => {
+  const A = { keywords: ['dsh-plugin'], maintainers: ['alice'] }
+  const B = { keywords: ['dsh-plugin'], maintainers: ['bob'] }
+
+  it('leaves out a name the change feed carries', () => {
+    // The feed credits a carrier whenever no search cell serves it, so a pin
+    // for its owner would buy nothing the feed does not already give. `carried`
+    // is name -> owner, as the feed's carriers are; only its keys are read.
+    expect(seedableNames(new Map([['a', A], ['b', B]]), new Map([['b', 'alice']]))).toEqual([A])
+  })
+
+  it('keeps every name when the feed carries none', () => {
+    // A run whose feed is unavailable has no carriers, so seeding reads what it
+    // read before the feed was asked.
+    expect(seedableNames(new Map([['a', A], ['b', B]]), new Set<string>())).toEqual([A, B])
+  })
+})
+
 describe('MAX_PINNED_PER_KEYWORD', () => {
   it('is half the probe budget, so everything stored can also be probed', () => {
     // Asserted as the relation, not the literal. Rotation's half is guaranteed
@@ -697,11 +715,76 @@ describe('the pinned map cannot grow without bound or keep a key nothing uses', 
   })
 })
 
+describe('judgedPins', () => {
+  // A name as a search served it: its keywords list the harvest keyword.
+  const kw = { keywords: ['k'], maintainers: ['u'] }
+  // One whose `keywords` came back empty, which `isAtRisk` reads as not at risk.
+  const bare = { keywords: [], maintainers: ['u'] }
+  // Judged unless a case overrides what stops it, so each case below changes
+  // one field and the field is what its verdict is about.
+  const observe = (over: Partial<PinObservation> = {}): PinObservation =>
+    ({ maintainer: 'u', cell: 'paged', whole: true, names: [kw], ...over })
+
+  it('judges a pin whose cell was skipped as redundant', () => {
+    // The window and refinement cells had already served as many of its names
+    // as the cell answered, so there was nothing left for the cell to page and
+    // `whole` is false because nothing paged it.
+    expect(judgedPins([observe({ cell: 'redundant', whole: false, names: [kw] })])).toEqual(['u'])
+  })
+
+  it('judges a pin whose cell some pass paged in full', () => {
+    expect(judgedPins([observe({ cell: 'paged', whole: true, names: [kw] })])).toEqual(['u'])
+  })
+
+  it('does not judge a pin whose cell served short of its own total on every pass', () => {
+    // Names the owner holds under `K` were never shown, so seeding's silence
+    // about it proves nothing.
+    expect(judgedPins([observe({ cell: 'paged', whole: false, names: [kw] })])).toEqual([])
+  })
+
+  it('does not judge a zero-total probe, whether or not it was confirmed', () => {
+    // `whole` and the names would otherwise qualify; the cell kind alone refuses.
+    expect(judgedPins([observe({ cell: 'zero', whole: true, names: [kw] })])).toEqual([])
+  })
+
+  it('does not judge a cell over the window, which cannot be paged in full', () => {
+    expect(judgedPins([observe({ cell: 'over-window', whole: true, names: [kw] })])).toEqual([])
+  })
+
+  it.each(['paged', 'redundant'] as const)(
+    'does not judge a %s verdict that rests on a name with no keywords',
+    cell => {
+      // `isAtRisk` reads a name with no keywords as not at risk, so a response
+      // that stopped carrying the field would make seeding name nobody and
+      // every probed pin read as released at once. Requiring the field is what
+      // shows the verdict came from the data it reads.
+      expect(judgedPins([observe({ cell, whole: cell === 'paged', names: [kw, bare] })])).toEqual([])
+    },
+  )
+
+  it('does not judge a pin with no names to judge it by: no evidence', () => {
+    expect(judgedPins([observe({ cell: 'redundant', whole: false, names: [] })])).toEqual([])
+  })
+
+  it('returns each judged maintainer once, sorted by code unit', () => {
+    const judged = judgedPins([
+      observe({ maintainer: 'zb' }),
+      observe({ maintainer: 'za' }),
+      observe({ maintainer: 'za' }),
+    ])
+    expect(judged).toEqual(['za', 'zb'])
+  })
+
+  it('returns nothing for a maintainer outside the username grammar', () => {
+    expect(judgedPins([observe({ maintainer: 'Not A Name' })])).toEqual([])
+  })
+})
+
 describe('applyAxisReport', () => {
   const base = (over: Partial<PublisherState> = {}): PublisherState =>
     ({ publishers: ['u0', 'u1', 'u2', 'u3'], ...over })
   const outcome = (over: Partial<Parameters<typeof applyAxisReport>[1]> = {}) =>
-    ({ keyword: 'k', seedingComplete: false, seeded: [], evicted: [], stepped: 0, ...over })
+    ({ keyword: 'k', seedingComplete: false, seeded: [], evicted: [], judged: [], stepped: 0, ...over })
 
   it('evicts before it pins, so this run\'s own harvest outlasts a contradicting probe', () => {
     // Both lists can name one maintainer: `seeded`'s atRiskOwners half reads
@@ -753,17 +836,111 @@ describe('applyAxisReport', () => {
       outcome({ seedingComplete: true, seeded: ['still'] }),
     )
     expect(after.state.pinned?.k).toEqual(['still'])
+    expect(after.released).toEqual(['gone'])
   })
 
-  it('keeps a pin the partial seeding of a partitioned keyword does not name', () => {
+  it('keeps a pin the partial seeding of a partitioned keyword does not name, when no probe judged it', () => {
     // The mirror image, and the reason the two cases cannot share a rule: past
-    // the window `seeded` is only what the window sweep showed, and the owners
-    // this axis exists for are precisely the ones it cannot show.
+    // the window `seeded` is only what the window sweep showed, and an owner no
+    // probe looked at is one it cannot show. A pin this run DID judge is the
+    // exception, and the cases below own it.
     const after = applyAxisReport(
       base({ pinned: { k: ['past-the-window', 'still'] } }),
       outcome({ seedingComplete: false, seeded: ['still'] }),
     )
     expect(after.state.pinned?.k).toEqual(['past-the-window', 'still'])
+    expect(after.released).toEqual([])
+  })
+
+  it('releases a judged pin that seeding no longer names, and keeps one it did not judge', () => {
+    // Past the window `seeded` is only what the sweep showed, which is why an
+    // unjudged pin stays. A judged one leaves because its OWN cell showed every
+    // name its owner holds under the keyword, so seeding's silence about it is
+    // a complete answer rather than a gap in what was paged. `kept` is judged
+    // too, but seeding still names it, so it stays.
+    const after = applyAxisReport(
+      base({ pinned: { k: ['judged-gone', 'kept', 'unjudged'] } }),
+      outcome({ seeded: ['kept'], judged: ['judged-gone', 'kept'] }),
+    )
+    expect(after.state.pinned?.k).toEqual(['kept', 'unjudged'])
+    expect(after.released).toEqual(['judged-gone'])
+  })
+
+  it('lets a seed take the slot a release freed in the same run', () => {
+    // Release comes before pinning for the reason eviction does: at the bound,
+    // pinning first refuses a new residue owner while a pin that no longer
+    // earns its place still holds the set.
+    const full = Array.from({ length: MAX_PINNED_PER_KEYWORD }, (_, i) => `u${String(i).padStart(5, '0')}`)
+    const after = applyAxisReport(
+      base({ pinned: { k: full } }),
+      outcome({ seeded: ['newresidueowner'], judged: [full[0] as string] }),
+    )
+    expect(after.state.pinned?.k).toContain('newresidueowner')
+    expect(after.refused).toEqual([])
+    expect(after.released).toEqual([full[0]])
+  })
+
+  it('ignores a judged name that is not pinned', () => {
+    const after = applyAxisReport(
+      base({ pinned: { k: ['held'] } }),
+      outcome({ judged: ['stranger'] }),
+    )
+    expect(after.released).toEqual([])
+    expect(after.state.pinned?.k).toEqual(['held'])
+  })
+
+  it('releases nothing for a keyword the state holds no pins for', () => {
+    // `judged` is per keyword. A maintainer another keyword pins is not this
+    // keyword's to release, and a state with no pinned map at all has nothing
+    // to release from.
+    const elsewhere = applyAxisReport(base({ pinned: { other: ['u'] } }), outcome({ judged: ['u'] }))
+    expect(elsewhere.released).toEqual([])
+    expect(elsewhere.state.pinned).toEqual({ other: ['u'] })
+    expect(applyAxisReport(base(), outcome({ judged: ['u'] })).released).toEqual([])
+  })
+
+  it('counts an evicted pin once, as evicted', () => {
+    // A zero-total probe is not judged, so a well-formed report never names one
+    // pin on both lists. A hand-built one can, and `released` is the count that
+    // reads "seeding no longer names it": it must not claim a pin the zero-total
+    // exit already took.
+    const after = applyAxisReport(
+      base({ pinned: { k: ['z'] } }),
+      outcome({ evicted: ['z'], judged: ['z'] }),
+    )
+    expect(after.released).toEqual([])
+    expect(after.state.pinned?.k).toBeUndefined()
+  })
+
+  it('never releases a pin the report lists as evicted, even when the cap refused the eviction', () => {
+    // More than MAX_EVICTIONS_PER_RUN zero answers read as a registry fault, so
+    // none of them is applied. That distrust has to hold for the release exits
+    // too: a pin the report also lists as judged must not leave through the
+    // back door of the judged exit. A well-formed report never judges a zero
+    // cell, so this takes a hand-built or handed-off one.
+    const evicted = ['z', ...Array.from({ length: MAX_EVICTIONS_PER_RUN }, (_, i) => `gone${i}`)]
+    const after = applyAxisReport(
+      base({ pinned: { k: ['z'] } }),
+      outcome({ evicted, judged: ['z'], seeded: [] }),
+    )
+    expect(after.state.pinned?.k).toEqual(['z'])
+    expect(after.released).toEqual([])
+    expect(after.evictionsRefused).toBe(MAX_EVICTIONS_PER_RUN + 1)
+    // The same list holds against complete seeding, which would otherwise take
+    // `z` for being unnamed.
+    const complete = applyAxisReport(base({ pinned: { k: ['z'] } }), outcome({ evicted, seedingComplete: true }))
+    expect(complete.state.pinned?.k).toEqual(['z'])
+    expect(complete.released).toEqual([])
+  })
+
+  it('lists the pins it released in code-unit order, whatever order the state held them in', () => {
+    // `unpinFor` keeps the order it is handed, so a state built by hand can be
+    // unsorted; the report must not depend on that.
+    const after = applyAxisReport(
+      base({ pinned: { k: ['zb', 'za', 'a1'] } }),
+      outcome({ seedingComplete: true }),
+    )
+    expect(after.released).toEqual(['a1', 'za', 'zb'])
   })
 
   it('advances only its own keyword\'s cursor', () => {

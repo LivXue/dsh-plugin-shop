@@ -1209,7 +1209,7 @@ describe('describePublisherAxis', () => {
   const axis = (over: Partial<PublisherAxisReport> = {}): PublisherAxisReport => ({
     keyword: 'dsh-plugin', partitioned: true, seedingComplete: false, vocabulary: 0, pinnedSet: 0,
     pinnedProbed: 0, pinnedSupplied: 0, cursor: 0, rotatedProbed: 0, rotatedSupplied: 0,
-    stepped: 0, seeded: [], atRiskNames: 0, evicted: [], ...over,
+    stepped: 0, seeded: [], atRiskNames: 0, evicted: [], judged: [], ...over,
   })
 
   it('names the inputs, not only the results, so an inert axis is visible', () => {
