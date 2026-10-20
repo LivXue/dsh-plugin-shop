@@ -390,6 +390,95 @@ describe('a window is enumerated whole, or the harvest stops', () => {
     expect(pagings('topic:dsh-plugin')).toBe(2)
   })
 
+  it('tolerates a phantom when the first paging served repeats the second did not', async () => {
+    // The same window, paged by hand twice on 2026-10-20: one paging served
+    // 928 rows naming 920 repositories, eight of them twice in place of eight
+    // it never served, and the next served 928 distinct. Search ordering
+    // moves under a paging. Both served as many rows, and the second served
+    // every repository either did, so the gap is the index's, not churn; a
+    // check that wanted the FIRST paging whole failed the build on it.
+    const items = repoItems(927)
+    const repeating = [...items.slice(0, 919), ...items.slice(0, 8)]
+    const { fetchImpl, pagings } = pagingStub(
+      query => (dshPlugin(query) ? 928 : 0),
+      (query, paging) => (dshPlugin(query) ? (paging === 1 ? repeating : items) : []),
+    )
+    const { seen, phantoms } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    expect(seen).toHaveLength(927)
+    expect(phantoms).toEqual([{ query: 'topic:dsh-plugin', counted: 928, served: 927 }])
+    expect(pagings('topic:dsh-plugin')).toBe(2)
+  })
+
+  it('tolerates a phantom when both pagings repeated, as one set read in two orders', async () => {
+    // Measured the same day: of seven pagings of that window, three served
+    // repeats, 8, 1 and 19 of them, so two pagings can both repeat. Here each
+    // misses eight the other serves. Both served 927 rows, and between them
+    // they named 927 repositories, no more than either paging's rows: one set
+    // read twice in two orders, holding one phantom.
+    const items = repoItems(927)
+    const firstPaging = [...items.slice(0, 919), ...items.slice(0, 8)]
+    const secondPaging = [...items.slice(8), ...items.slice(8, 16)]
+    const { fetchImpl } = pagingStub(
+      query => (dshPlugin(query) ? 928 : 0),
+      (query, paging) => (dshPlugin(query) ? (paging === 1 ? firstPaging : secondPaging) : []),
+    )
+    const { seen, phantoms } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    expect(seen).toHaveLength(927)
+    expect(phantoms).toEqual([{ query: 'topic:dsh-plugin', counted: 928, served: 927 }])
+  })
+
+  it('still throws when a repository left the window as another joined between pagings', async () => {
+    // Churn the row counts cannot show: both pagings serve 927 rows, but the
+    // second has lost one repository and gained another, so between them they
+    // name 928, one more than either paging's rows. That is not one set read
+    // twice, and the two missing from the count are not the index's.
+    const items = repoItems(928)
+    const firstPaging = items.slice(0, 927)
+    const secondPaging = items.slice(1, 928)
+    const { fetchImpl } = pagingStub(
+      query => (dshPlugin(query) ? 930 : 0),
+      (query, paging) => (dshPlugin(query) ? (paging === 1 ? firstPaging : secondPaging) : []),
+    )
+    await expect(searchReposByTopic(fetchImpl, sleep, 'token'))
+      .rejects.toThrow(/enumerated 928 of 930 .*927 and 927 repositories, 928 between them, so it is not one stable gap/)
+  })
+
+  it('pages a window again when its first paging repeated repositories in place of others', async () => {
+    // No phantom: the window counts 250 and its first paging serves 250 rows,
+    // three of them repeats, so 247 repositories. Counted by rows that paging
+    // looked whole and no second one was asked for, so the three it never
+    // served were reported repo-gone and dropped from the state, the cost the
+    // comment at the top of this block describes.
+    const items = repoItems(250)
+    const repeating = [...items.slice(0, 247), ...items.slice(0, 3)]
+    const { fetchImpl, pagings } = pagingStub(
+      query => (dshPlugin(query) ? 250 : 0),
+      (query, paging) => (dshPlugin(query) ? (paging === 1 ? repeating : items) : []),
+    )
+    const { seen, phantoms } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    expect(seen).toHaveLength(250)
+    expect(phantoms).toEqual([])
+    expect(pagings('topic:dsh-plugin')).toBe(2)
+  })
+
+  it('names a repository both pagings missed, rather than counting rows past it', async () => {
+    // Both pagings repeat, and neither serves the last repository: 250 rows
+    // each, 249 repositories between them. Counted by rows the window read
+    // whole and the missing one went unnamed; counted by repositories it is
+    // one short, on the build report. Whether the index or the ordering lost
+    // it, two pagings cannot tell, and either way the report says so.
+    const items = repoItems(250)
+    const first = [...items.slice(0, 247), ...items.slice(0, 3)]
+    const second = [...items.slice(0, 249), items[0]]
+    const { fetchImpl } = pagingStub(
+      query => (dshPlugin(query) ? 250 : 0),
+      (query, paging) => (dshPlugin(query) ? (paging === 1 ? first : second) : []),
+    )
+    const { seen, phantoms } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    expect(seen).toHaveLength(249)
+    expect(phantoms).toEqual([{ query: 'topic:dsh-plugin', counted: 250, served: 249 }])
+  })
+
   it('pages a window again when its pages answer more than its probe counted', async () => {
     // PR #107 review: coverage was measured against the partition's probe
     // alone. Once a window ending at its tenth page stopped throwing, one
@@ -409,6 +498,60 @@ describe('a window is enumerated whole, or the harvest stops', () => {
     expect(seen).toHaveLength(930)
     expect(phantoms).toEqual([])
     expect(pagings('topic:dsh-plugin')).toBe(2)
+  })
+
+  it('measures a grown window by repositories against what its pages answered', async () => {
+    // The same review, with the ordering repeat it named: the probe counts
+    // 928; the pages answer 930, 929 repositories and a phantom; the first
+    // paging serves 929 rows naming 928, the second all 929.
+    const items = repoItems(929)
+    const displaced = items[928] as { full_name: string }
+    const { fetchImpl, pagings } = pagingStub(
+      query => (dshPlugin(query) ? 930 : 0),
+      (query, paging) => (dshPlugin(query) ? (paging === 1 ? [...items.slice(0, 928), items[0]] : items) : []),
+      (query, probe) => (dshPlugin(query) ? (probe === 1 ? 928 : 930) : 0),
+    )
+    const { seen, phantoms } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    expect(seen.map(entry => entry.repo)).toContain(displaced.full_name)
+    expect(seen).toHaveLength(929)
+    expect(phantoms).toEqual([{ query: 'topic:dsh-plugin', counted: 930, served: 929 }])
+    expect(pagings('topic:dsh-plugin')).toBe(2)
+  })
+
+  it('counts an unreadable item served twice as one slot, not two', async () => {
+    // PR #107 review: `skipped` counted rows, so an item that cannot be read,
+    // served twice in place of a repository, covered two slots and hid the
+    // one it displaced. Counted 251: 250 repositories and one item that names
+    // itself but has no default branch. The first paging serves that item
+    // twice and loses a repository; the second serves every one.
+    const items = repoItems(250)
+    const unreadable = { full_name: 'someone/unreadable' }
+    const { fetchImpl, pagings } = pagingStub(
+      query => (dshPlugin(query) ? 251 : 0),
+      (query, paging) => (dshPlugin(query)
+        ? (paging === 1 ? [...items.slice(0, 249), unreadable, unreadable] : [...items, unreadable])
+        : []),
+    )
+    const { seen, phantoms } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    expect(seen).toHaveLength(250)
+    expect(phantoms).toEqual([])
+    expect(pagings('topic:dsh-plugin')).toBe(2)
+  })
+
+  it('tolerates a phantom when the count moves between pagings and both name the same repositories', async () => {
+    // PR #107 review: wanting equal row counts failed a window whose count
+    // moved between its two pagings although both named one set. The probe
+    // and the first paging answer 928 and serve 927; the re-probe and the
+    // second paging answer 929, and it serves the same 927 plus one repeat.
+    const items = repoItems(927)
+    const { fetchImpl } = pagingStub(
+      (query, paging) => (dshPlugin(query) ? (paging === 1 ? 928 : 929) : 0),
+      (query, paging) => (dshPlugin(query) ? (paging === 1 ? items : [...items, items[0]]) : []),
+      (query, probe) => (dshPlugin(query) ? (probe === 1 ? 928 : 929) : 0),
+    )
+    const { seen, phantoms } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    expect(seen).toHaveLength(927)
+    expect(phantoms).toEqual([{ query: 'topic:dsh-plugin', counted: 928, served: 927 }])
   })
 
   it('tolerates a run total at the allowance and throws one past it', async () => {

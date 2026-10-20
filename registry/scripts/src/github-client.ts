@@ -471,6 +471,10 @@ interface SearchPageResult {
   metas: RepoMeta[]
   /** Items on this page that {@link parseRepoMeta} refused. */
   skipped: number
+  /** One identity per refused item that carries one, repeats included: its
+   * `full_name`, or `#<id>`. An item served twice is one repository, so the
+   * coverage check counts identities, not rows (PR #107 review). */
+  unreadable: string[]
   /** `total_count` as answered for THIS page; tracks a window that shrank. */
   total: number
 }
@@ -498,13 +502,33 @@ async function searchPage(
   }
   const items = Array.isArray(body.items) ? body.items : []
   const metas: RepoMeta[] = []
+  const unreadable: string[] = []
   let skipped = 0
   for (const item of items) {
     const meta = parseRepoMeta(item)
-    if (meta === null) skipped += 1
-    else metas.push(meta)
+    if (meta !== null) {
+      metas.push(meta)
+      continue
+    }
+    skipped += 1
+    const identity = unreadableIdentity(item)
+    if (identity !== null) unreadable.push(identity)
   }
-  return { metas, skipped, total: body.total_count }
+  return { metas, skipped, unreadable, total: body.total_count }
+}
+
+/**
+ * What names an item {@link parseRepoMeta} refused: its `full_name`, else
+ * `#<id>`, else nothing. A full name has a slash and `#<id>` has none, so the
+ * two cannot collide; and a full name matching a readable item's is the same
+ * repository, which is what lets the coverage check count it once.
+ */
+function unreadableIdentity(item: unknown): string | null {
+  if (typeof item !== 'object' || item === null) return null
+  const o = item as { full_name?: unknown; id?: unknown }
+  if (typeof o.full_name === 'string') return o.full_name
+  if (typeof o.id === 'number' && Number.isSafeInteger(o.id)) return `#${o.id}`
+  return null
 }
 
 /** One partition window: extra qualifiers appended to `topic:<topic>`. */
@@ -620,11 +644,17 @@ export async function partitionTopic(
  * with no servable item behind it, of the kind a deleted or hidden repository
  * leaves until the index catches up. Every build failed on it.
  *
- * Tolerated only when CONFIRMED: the window is paged a second time, and both
- * pagings must serve the same repositories. A first paging that lost an item
- * to churn is repaired by the second, and two pagings that disagree are
- * churn, which still throws. A confirmed gap is reported, never silent:
- * {@link describeSearchPhantoms} puts it on the build report's GitHub line.
+ * Tolerated only when CONFIRMED: the window is paged a second time, and
+ * between them the two pagings must name no more repositories than either
+ * paging's named rows did, whether or not the count moved in between. Search
+ * ordering moves under a paging, so either paging, or both, can serve a
+ * repository twice in place of another (measured 2026-10-20: three of seven
+ * pagings of a 928-to-940-count window did, 8, 1 and 19 times), and the union
+ * repairs it. A paging that lost an item to churn is repaired the same way. A
+ * repository that left the window as another joined, one name more than
+ * rows, is churn, which still throws. A confirmed gap is reported, never
+ * silent: {@link describeSearchPhantoms} puts it on the build report's GitHub
+ * line.
  *
  * Counted per RUN rather than per window, so an index that stops serving a
  * whole class of query still stops the build. 3 is `MAX_SEARCH_SHORTFALL`'s
@@ -639,9 +669,11 @@ export const MAX_SEARCH_PHANTOMS = 3
 /** One window the index counted larger than two pagings of it served. */
 export interface SearchPhantom {
   query: string
-  /** The window's answered total: the lower of its two probes. */
+  /** The total the window was measured against: what its probe and its first
+   * paging answered, the higher of the two, unless the re-probe answered less. */
   counted: number
-  /** What each of the two pagings served. */
+  /** The repositories the two pagings named between them, plus the unreadable
+   * rows that named nothing, counted from whichever paging served more. */
   served: number
 }
 
@@ -681,11 +713,17 @@ export async function searchReposByTopic(
       if (probed === 0) continue
       // Parsed plus skipped: an item we could not read still occupies a slot,
       // and counting only the parsed ones is precisely what let one `null`
-      // item end a 250-repository window after 99 of them.
-      const pageWindow = async (): Promise<{ enumerated: number; names: Set<string>; answered: number }> => {
+      // item end a 250-repository window after 99 of them. `enumerated` counts
+      // those rows; `named` counts the repositories they named, readable or
+      // not, which is fewer when search ordering moves under a paging and
+      // serves one twice in place of another (measured 2026-10-20). An
+      // unreadable item with no name at all cannot be told from another, so
+      // `anonymous` counts those rows as they come.
+      const pageWindow = async (): Promise<{ enumerated: number; named: Set<string>; anonymous: number; answered: number }> => {
         let enumerated = 0
+        let anonymous = 0
         let answered = probed
-        const names = new Set<string>()
+        const named = new Set<string>()
         for (let page = 1; ; page += 1) {
           if (page > MAX_SEARCH_PAGES) {
             // Ten pages are every row the cap serves. A window still answering
@@ -705,12 +743,14 @@ export async function searchReposByTopic(
             // same phantom ends on an empty page instead.
             break
           }
-          const { metas, skipped, total } = await searchPage(query, page, fetchImpl, sleep, token)
+          const { metas, skipped, unreadable, total } = await searchPage(query, page, fetchImpl, sleep, token)
           answered = total
           for (const meta of metas) {
-            names.add(meta.fullName)
+            named.add(meta.fullName)
             if (!byName.has(meta.fullName)) byName.set(meta.fullName, meta)
           }
+          for (const identity of unreadable) named.add(identity)
+          anonymous += skipped - unreadable.length
           enumerated += metas.length + skipped
           // Stop on the total the API answered for THIS page — which tracks a
           // window that shrank mid-run — never on a short page. An empty page is
@@ -718,14 +758,17 @@ export async function searchReposByTopic(
           // coverage check below is what decides whether that is acceptable.
           if (metas.length + skipped === 0 || enumerated >= total) break
         }
-        return { enumerated, names, answered }
+        return { enumerated, named, anonymous, answered }
       }
       const first = await pageWindow()
-      // Against the higher of the probe's count and what the pages answered:
-      // a window that grew between the two would otherwise clear the probe's
-      // smaller, stale count with a repository unserved (PR #107 review).
+      // Short by repositories, not by rows: a paging that served one twice in
+      // place of another counts as many rows as a whole one, and the one it
+      // never served would publish repo-gone. Against the higher of the
+      // probe's count and what the pages answered: a window that grew between
+      // the two would otherwise let a paging that lost a repository to a
+      // repeat clear the probe's smaller, stale count (PR #107 review).
       const floor = Math.max(probed, first.answered)
-      if (first.enumerated < floor) {
+      if (first.named.size + first.anonymous < floor) {
         // Safe by CHECK, the shape searchByKeywords uses on the npm half, and
         // for the same reason: the API has no way to prove a window was read
         // whole. The re-probe absorbs churn — these windows are `stars:0` and
@@ -738,23 +781,28 @@ export async function searchReposByTopic(
         // repository that left mid-run is not one the pages could serve. It
         // never takes the floor below the pages' own answer otherwise.
         const required = Math.min(floor, after)
-        if (first.enumerated < required) {
+        if (first.named.size + first.anonymous < required) {
           // Still short against a count that did not move: page it once more.
           // Its repositories are already in `byName`, so a first paging that
-          // lost one to churn is repaired by the union. Two pagings serving
-          // the same repositories and the same count are a gap in the index,
-          // tolerated under MAX_SEARCH_PHANTOMS; two that disagree are churn,
-          // which no tolerance covers. Like the re-probe, paid for only here.
+          // lost one to churn, or to ordering, is repaired by the union. Two
+          // pagings are one set read twice, in two orders, when between them
+          // they named no more repositories than either paging's named rows:
+          // then the gap is the index's, tolerated under MAX_SEARCH_PHANTOMS,
+          // whatever each paging repeated and even when the count moved
+          // between them. A repository that left the window as another joined
+          // shows as one name more than rows, and that is churn, which no
+          // tolerance covers. Like the re-probe, paid for only here.
           const second = await pageWindow()
-          const union = new Set([...first.names, ...second.names])
-          const served = Math.max(first.enumerated, second.enumerated, union.size)
+          const union = new Set([...first.named, ...second.named])
+          const served = union.size + Math.max(first.anonymous, second.anonymous)
           if (served < required) {
-            const stable = second.enumerated === first.enumerated && union.size === first.names.size
+            const namedRows = Math.min(first.enumerated - first.anonymous, second.enumerated - second.anonymous)
+            const stable = union.size <= namedRows
             const gap = required - served
             if (!stable || phantomTotal + gap > MAX_SEARCH_PHANTOMS) {
               const why = stable
                 ? `two pagings agree on the gap, but it brings this run's counted-but-unserved repositories to ${phantomTotal + gap}, past the ${MAX_SEARCH_PHANTOMS} the index may account for`
-                : `two pagings served ${first.enumerated} and ${second.enumerated}, so it is not one stable gap`
+                : `two pagings served ${first.enumerated} and ${second.enumerated} rows naming ${first.named.size} and ${second.named.size} repositories, ${union.size} between them, so it is not one stable gap`
               throw new Error(
                 `github search for ${query} enumerated ${served} of ${required} results; the window ended before its answered total, so the harvest would be silently short — and every repository it lost publishes repo-gone under its own name and is dropped from the committed state (${why})`,
               )
