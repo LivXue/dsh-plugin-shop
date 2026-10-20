@@ -35,15 +35,15 @@ are available with `dsh --version` and `pnpm --version`.
 # Specify the version: pnpm 11 restricts newly published releases by default,
 # so omitting the version may install an older release. The current version
 # is shown below; check for updates with `npm view dsh-plugin-shop version`.
-dsh plugin --profile web add dsh-plugin-shop@0.8.7
+dsh plugin --profile web add dsh-plugin-shop@0.9.0
 # Alternatively, run the installation command through npx:
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.7
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.9.0
 ```
 
 Replace `web` with your profile name if you use a different one. Restart `dsh` after
 installation to load the new plugin, then open:
 
-> **Settings → Plugin shop**
+> **Plugin shop** in the left sidebar
 
 ### 🤖 Installation with an agent
 
@@ -57,7 +57,7 @@ ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 
 # 2. Specify the version to bypass pnpm's release cooldown and ensure
 #    that the expected version is installed.
-dsh plugin --profile <profile> add dsh-plugin-shop@0.8.7
+dsh plugin --profile <profile> add dsh-plugin-shop@0.9.0
 
 # 3. Verify the installation; exit code 0 above only means pnpm resolved the package.
 dsh plugin --profile <profile> list --depth 0   # The output should include dsh-plugin-shop.
@@ -73,7 +73,7 @@ see the [package README](packages/dsh-plugin-shop/README.md#failure-modes).
 ## 🖼️ Screenshots
 
 <div align="center">
-<img src="docs/images/shelf-light.png" alt="The plugin shop in dsh Settings" width="860">
+<img src="docs/images/shelf-light.png" alt="The plugin shop's own page in the dsh sidebar" width="860">
 </div>
 
 <table>
@@ -159,7 +159,7 @@ flowchart LR
   HOST ==> DEP{"6 · Check dependencies<br/>Look for each peer dependency<br/>in your profile or web client"}
   DEP -->|"Missing dependencies"| BAD["Incompatible<br/>The card lists<br/>missing dependencies"]
   DEP -->|"All dependencies found"| GOOD["Ready to install"]
-  BAD --> CLIENT["Client — the plugin shop in Settings<br/>Calls nine shop/* methods on the host<br/>No network or filesystem access"]
+  BAD --> CLIENT["Client — the plugin shop page<br/>Calls nine shop/* methods on the host<br/>No network or filesystem access"]
   GOOD --> CLIENT
   CLIENT ==>|"dsh plugin add"| PROF[("your dsh profile")]
 ```

@@ -134,7 +134,7 @@ These block a real launch, not the code.
    components (2 cards) and the unloadable-bundle rule (6 entries) are not
    built. [2026-09-28-bundle-components-and-github-peers.md](../design/2026-09-28-bundle-components-and-github-peers.md)
    section 13.
-10. **The shop's own sidebar page — built for 0.9.0, 2026-10-17.** The shop
+10. **The shop's own sidebar page — shipped in 0.9.0, 2026-10-20.** The shop
     moves from its Settings section (0.8.7) to a page in dsh's left sidebar,
     keeps the whole page across leaving and returning in a page store on
     `globalThis`, and gains two buttons on dsh's Plugins page (0.1.7 and
@@ -146,8 +146,10 @@ These block a real launch, not the code.
       design's §2 item 3; item 11);
     - a running install is not found again after a page reload (that
       design's §5.8).
-11. **dsh 0.2.1 — readiness built on `fix/dsh-021-readiness`, 2026-10-19,
-    not released.** npm's `latest` became 0.2.1-rc.2 on 2026-10-17
+11. **dsh 0.2.1 — shipped in 0.9.0 (beta.2 and beta.3), 2026-10-20.** The
+    work landed on `main` as #104 (rebased; `fix/dsh-021-readiness` is gone)
+    and #105, and reached npm through the beta tag. npm's `latest` became
+    0.2.1-rc.2 on 2026-10-17
     ([2026-10-19-dsh-021-readiness.md](../design/2026-10-19-dsh-021-readiness.md)).
     The branch reads the refusal list under its new name, blocks the in-page
     restart of a dsh launched with `--from-default-profile`, continues an
@@ -172,9 +174,10 @@ These block a real launch, not the code.
     - on the desktop profile the shop's own self-update fails with "uninstall
       it, then install it again" (§2), to settle with the open review item
       R45, the desktop sentence in `desktopBuildsDetail`;
-    - `packages/dsh-plugin-shop/scripts/shoot-readme-screenshots.ts:183`
-      presses the 设置 button, which 0.2.1 moved into the Account menu (§5),
-      so it times out there: fix it at the 0.9.0 promotion that reshoots.
+    - ~~`shoot-readme-screenshots.ts` presses the 设置 button, which 0.2.1
+      moved into the Account menu (§5)~~ — resolved by the 0.9.0 promotion,
+      which navigates to the shop's own sidebar row and so presses no Settings
+      button at all.
 
 ## P1 — the Host half (done 2026-08-25)
 

@@ -3,7 +3,7 @@
 # dsh-plugin-shop
 
 **The plugin shop for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — browse a catalog of
-dsh plugins, install one with a single click, and manage what you have, from its own page in Settings.
+dsh plugins, install one with a single click, and manage what you have, from its own page in the left sidebar.
 
 [![npm](https://img.shields.io/npm/v/dsh-plugin-shop?logo=npm&color=cb3837)](https://www.npmjs.com/package/dsh-plugin-shop)
 [![plugins](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2FLivXue.github.io%2Fdsh-plugin-shop%2Fv1%2Findex.json&query=count&label=plugins&color=blue)](https://LivXue.github.io/dsh-plugin-shop/v1/index.json)
@@ -35,15 +35,15 @@ install them once with `npm install -g @deepseek-ai/dsh pnpm` and verify with
 # holds back very recent releases, so a bare `add dsh-plugin-shop` can hand
 # you an older version for a while. Pin the current release — refresh it
 # with `npm view dsh-plugin-shop version`.
-dsh plugin --profile web add dsh-plugin-shop@0.8.7
+dsh plugin --profile web add dsh-plugin-shop@0.9.0
 # or straight through npx, nothing installed:
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.7
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.9.0
 ```
 
 Replace `web` with your profile if you use another one. Then restart `dsh` once — a
 newly added bundle is not applied to a running process — and open
 
-> **Settings → Plugin shop**
+> **Plugin shop** in the left sidebar
 
 You land on a shelf of plugin cards with a search box. The first load reads the catalog
 over the network and can take a few seconds; a shimmering skeleton stands in until the
@@ -67,7 +67,7 @@ ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 cooldown, and deterministic installs are the point of the agent path.
 
 ```sh
-dsh plugin --profile <profile> add dsh-plugin-shop@0.8.7
+dsh plugin --profile <profile> add dsh-plugin-shop@0.9.0
 ```
 
 **3. Verify — do not skip this.** A zero exit from step 2 means pnpm resolved the
@@ -99,7 +99,7 @@ bundle is not.
 ## 🖼️ Screenshots
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-light.png" alt="The plugin shop shelf inside dsh Settings" width="860">
+<img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-light.png" alt="The plugin shop shelf on its own page in the dsh sidebar" width="860">
 </div>
 
 <table>

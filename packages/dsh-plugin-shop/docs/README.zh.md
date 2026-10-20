@@ -2,7 +2,7 @@
 
 # dsh-plugin-shop
 
-**[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的插件商店** —— 在设置页里自己的一栏
+**[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的插件商店** —— 在左侧栏里自己的一页
 浏览 dsh 插件目录、一键安装、管理已装插件。
 
 [![npm](https://img.shields.io/npm/v/dsh-plugin-shop?logo=npm&color=cb3837)](https://www.npmjs.com/package/dsh-plugin-shop)
@@ -33,15 +33,15 @@ pnpm`，并用 `dsh --version` 和 `pnpm --version` 验证。
 # dsh 在 PATH 上（全局安装）。必须钉版本号：pnpm 11 会拦下刚发布的新版本，
 # 不写版本号的裸安装可能给你旧版。下面是当前版本——用
 # `npm view dsh-plugin-shop version` 查最新值。
-dsh plugin --profile web add dsh-plugin-shop@0.8.7
+dsh plugin --profile web add dsh-plugin-shop@0.9.0
 # 或全程走 npx，什么都不装：
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.7
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.9.0
 ```
 
 如果你用的不是 `web` profile，把它换成你自己的。然后重启一次 `dsh`——新加的 bundle 不会作用于
 已在运行的进程——再打开
 
-> **设置 → 插件商店**
+> 左侧栏里的 **插件商店**
 
 进去是一片插件卡片货架，带搜索框。首次加载要联网读目录，可能要等几秒，期间由一层扫光骨架占位。
 
@@ -60,7 +60,7 @@ ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 **2. 安装。** 钉版本号——显式钉版本能绕过 pnpm 的发布冷却期，确定性安装本来也是 agent 路径的要点。
 
 ```sh
-dsh plugin --profile <profile> add dsh-plugin-shop@0.8.7
+dsh plugin --profile <profile> add dsh-plugin-shop@0.9.0
 ```
 
 **3. 验证——这步别省。** 第 2 步返回 0 只说明 pnpm 解析到了这个包，不代表 profile 会加载它。
@@ -90,7 +90,7 @@ dsh plugin --profile <profile> list --depth 0
 ## 🖼️ 界面预览
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-light.zh.png" alt="dsh 设置页里的插件商店货架" width="860">
+<img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-light.zh.png" alt="dsh 侧栏插件商店页面上的货架" width="860">
 </div>
 
 <table>

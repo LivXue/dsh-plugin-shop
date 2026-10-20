@@ -58,9 +58,11 @@ const SHOP_SPEC = process.env.SHOP_SPEC ?? `dsh-plugin-shop@${SHOP_VERSION}`
 // moment the script is run from anywhere but where it was written.
 const OUT = process.env.OUT_DIR ?? fileURLToPath(new URL('../../../docs/images', import.meta.url))
 
-// `shop` names the shop's own Settings section, a nav entry since 0.8.7
-// (design §5.1, amended 2026-10-15), where it used to be a tab inside Built-in
-// plugins. `firstRun` opens the toast dsh-client-ui-workspace raises when it cannot
+// `shop` names the shop's own row in dsh's left sidebar: its page since
+// 0.9.0 (design 2026-10-16-shop-sidebar-page §4), where 0.8.7 had it as a
+// Settings section and earlier builds a tab inside Built-in plugins. `settings`
+// is only the label `assertUnobstructed` tolerates, which no longer appears.
+// `firstRun` opens the toast dsh-client-ui-workspace raises when it cannot
 // create the default workspace (`defaultWorkspace.failed`); see waitForFirstRun.
 const T = {
   en: { settings: 'Settings', shop: 'Plugin shop', firstRun: 'Unable to create default workspace' },
@@ -180,13 +182,14 @@ async function openShop(page: Page, url: string, lang: Lang, dshVersion: string)
   await page.goto(url, { waitUntil: 'load' })
   await page.waitForSelector('[class*="frame"]', { timeout: 60_000 })
   await waitForFirstRun(page, lang, dshVersion)
-  await page.getByRole('button', { name: t.settings, exact: true }).click({ timeout: 30_000 })
-  const dialog = page.getByRole('dialog', { name: t.settings })
-  await dialog.waitFor({ state: 'visible', timeout: 15_000 })
-  await dialog.getByRole('button', { name: t.shop, exact: true }).click()
-  await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 30_000 })
+  // The shop's own sidebar row, which selects its page (0.9.0 on; the row's
+  // accessible name is the shop's title in the reader's language). It is a
+  // button on every harness the e2e covers, 0.1.5-rc.3 included.
+  await page.getByRole('button', { name: t.shop, exact: true }).click({ timeout: 30_000 })
+  const shop = page.locator('[data-shop-page]')
+  await shop.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 30_000 })
   // The live catalog is a network fetch: wait for real entries, not the frame.
-  await dialog.locator('[data-shop-entry]').first().waitFor({ state: 'visible', timeout: 90_000 })
+  await shop.locator('[data-shop-entry]').first().waitFor({ state: 'visible', timeout: 90_000 })
   await page.waitForTimeout(1500)
 }
 
@@ -231,12 +234,14 @@ async function main(): Promise<void> {
         console.log(`  wrote ${step.shelf}`)
 
         if (step.refused !== null) {
-          const dialog = page.getByRole('dialog', { name: t.settings })
+          // The shop is the page now, so the shelf is on the page, not in a
+          // dialog (0.9.0 on; see openShop).
+          const shop = page.locator('[data-shop-page]')
           // The first card on the shelf that the dsh doing the shooting would
           // refuse: the red label in the Install button's place, its
           // explanation unfolded. Nothing is clicked but the fold, so nothing
           // installs; a shelf with no such card in its first page throws.
-          const card = dialog.locator('[data-shop-entry]').filter({ has: page.locator('[data-shop-refused]') }).first()
+          const card = shop.locator('[data-shop-entry]').filter({ has: page.locator('[data-shop-refused]') }).first()
           await card.waitFor({ state: 'visible', timeout: 30_000 })
           const fold = card.locator('[data-shop-fold]').first()
           if (await fold.count() > 0 && (await fold.getAttribute('aria-expanded')) !== 'true') await fold.click()

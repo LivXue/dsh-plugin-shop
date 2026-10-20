@@ -33,15 +33,15 @@
 # 已全局安装 dsh 时，直接运行以下命令。
 # 请明确指定版本号：pnpm 11 默认限制安装刚发布的版本，省略版本号可能会装到旧版。
 # 下方使用当前版本，可用 `npm view dsh-plugin-shop version` 查询最新版本。
-dsh plugin --profile web add dsh-plugin-shop@0.8.7
+dsh plugin --profile web add dsh-plugin-shop@0.9.0
 # 也可以通过 npx 执行安装命令：
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.7
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.9.0
 ```
 
 如果你使用的配置不是 `web`，请将命令中的 `web` 换成对应的 profile 名称。安装后需要重启 `dsh`，
 新插件才会生效。随后打开：
 
-> **设置 → 插件商店**
+> 左侧栏里的 **插件商店**
 
 ### 🤖 通过 Agent 安装
 
@@ -53,7 +53,7 @@ npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.7
 ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 
 # 2. 指定版本安装，避免 pnpm 的发布冷却期影响结果，确保安装的是预期版本
-dsh plugin --profile <profile> add dsh-plugin-shop@0.8.7
+dsh plugin --profile <profile> add dsh-plugin-shop@0.9.0
 
 # 3. 确认安装结果；上一步退出码为 0 只说明 pnpm 成功解析了包
 dsh plugin --profile <profile> list --depth 0   # 列表中应包含 dsh-plugin-shop
@@ -69,7 +69,7 @@ dsh --profile <profile>
 ## 🖼️ 界面预览
 
 <div align="center">
-<img src="docs/images/shelf-light.zh.png" alt="dsh 设置页中的插件商店" width="860">
+<img src="docs/images/shelf-light.zh.png" alt="dsh 侧栏里的插件商店页面" width="860">
 </div>
 
 <table>
@@ -148,7 +148,7 @@ flowchart LR
   HOST ==> DEP{"6 · 依赖检查<br/>在当前 profile 和网页端中<br/>逐一查找 peer 依赖"}
   DEP -->|"缺少依赖"| BAD["不兼容<br/>在卡片中列出<br/>缺少的依赖"]
   DEP -->|"依赖齐全"| GOOD["可安装"]
-  BAD --> CLIENT["界面端（Client）—— 设置页中的插件商店<br/>通过九个 shop/* 方法与宿主端交互<br/>无网络和文件系统访问权限"]
+  BAD --> CLIENT["界面端（Client）—— 插件商店页面<br/>通过九个 shop/* 方法与宿主端交互<br/>无网络和文件系统访问权限"]
   GOOD --> CLIENT
   CLIENT ==>|"dsh plugin add"| PROF[("你的 dsh profile")]
 ```
