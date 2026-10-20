@@ -144,8 +144,8 @@ Three consequences, all accepted:
   keywords judged after the re-page, not for one already judged. A re-page
   recovers single omissions, and the error points toward under-crediting.
 - **A red run costs more.** The second keyword is paged even when the first
-  then fails its checks, which today it is not. In return, the second
-  keyword's axis and coverage lines reach the log on that run too.
+  then fails its checks, which today it is not: about half an hour of
+  requests on a run that is red either way.
 
 ### 3.3 Report
 
