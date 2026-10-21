@@ -1,10 +1,10 @@
 # Cross-keyword credit and feed-aware pins — design
 
-Status: **specified (2026-10-20).** Answers the tail-cap failures of
-2026-10-19 and 2026-10-20. Amends `2026-09-17-publisher-pinning.md` §2, §3
-and §6, `2026-10-04-change-feed-harvest.md` §4.5 and §4.7, and the
-search-coverage section of the authority spec
-(`2026-08-18-dsh-plugin-shop-design.md`).
+Status: **specified (2026-10-20), implemented (2026-10-21).** Answers the
+tail-cap failures of 2026-10-19 and 2026-10-20. Amends
+`2026-09-17-publisher-pinning.md` §2, §3 and §6,
+`2026-10-04-change-feed-harvest.md` §4.5 and §4.7, and the search-coverage
+section of the authority spec (`2026-08-18-dsh-plugin-shop-design.md`).
 
 ## 0. What breaks
 
@@ -137,7 +137,7 @@ oversized cells and publisher cells.
 5. credits across keywords again;
 6. reports, then checks.
 
-Three consequences, all accepted:
+Five consequences, all accepted:
 - **The feed step comes after the cross credit.** A cross-credited name is
   not feed-only, so it is neither verified nor counted in `feed supplied`.
 - **A re-page's new names reach later keywords only.** They count for
@@ -146,6 +146,22 @@ Three consequences, all accepted:
 - **A red run costs more.** The second keyword is paged even when the first
   then fails its checks, which today it is not: about half an hour of
   requests on a run that is red either way.
+- **A paging failure loses the earlier keyword's lines.** A request that
+  throws while phase one pages the later keyword (a transport failure, a
+  page with no total, a partition cell needing a `from` past the cap) ends
+  the run before the earlier keyword is judged. That keyword's axis,
+  coverage and shortfall lines, which used to print first, never print. A
+  throw while judging logs as before.
+- **The first keyword's credit can outrun its total.** Its `required` is
+  the smallest of its partition-time total and its re-probes, while its
+  cross credit draws on pages fetched up to one paging phase after its
+  own. A name published under both keywords in that interval can be
+  credited without being counted, and each such name hides one genuine
+  miss: by estimate a few names on a typical run, though a family
+  published under both keywords in that interval hides one genuine miss
+  per name. The second keyword has had the same kind of skew on its own
+  pages since every keyword is partitioned before any is paged
+  (`2026-09-17-publisher-pinning.md`, the 2026-09-19 amendment to §4).
 
 ### 3.3 Report
 
@@ -186,15 +202,31 @@ not name it.
 **Judged** means the pin was probed this run and one of the following
 holds:
 - its cell was skipped because the window and refinement cells had already
-  served as many of its names as the cell answered;
+  served exactly as many of its names as the cell answered;
 - some pass paged its cell in full, serving as many names as the cell
-  answered.
+  answered on that pass, a total above zero.
 
 **Not judged** are:
 - a pin past the pinned half of the budget;
 - a zero-total probe, whether confirmed or not;
 - a cell over the window;
+- a cell skipped because it answered fewer names than the window and
+  refinement cells had already served its owner (`disagrees`);
 - a cell that served short of its own total on every pass.
+
+**What equal counts establish.** Each way of being judged is a count met:
+the window and refinement cells had served the owner exactly as many names
+as the cell answered, or the cell's own paging served as many names as it
+answered.
+- The first reads equal counts as the same names. That holds while the
+  `maintainer:` qualifier counts the same packages as the `maintainers`
+  arrays on the objects those cells served.
+- A cell answering fewer names than those cells served its owner shows the
+  two counting differently. That skip is recorded as `disagrees` and is
+  never evidence.
+- A paging pass whose cell answered a total of zero never counts as paged
+  in full. Zero names served meets a zero total, and a zero total is never
+  evidence.
 
 **A guard on the evidence.** Every name the verdict rests on must carry a
 non-empty `keywords` array: the names the window and refinement cells
@@ -208,14 +240,26 @@ served for that owner, or the names its own cell served.
 **Why this is now safe past the window.** The publisher-pinning design's
 2026-09-18 amendment to §3 refused it, because "the owners this axis exists
 for are precisely the ones it cannot show". That holds for unpinned owners.
-A probed pin's own cell shows every name it holds under `K`, so seeding's
-verdict on that owner is complete.
+A judged pin's own cell counts no more of its names under `K` than the run
+was served, so seeding's verdict on that owner is complete as far as that
+count can show.
 
 **Not bounded by `MAX_EVICTIONS_PER_RUN`.** The first passing run releases
 about 380 pins. A bound of eight would keep the set FULL for weeks.
 - The zero-total exit keeps its bound: it guards a registry answering zero
   for real cells, which this exit cannot be triggered by.
 - The report names the count: `released N pin(s) seeding no longer names`.
+
+**But a report the bound refused releases nothing.** When
+`MAX_EVICTIONS_PER_RUN` refuses a report's evictions, the report releases no
+pin, on this exit or the complete-seeding one. Every release rests on totals
+the same registry answered in the same run: a cell skipped as covered, a
+cell paged in full, a keyword enumerated whole. A pin the report lists as
+evicted is never released either, so a refused eviction keeps its pin on
+both exits.
+
+**The handoff parser checks the count.** It refuses a record naming more
+judged pins than it probed, since a pin is judged only by its own probe.
 
 ### 4.3 What it buys
 
@@ -261,6 +305,9 @@ These are estimates from 2026-10-20's data, not guarantees.
   - Skipped as redundant: judged.
   - Paged in full: judged.
   - Served short on every pass: not judged.
+  - Skipped with a total below what the window served (`disagrees`): not
+    judged.
+  - A pass whose cell answered zero: not paged in full.
   - Zero total: not judged.
   - Over the window: not judged.
   - Any name without keywords: not judged.
@@ -270,11 +317,14 @@ These are estimates from 2026-10-20's data, not guarantees.
 - `applyAxisReport` releases judged pins that seeding did not name.
 - It keeps unjudged pins and seeded pins.
 - It releases nothing for a keyword with no record.
+- It releases nothing, on either exit, from a report whose evictions the
+  cap refused.
 - A release frees a slot that a new seed then takes in the same run.
 
 The parsers: `acrossKeywords` and `judged` are strict, with cross-field
-checks (`judged` must be maintainer names, and `acrossKeywords` cannot
-exceed `enumerated`).
+checks (`judged` must be maintainer names and name no more pins than the
+record probed, and `supplied` plus `acrossKeywords` cannot exceed
+`enumerated`).
 
 ## 8. Deliberately not built
 

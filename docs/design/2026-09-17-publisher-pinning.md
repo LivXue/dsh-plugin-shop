@@ -95,6 +95,13 @@ see §4's amendment.** Seeding is not gated on full enumeration; it runs for
 every harvest keyword each run, against whatever names that run's window
 sweep, refinement cells and publisher cells actually put in `harvested`.
 
+**Amendment (2026-10-20): seeding reads only the names the change feed does
+not carry, and so does outcome entry in §3**
+(`2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`, §4.1). The feed
+step credits a carrier whenever no search cell serves it, so a pin for its
+owner buys nothing; a run whose feed is unavailable has no carriers, and
+both rules read every name as before.
+
 ## 3. Pinning lifecycle
 
 **Entry** is either of:
@@ -183,6 +190,20 @@ evicted because its `deepseek-harness` cell supplied nothing.
 
 **And so is the cursor** — see §4's 2026-09-18 amendment, which is the same
 argument reaching its own conclusion one step later.
+
+### 2026-10-20 amendment: past the window, a pin this run judged and seeding no longer names is released
+
+The probe is no longer the only exit past the window
+(`2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`, §4.2): a pin also
+leaves when this run judged it and seeding did not name it, judged meaning
+that the run probed it and was served as many of its owner's names as its
+cell answered, either by the window and refinement cells (an equal total,
+so the cell was skipped) or by the cell's own paging on some pass. That
+exit is not bounded by `MAX_EVICTIONS_PER_RUN`, but a report whose
+evictions that bound refused releases nothing, on this exit or the
+complete-seeding one above, which, since seeding reads only the names the
+change feed does not carry (§2's 2026-10-20 amendment), also releases an
+owner still at risk when the feed carries every at-risk name it holds.
 
 ## 4. Budget and probe order
 
@@ -736,6 +757,15 @@ keywords:dsh-plugin publisher axis — vocabulary 3775, 38 pinned,
 38 probed (0 supplied), 462 rotated from cursor 1305 (7 supplied),
 7 name(s) recovered, seeded 2 owner(s) from 81 at-risk name(s) seen this run
 ```
+
+**Amendment (2026-10-20): the at-risk clause reads
+`at-risk name(s) the change feed does not carry, seen this run`**, because
+the count is the population seeding reads, which leaves every carrier out
+(`2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`, §4.1). When a
+run releases pins seeding no longer names, through complete seeding or a
+judged pin (§3's amendments), `build.ts` adds
+`released N pin(s) seeding no longer names` to the line, in the build
+report and the CI log.
 
 **The inputs are reported, not only the results.** An empty vocabulary is a
 legal no-op: 0.8.1 shipped one and CI was green while the axis did nothing.

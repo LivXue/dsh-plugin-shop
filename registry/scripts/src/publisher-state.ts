@@ -775,8 +775,9 @@ export interface PinObservation {
   readonly cell: PinCell
   /**
    * Whether some pass paged the cell in full, serving as many names as the
-   * cell answered. Only a `paged` cell can be whole: a `redundant` or
-   * `disagrees` one was never paged.
+   * cell answered on that pass, a total above zero: zero names served meets a
+   * zero total, which is never evidence. Only a `paged` cell can be whole: a
+   * `redundant` or `disagrees` one was never paged.
    */
   readonly whole: boolean
   /**
@@ -788,18 +789,23 @@ export interface PinObservation {
 }
 
 /**
- * The pinned maintainers this run JUDGED: probed, and shown every name they
- * hold under the harvest keyword, so seeding's silence about them is an answer
- * and not a gap in what was paged. Past the window these are the only pins
- * {@link applyAxisReport} may release (design
+ * The pinned maintainers this run JUDGED: probed, and served as many of their
+ * names under the harvest keyword as their own cell answered, so seeding's
+ * silence about them is an answer and not a gap in what was paged. Past the
+ * window these are the only pins {@link applyAxisReport} may release (design
  * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`, §4.2).
  *
  * An observation judges its pin when all three hold:
- * - the cell was `redundant`, or `paged` with `whole` set. Those are the two
- *   ways a run sees all of an owner's names. A zero total is the registry's
- *   answer, which the eviction exit owns; a cell over the window was never
- *   seen whole; one that served short on every pass left names unshown; and
- *   one that `disagrees` answered a count the names already seen contradict.
+ * - the cell was `redundant`, or `paged` with `whole` set: the window and
+ *   refinement cells had served exactly as many of the owner's names as the
+ *   cell answered, or the cell's own paging served as many as it answered.
+ *   Those are counts met, not a name-by-name match: `redundant` reads an
+ *   equal count as the same names, which holds while the `maintainer:`
+ *   qualifier and the `maintainers` arrays agree on which packages are the
+ *   owner's. A zero total is the registry's answer, which the eviction exit
+ *   owns; a cell over the window was never seen whole; one that served short
+ *   on every pass left names unshown; and one that `disagrees` answered fewer
+ *   names than were already seen, which shows the two disagreeing.
  * - `names` is not empty. No names is no evidence.
  * - every name lists at least one keyword. {@link isAtRisk} reads a name
  *   without keywords as not at risk, so a response that stopped carrying the
@@ -831,30 +837,43 @@ export function judgedPins(observations: readonly PinObservation[]): string[] {
 export interface AxisOutcome {
   readonly keyword: string
   /**
-   * Whether `seeded` is the keyword's WHOLE at-risk owner set, which is what
-   * licenses this run to remove ANY pin that `seeded` does not name.
+   * Whether `seeded` names every owner seeding could name for the keyword —
+   * every owner of an at-risk name the change feed does not carry — which is
+   * what licenses this run to release a pin `seeded` does not name though no
+   * probe judged it. Not every such pin: one the report lists as evicted is
+   * never released, and a report whose evictions the cap refused releases
+   * nothing (see {@link applyAxisReport}).
    *
    * True only when the keyword enumerated whole AND inside its window: every
-   * name it has was paged, so a pin `seeded` omits has stopped being at risk
-   * (an unpublish, or a package that gained a refinement keyword). It is false
-   * past the window — there `seeded` is only what the window sweep showed, so
-   * its silence about an owner says nothing unless something else showed that
-   * owner's names — and false on a tolerated shortfall, where a handful of
-   * names went unseen and one of them may be a pinned owner's only at-risk
-   * package. That shortfall case is why this is not simply `!partitioned`: the
-   * cost of getting it wrong is a pin missing on the day the keyword crosses,
-   * which is the one day this whole mechanism exists for.
+   * name it has was paged, so a pin `seeded` omits holds no at-risk name the
+   * feed does not carry — an unpublish, a package that gained a refinement
+   * keyword, or one the feed has come to carry (design
+   * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
+   * §4.1). It is false past the window — there `seeded` is only what the
+   * window sweep showed, so its silence about an owner says nothing unless
+   * something else showed that owner's names — and false on a tolerated
+   * shortfall, where a handful of names went unseen and one of them may be a
+   * pinned owner's only at-risk package. That shortfall case is why this is
+   * not simply `!partitioned`: the cost of getting it wrong is a pin missing
+   * on the day the keyword crosses, which is the one day this whole mechanism
+   * exists for.
    *
    * False does not make the probe the only way out. Past the window a pin may
    * also leave when this run {@link AxisOutcome.judged} it (design
    * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
    * §4.2). That is safe, though the sweep's silence about an unprobed owner is
-   * not, because a probed pin's OWN cell shows every name its owner holds
-   * under the keyword, so seeding's verdict on that owner is complete. A pin
-   * no probe judged stays.
+   * not, because a judged pin's OWN cell counts no more of its owner's names
+   * under the keyword than the run was served, so seeding's verdict on that
+   * owner is complete as far as that count can show. A pin no probe judged
+   * stays.
    */
   readonly seedingComplete: boolean
-  /** At-risk owners observed this run, for the caller to pin. */
+  /**
+   * The owners of the at-risk names this run saw that the change feed does not
+   * carry, and the rotated owners whose cell earned a pin (design
+   * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
+   * §4.1): for the caller to pin.
+   */
   readonly seeded: readonly string[]
   /** Pinned maintainers evicted this run: their cell answered zero. */
   readonly evicted: readonly string[]
@@ -924,19 +943,22 @@ export function applyAxisReport(
   const keep = new Set(outcome.seeded)
   const judged = new Set(outcome.judged)
   const answeredZero = new Set(outcome.evicted)
-  // With complete seeding a pin `seeded` does not name is an owner that has
-  // stopped being at risk. Without this second exit the pinned set of a
-  // keyword that has not yet crossed is MONOTONE: entry runs every run, while
-  // the probe exit is `selectPublisherCells`'s alone and that only runs once
-  // the keyword partitions. It would climb to the bound and then report itself
-  // FULL about a set nothing had ever probed.
+  // With complete seeding a pin `seeded` does not name is an owner holding no
+  // at-risk name the change feed does not carry: it stopped being at risk, or
+  // the feed carries every at-risk name it holds. Without this second exit the
+  // pinned set of a keyword that has not yet crossed is MONOTONE: entry runs
+  // every run, while the probe exit is `selectPublisherCells`'s alone and that
+  // only runs once the keyword partitions. It would climb to the bound and
+  // then report itself FULL about a set nothing had ever probed.
   //
   // Past the window there is a third: a pin this run JUDGED and `seeded` does
   // not name. The sweep's silence about an unprobed owner proves nothing, but a
-  // judged pin's own cell showed every name its owner holds under the keyword,
-  // so the silence about it is an answer. Without this exit a set the feed-aware
-  // seeding rule has left holding owners it no longer names stays FULL for good
-  // and refuses the owners it should hold.
+  // judged pin's own cell answered no more of its owner's names under the
+  // keyword than the run was served -- the window and refinement cells served
+  // exactly as many, or the cell's own paging did -- so the silence about it
+  // is an answer. Without this exit a set the feed-aware seeding rule has left
+  // holding owners it no longer names stays FULL for good and refuses the
+  // owners it should hold.
   //
   // A report whose evictions the cap refused releases nothing, through either
   // exit. The refusal says this run's registry answered zero for real cells,

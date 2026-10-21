@@ -1179,7 +1179,7 @@ describe('parsePublisherAxisReport', () => {
     // A pin is judged only by its own probe, so a record naming more judged
     // pins than it probed describes two different runs -- and, unlike a
     // counter, this list removes pins: wherever seeding is not complete, it
-    // is the only thing that lets a pin seeding does not name leave.
+    // and a confirmed zero-total eviction are the only ways a pin leaves.
     expect(() => parsePublisherAxisReport({ ...record, pinnedProbed: 1, judged: ['alice', 'bob'] }, 'handoff.json'))
       .toThrow(/judged 2 pin\(s\) but probed 1/)
   })
@@ -1210,10 +1210,11 @@ describe('parsePublisherAxisReport', () => {
 
   it('refuses a record claiming both complete seeding and a partition', () => {
     // Complete seeding means the keyword enumerated whole INSIDE its window,
-    // and it is what licenses `applyAxisReport` to REMOVE a pin. A record
-    // asserting both describes two different runs, and the write it would
-    // license is the expensive direction: design doc §3, a stale pin costs one
-    // probe per run and a wrong eviction costs the crossing.
+    // and it is what licenses `applyAxisReport` to REMOVE a pin no probe
+    // judged. A record asserting both describes two different runs, and the
+    // write it would license is the expensive direction: design doc §3, a
+    // stale pin costs one probe per run and a wrong eviction costs the
+    // crossing.
     expect(() => parsePublisherAxisReport({ ...record, seedingComplete: true }, 'handoff.json'))
       .toThrow(/claims complete seeding and a partition/)
   })
@@ -3556,10 +3557,11 @@ describe('searchByKeywords', () => {
     })
 
     // Design 2026-10-20, section 4.2: a pin leaves when this run JUDGED it and
-    // seeding did not name it. Judged means the run saw every name the pin's
-    // own cell holds under the keyword, so seeding's silence about its owner is
-    // an answer rather than a gap in what was paged. The shell measures which
-    // pins that was; `judgedPins` in publisher-state.ts decides.
+    // seeding did not name it. Judged means the run was served as many of the
+    // owner's names under the keyword as the pin's own cell answered, so
+    // seeding's silence about its owner is an answer rather than a gap in what
+    // was paged. The shell measures which pins that was; `judgedPins` in
+    // publisher-state.ts decides.
     describe('which probed pins the run judged', () => {
       /** The run's `deepseek-harness` report, with `pinned` its pinned set and
        * an empty vocabulary, so every cell probed is a pin's. A budget of 4
