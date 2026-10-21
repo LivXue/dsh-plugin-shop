@@ -7,7 +7,7 @@ import { accountForDepartures, type Cell, cellKey, cellQuery, COMPATIBILITY_PROF
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
-import { describeFeedCoverage, FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, type FeedCoverage, type FeedInput, type FeedRead } from '../src/feed-state.ts'
+import { describeFeedCoverage, FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, NO_FEED, type FeedCoverage, type FeedInput, type FeedRead } from '../src/feed-state.ts'
 import type { Candidate } from '../src/types.ts'
 
 describe('HARVEST_KEYWORDS', () => {
@@ -1239,8 +1239,14 @@ describe('describePublisherAxis', () => {
     // array is absent, so a search response that stopped carrying the field
     // would make seeding a permanent no-op -- and print a line indistinguishable
     // from a healthy run that found nothing new.
+    //
+    // The clause reads "the change feed does not carry" since design
+    // 2026-10-20, section 4.1: the count is now the population seeding read,
+    // which leaves out every name the feed carries, so the old wording named a
+    // figure it no longer was. Without the clause the line would read as the
+    // keyword's whole at-risk population, a completeness it cannot promise.
     expect(describePublisherAxis(axis({ atRiskNames: 81 })))
-      .toContain('seeded 0 owner(s) from 81 at-risk name(s) seen this run')
+      .toContain('seeded 0 owner(s) from 81 at-risk name(s) the change feed does not carry, seen this run')
   })
 
   it('reports seeded and evicted owners', () => {
@@ -1252,8 +1258,10 @@ describe('describePublisherAxis', () => {
     // "seen this run", not bare "at-risk name(s)": for a keyword the harvest
     // partitions past SEARCH_WINDOW this count is only what the window sweep
     // showed, never the keyword's whole at-risk population -- see design doc
-    // §4's 2026-09-18 amendment.
-    expect(line).toContain('seeded 1 owner(s) from 12 at-risk name(s) seen this run')
+    // §4's 2026-09-18 amendment. And "the change feed does not carry", because
+    // the count is the population seeding read, which leaves out every name
+    // the feed carries (design 2026-10-20, section 4.1).
+    expect(line).toContain('seeded 1 owner(s) from 12 at-risk name(s) the change feed does not carry, seen this run')
     expect(line).toContain('unpinned 1 with no package left')
   })
 
@@ -3151,6 +3159,46 @@ describe('searchByKeywords', () => {
       expect(deepseekHarness?.seeded).toEqual(['pubowner'])
       expect(deepseekHarness?.atRiskNames).toBe(2)
     })
+
+    // Design 2026-10-20, sections 1.3 and 4.1: the change feed credits a
+    // carrier whenever no search cell serves it, so a pin for its owner buys
+    // nothing the feed does not already give. The pins had gone to those owners
+    // instead, and a full set refused the ones only a pin can reach. Both names
+    // below list only the harvest keyword, so both are at risk under the rule
+    // in `isAtRisk`; what differs is that the feed holds one of them.
+    const carrierAndPlain = (): typeof fetch => stubSearchWithPackages({
+      'keywords:dsh-plugin': [
+        { name: 'dsh-carried', keywords: ['dsh-plugin'], maintainers: ['alice'] },
+        { name: 'plain', keywords: ['dsh-plugin'], maintainers: ['bob'] },
+      ],
+      'keywords:deepseek-harness': [],
+    })
+    const seedFrom = async (feed: FeedInput): Promise<PublisherAxisReport | undefined> => {
+      const reports: PublisherAxisReport[] = []
+      await searchByKeywords(
+        carrierAndPlain(), undefined, undefined, undefined, undefined,
+        () => {}, () => {}, { publishers: [] }, PUBLISHER_PROBE_BUDGET_DEFAULT,
+        r => reports.push(r), feed,
+      )
+      return reports.find(r => r.keyword === 'dsh-plugin')
+    }
+
+    it('seeds no owner for an at-risk name the change feed carries', async () => {
+      const dshPlugin = await seedFrom({ carriers: new Map([['dsh-plugin', new Map([['dsh-carried', 'alice']])]]), seed: 0 })
+      expect(dshPlugin?.seeded).toEqual(['bob'])
+      // The report's figure is the population seeding read, so the carrier
+      // leaves the count as well as the owners.
+      expect(dshPlugin?.atRiskNames).toBe(1)
+    })
+
+    it('an unavailable feed seeds as before', async () => {
+      // `NO_FEED` is what a run whose feed cannot be read passes: no carrier,
+      // so both rules read every harvested name, as they did before the feed
+      // existed (design section 4.1, "No feed").
+      const dshPlugin = await seedFrom(NO_FEED)
+      expect(dshPlugin?.seeded).toEqual(['alice', 'bob'])
+      expect(dshPlugin?.atRiskNames).toBe(2)
+    })
   })
 
   it('scores a name at risk when its only refinement cell is itself past the window', async () => {
@@ -3413,6 +3461,72 @@ describe('searchByKeywords', () => {
         )
         // `beyond2` exists only on the publisher cell's SECOND page request.
         expect(names).toContain('beyond2')
+      })
+
+      describe('a rotated cell and the names the change feed carries', () => {
+        /**
+         * `deepseek-harness` past its window by every name `cells` lists, each
+         * reached only by its owner's cell: the result set is in rank order,
+         * so the window sweep stops at rank SEARCH_WINDOW before the first of
+         * them. Every object lists `dsh`, a live refinement cell, so no name is
+         * at risk (design 2026-09-17, section 2) and a maintainer reaching
+         * `seeded` arrived by earning alone, never by seeding.
+         */
+        const ownersPastTheWindow = (cells: Record<string, readonly string[]>): typeof fetch => {
+          const pkg = (name: string, owner?: string) => ({
+            name, keywords: ['deepseek-harness', 'dsh'], maintainers: owner === undefined ? [] : [owner],
+          })
+          const beyond = Object.entries(cells).flatMap(([owner, names]) => names.map(name => pkg(name, owner)))
+          return stubSearchWithPackages({
+            'keywords:deepseek-harness': [...Array.from({ length: SEARCH_WINDOW }, (_, i) => pkg(`w${i}`)), ...beyond],
+            'keywords:deepseek-harness,dsh': [pkg('w0')],
+            ...Object.fromEntries(Object.entries(cells).map(([owner, names]) =>
+              [`keywords:deepseek-harness maintainer:${owner}`, names.map(name => pkg(name, owner))])),
+          })
+        }
+        /** The run, with the vocabulary the fixture's owners make and a budget
+         * that reaches all of them by rotation alone. */
+        const rotate = async (cells: Record<string, readonly string[]>, feed: FeedInput): Promise<PublisherAxisReport | undefined> => {
+          const reports: PublisherAxisReport[] = []
+          await searchByKeywords(
+            ownersPastTheWindow(cells), undefined, undefined, undefined, undefined,
+            () => {}, () => {}, { publishers: Object.keys(cells) }, 5,
+            r => reports.push(r), feed,
+          )
+          return reports.find(r => r.keyword === 'deepseek-harness')
+        }
+        const carrying = (...names: string[]): FeedInput =>
+          ({ carriers: new Map([['deepseek-harness', new Map(names.map(name => [name, 'owner'] as const))]]), seed: 0 })
+
+        it('a rotated cell whose new names the feed carries earns no pin', async () => {
+          // `carol`'s cell supplies only `dsh-c`, which the feed carries, so a
+          // pin for her buys nothing the feed does not already give (design
+          // 2026-10-20, section 4.1). `dave`'s supplies `plain-d`, which only
+          // a cell can reach.
+          const report = await rotate({ carol: ['dsh-c'], dave: ['plain-d'] }, carrying('dsh-c'))
+          expect(report?.seeded).toEqual(['dave'])
+          // Supply is measured as before: both cells were paged and both
+          // names are new to the union, the carried one included.
+          expect(report?.rotatedProbed).toBe(2)
+          expect(report?.rotatedSupplied).toBe(2)
+        })
+
+        it('earns both pins when the feed is unavailable', async () => {
+          // The control for the case above: the same cells, with no carrier,
+          // earn as they always did. Only the feed tells them apart.
+          const report = await rotate({ carol: ['dsh-c'], dave: ['plain-d'] }, NO_FEED)
+          expect(report?.seeded).toEqual(['carol', 'dave'])
+          expect(report?.rotatedSupplied).toBe(2)
+        })
+
+        it('a rotated cell that supplies a carried name and one the feed does not hold still earns', async () => {
+          // A pin earns when SOME new name is beyond the feed, not only when
+          // every one is: `plain-e` is reachable by `erin`'s cell and by
+          // nothing else, whatever else the cell happens to serve.
+          const report = await rotate({ erin: ['dsh-e', 'plain-e'] }, carrying('dsh-e'))
+          expect(report?.seeded).toEqual(['erin'])
+          expect(report?.rotatedSupplied).toBe(2)
+        })
       })
     })
   })
