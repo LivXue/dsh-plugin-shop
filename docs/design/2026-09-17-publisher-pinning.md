@@ -97,10 +97,12 @@ sweep, refinement cells and publisher cells actually put in `harvested`.
 
 **Amendment (2026-10-20): seeding reads only the names the change feed does
 not carry, and so does outcome entry in §3**
-(`2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`, §4.1). The feed
-step credits a carrier whenever no search cell serves it, so a pin for its
-owner buys nothing; a run whose feed is unavailable has no carriers, and
-both rules read every name as before.
+(`2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`, §4.1). A pin for
+a carrier's owner reaches nothing the feed step does not: the step credits
+a carrier no search cell served, and declines one only after two complete
+pagings of its owner's own cell, the cell a pin would page, omitted it. A
+run whose feed is unavailable has no carriers, and both rules read every
+name as before.
 
 ## 3. Pinning lifecycle
 

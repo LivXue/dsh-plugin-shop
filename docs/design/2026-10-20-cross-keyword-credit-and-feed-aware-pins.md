@@ -54,8 +54,9 @@ rotated cells; the 10:24 run reported 211.
 3. **The pins were spent on owners the feed already covers.** The
    keyword's at-risk names number 2,202, held by 1,479 owners, against 400
    slots, so the pinned set is FULL and refuses new owners.
-   - 2,066 of those names are change-feed carriers, and the feed credits
-     them whenever no search cell serves them.
+   - 2,066 of those names are change-feed carriers, which the feed step
+     credits when no search cell serves them, unless their owner's own cell
+     omits them twice (§4.1).
    - The other 136 are held by 87 owners: 95 names outside
      `FEED_NAME_PATTERN`, and 41 pattern names the feed does not hold.
    - Only 22 of the 400 pins hold one of those 87. The other 378 hold
@@ -89,8 +90,8 @@ Two changes ship in one PR, and a third follows it.
   coverage when any search page of the run served it and its search object
   lists `K` exactly.
 - **Feed-aware pins (§4).** Pins are seeded and earned only from names the
-  change feed does not carry. A probed pin that seeding no longer names is
-  released.
+  change feed does not carry. A judged pin (§4.2) that seeding no longer
+  names is released.
 - **Stale carriers (deferred to its own PR).** It has to follow the two
   above. Removing the stale credits raises the reported shortfall by as
   many names as it removes (about 15 on 2026-10-20). Shipped first, it
@@ -110,7 +111,10 @@ Take harvest keyword `K`, once its own cells have been paged. A name joins
 This is a measurement, not an assumption. `keywords:K` counts the packages
 whose indexed keywords contain `K`, and the search object carries those
 same indexed keywords. Exact equality can only under-credit: npm may also
-match a variant this rule ignores. It cannot over-credit. §1.5 measured it.
+match a variant this rule ignores. The match cannot over-credit, and §1.5
+measured it. Its timing can: a name published under both keywords after
+the first keyword's total was read can be credited without being counted
+(§3.2).
 
 What it does not count:
 - A name the authority spec's 2026-10-07 amendment carries is read from a
@@ -177,10 +181,12 @@ crediting therefore shows how.
 
 ### 4.1 Seeding and earning
 
-A name that the change feed carries for `K` is credited by the feed step
-whenever no search cell serves it. A pin for its owner therefore buys
-nothing the feed does not already give. The pins should go to the names
-only a pin can reach.
+A name that the change feed carries for `K` and no search cell serves is
+credited by the feed step, unless two complete pagings of its owner's own
+`keywords:K maintainer:U` cell omitted it, and that is the cell a pin for
+the owner would page. A pin for its owner therefore reaches nothing the
+feed step does not: the step credits the name, or has paged that cell
+twice without it. The pins should go to the names only a pin can reach.
 
 - **Seeding.** `atRiskOwners` and `atRiskNameCount` read only at-risk
   names that `feed.carriers` does not hold for `K`.
@@ -247,6 +253,14 @@ for are precisely the ones it cannot show". That holds for unpinned owners.
 A judged pin's own cell counts no more of its names under `K` than the run
 was served, so seeding's verdict on that owner is complete as far as that
 count can show.
+
+**A release is judged against this run's reachable refinements.** A pin
+released because every one of its owner's names carries a refinement `R`
+loses any such name that sits past both windows on the day `R`'s own cell
+crosses `SEARCH_WINDOW`, as the `,dsh` refinement's crossing cost the
+catalog 24 packages between 2026-09-11 and 2026-09-14; the loss is bounded,
+because seeding pins the owner again from any of its names still inside
+`R`'s window.
 
 **Not bounded by `MAX_EVICTIONS_PER_RUN`.** The first passing run releases
 about 380 pins. A bound of eight would keep the set FULL for weeks.

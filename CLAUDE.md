@@ -114,8 +114,10 @@ This project would rather stop than publish something plausible and wrong. Concr
   served it, which is why every harvest keyword is paged before any is
   judged; the credit changes what coverage counts, never what the gate
   admits, and the coverage line counts it apart. Pins are seeded and
-  earned only from names the change feed does not carry, because the
-  feed credits a carrier whenever no search cell serves it. Past the
+  earned only from names the change feed does not carry, because a pin
+  for a carrier's owner reaches nothing the feed step does not: the step
+  declines a carrier only after its owner's own cell, the cell a pin
+  would page, omitted it twice. Past the
   window a pin no longer leaves only on a confirmed zero: one this run
   judged -- its cell's total met by the names the run was served for
   its owner -- that seeding no longer names is released, unbounded by
