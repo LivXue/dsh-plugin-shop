@@ -7,7 +7,7 @@ import { accountForDepartures, type Cell, cellKey, cellQuery, COMPATIBILITY_PROF
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
-import { FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, type FeedCoverage, type FeedInput, type FeedRead } from '../src/feed-state.ts'
+import { describeFeedCoverage, FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, type FeedCoverage, type FeedInput, type FeedRead } from '../src/feed-state.ts'
 import type { Candidate } from '../src/types.ts'
 
 describe('HARVEST_KEYWORDS', () => {
@@ -1374,19 +1374,26 @@ describe('searchByKeywords', () => {
     // dsh-plugin costs 4 requests (probe, two pages, re-probe) and
     // deepseek-harness costs 3 (probe, one already-empty page, re-probe).
     //
-    // BOTH LEADING PROBES COME FIRST, which is the only thing that moved when
-    // the probe budget stopped being flat: `searchByKeywords` partitions every
-    // keyword before paging any of them, because a demand-proportional split
-    // of the publisher probes cannot be computed from the first keyword's tail
-    // alone. Seven requests either way — this fixture is keyed on call ORDER,
-    // so it has to say which order, and `call` below pins the count unchanged.
+    // THE ORDER. Both leading probes come first: `searchByKeywords`
+    // partitions every keyword before paging any of them, because a
+    // demand-proportional split of the publisher probes cannot be computed
+    // from the first keyword's tail alone. Then both keywords are PAGED
+    // before either is judged, so a keyword's count can credit a name the
+    // other keyword's pages served (design
+    // 2026-10-20-cross-keyword-credit-and-feed-aware-pins, section 3.2); a
+    // re-probe opens each keyword's judging, so the two come last. Seven
+    // requests either way. This fixture is keyed on call ORDER, so it says
+    // which order: `call` below pins the count, and the URL sequence pins
+    // the order itself, which nothing else here can see -- `min` of the two
+    // totals lets a re-probe answered with the other keyword's body pass all
+    // the same.
     const pages = [
       { total: 251, objects: [] }, // dsh-plugin: pre-paging probe
       { total: 0, objects: [] }, // deepseek-harness: pre-paging probe
       { total: 251, objects: Array.from({ length: 250 }, (_, i) => ({ package: { name: `dsh-p${i}` } })) },
       { total: 251, objects: [{ package: { name: 'dsh-last' } }] },
-      { total: 251, objects: [] }, // dsh-plugin: post-paging re-probe
       { total: 0, objects: [] }, // deepseek-harness: one page, already empty
+      { total: 251, objects: [] }, // dsh-plugin: post-paging re-probe
       { total: 0, objects: [] }, // deepseek-harness: post-paging re-probe
     ]
     const urls: string[] = []
@@ -1402,6 +1409,18 @@ describe('searchByKeywords', () => {
     expect(names).toHaveLength(251)
     expect(names).toContain('dsh-last') // the union is sorted, so it cannot anchor the tail
     expect(call).toBe(7)
+    expect(urls.map(url => {
+      const params = new URL(url).searchParams
+      return `${params.get('text')} size=${params.get('size')} from=${params.get('from')}`
+    })).toEqual([
+      'keywords:dsh-plugin size=1 from=0',
+      'keywords:deepseek-harness size=1 from=0',
+      'keywords:dsh-plugin size=250 from=0',
+      'keywords:dsh-plugin size=250 from=250',
+      'keywords:deepseek-harness size=250 from=0',
+      'keywords:dsh-plugin size=1 from=0',
+      'keywords:deepseek-harness size=1 from=0',
+    ])
     // `keywords:` is percent-encoded ahead of the name now (partition cells
     // need to carry a comma safely); decode before matching so this proves a
     // KEYWORD query, not just a substring anywhere in the URL — a bare,
@@ -1464,9 +1483,9 @@ describe('searchByKeywords', () => {
 
     const names = await searchByKeywords(fetchImpl, sleep)
     expect(names).toHaveLength(0)
-    // dsh-plugin's total-probe: the 429, then its retry (2); dsh-plugin's one
-    // empty page (3); dsh-plugin's post-paging re-probe (4); deepseek-harness's
-    // probe (5), one empty page (6), and its own post-paging re-probe (7).
+    // dsh-plugin's total-probe: the 429, then its retry (2); deepseek-harness's
+    // probe (3); each keyword's one empty page (4, 5), both paged before
+    // either is judged; then each keyword's post-paging re-probe (6, 7).
     expect(call).toBe(7)
   })
 
@@ -1676,10 +1695,11 @@ describe('searchByKeywords', () => {
    * Like `stubSearch`, but each page carries whole package objects so a
    * fixture can exercise the keywords and maintainers the at-risk rule reads.
    * `total` answers the full list, so paging terminates the way production
-   * does.
+   * does. A package given no `keywords` is served with no `keywords` field
+   * at all.
    */
   function stubSearchWithPackages(
-    pages: Record<string, { name: string; keywords: string[]; maintainers: string[] }[]>,
+    pages: Record<string, { name: string; keywords?: readonly string[]; maintainers: string[] }[]>,
   ): typeof fetch {
     return (async (url: string | URL) => {
       const params = new URL(String(url)).searchParams
@@ -1701,7 +1721,7 @@ describe('searchByKeywords', () => {
 
   /**
    * Like `stubSearchWithPackages`, but a page fetch for the same `text` can
-   * answer differently across calls — the shape `enumerate()`'s retry needs:
+   * answer differently across calls — the shape `search()`'s retry needs:
    * pass one's page omits an object pass two serves, mirroring the "npm
    * served a 249-of-250 page" anomaly this module already tolerates,
    * documented in the test right below. `size=1` (a probe) always answers
@@ -3104,7 +3124,7 @@ describe('searchByKeywords', () => {
       // The registry answers a total of 2 for deepseek-harness, but the first
       // pass's only page omits `another` — the documented "npm served a
       // 249-of-250 page" anomaly this module already tolerates by re-running
-      // enumerate() once. The retry re-pages `atrisk`, which an
+      // search() once. The retry re-pages `atrisk`, which an
       // un-deduplicated `harvested` array counts a second time even though
       // only two distinct at-risk names were ever observed.
       const fetchImpl = stubSearchWithRetriedPages(
@@ -3285,7 +3305,7 @@ describe('searchByKeywords', () => {
      *
      * `shortFirstPage` reproduces the "npm served a short non-final page"
      * anomaly at the window's own `from=0`, and only there, to drive
-     * `enumerate()` around the retry path without changing what the publisher
+     * `search()` around the retry path without changing what the publisher
      * cell itself answers — which is what the second test needs, to tell
      * "measured twice" from "measured once and stayed put".
      */
@@ -3361,7 +3381,7 @@ describe('searchByKeywords', () => {
       it('does not double-count a publisher cell across the retry path', async () => {
         // The window's first page is short by five on the first call and whole
         // on the second, so `forKeyword.size < required` after pass one and
-        // `enumerate()` runs again. The publisher cell answers identically both
+        // `search()` runs again. The publisher cell answers identically both
         // times: if the paging loop credited it on every pass rather than on
         // its own before/after delta against the union, this would read 6
         // supplied, not 3.
@@ -3501,10 +3521,13 @@ describe('searchByKeywords', () => {
       const names = await run(feedFixture(total, recovered, missing).fetchImpl, feedOf(missing, 'alice', coverage))
       expect(names).toHaveLength(total)
       expect(names).toContain(missing[0])
+      // `acrossKeywords: 0` joined the record with cross-keyword credit
+      // (design 2026-10-20, section 3.3): this fixture's objects list no
+      // keywords, so no other keyword's page can credit a name here.
       expect(forHarness(coverage)).toEqual({
         keyword: 'deepseek-harness', feedOnly: overCap, supplied: overCap,
         ownersVerified: 1, ownersTotal: 1, verified: overCap, unverified: 0, withdrawn: 0, unconfirmed: 0, disagreed: [],
-        enumerated: total, required: total,
+        acrossKeywords: 0, enumerated: total, required: total,
       })
     })
 
@@ -3838,6 +3861,184 @@ describe('searchByKeywords', () => {
       const names = await run(fetchImpl, feedOf(missing, 'alice', coverage))
       expect(names).toHaveLength(total)
       expect(forHarness(coverage)).toMatchObject({ ownersVerified: 0, verified: 0, unverified: overCap, disagreed: [] })
+    })
+  })
+
+  describe('cross-keyword credit', () => {
+    // Design 2026-10-20-cross-keyword-credit-and-feed-aware-pins, section 3:
+    // a name counts toward a harvest keyword when any search page of the run
+    // served it and that page's object lists the keyword exactly. The shape
+    // is the change-feed step's: `overCap` names missing past the window,
+    // under a tail large enough that the recovery rate clears the floor, so
+    // the residual cap alone refuses the keyword.
+    const overCap = MAX_UNREACHABLE_RESIDUAL + 1
+    const tail = Math.ceil(overCap / (1 - MIN_UNREACHABLE_RECOVERY)) + 50
+    const recovered = tail - overCap
+    const pkg = (name: string, keywords?: readonly string[]) => ({ name, keywords, maintainers: [] })
+    /** `keyword` holds SEARCH_WINDOW + tail names: its window serves the
+     * first SEARCH_WINDOW, `keywords:<keyword>,dsh` the next `recovered`, and
+     * none of its own cells serves the last `overCap`, `missing`. Every other
+     * refinement answers 0, the other harvest keyword's included: section 1's
+     * 35 misses were out of reach of every cell of their own keyword, because
+     * the two refinements they carried were both oversized. */
+    const shortOnItsOwn = (keyword: string) => {
+      const ranked = Array.from({ length: SEARCH_WINDOW + tail }, (_, i) => `${keyword}-${i}`)
+      return {
+        pages: {
+          [`keywords:${keyword}`]: ranked.map(name => pkg(name, [keyword])),
+          [`keywords:${keyword},dsh`]: ranked.slice(SEARCH_WINDOW, SEARCH_WINDOW + recovered).map(name => pkg(name, [keyword, 'dsh'])),
+        },
+        missing: ranked.slice(SEARCH_WINDOW + recovered),
+        required: ranked.length,
+      }
+    }
+    const run = (fetchImpl: typeof fetch, feed?: FeedInput, onShortfall?: (s: KeywordShortfall) => void) =>
+      searchByKeywords(fetchImpl, async () => {}, undefined, undefined, undefined, onShortfall, undefined, undefined, undefined, undefined, feed)
+    /** Holds no carrier, so the feed step credits nothing; collects every
+     * keyword's coverage record. */
+    const collecting = (coverage: FeedCoverage[]): FeedInput => ({ carriers: new Map(), seed: 0, onCoverage: c => { coverage.push(c) } })
+
+    it('credits a name another keyword served when its search object lists this keyword exactly', async () => {
+      const harness = shortOnItsOwn('deepseek-harness')
+      // `keywords:dsh-plugin` fits its window and holds exactly the names
+      // deepseek-harness's own cells miss.
+      const servedUnderPlugin = (listed: readonly string[]) => stubSearchWithPackages({
+        ...harness.pages,
+        'keywords:dsh-plugin': harness.missing.map(name => pkg(name, listed)),
+      })
+      const coverage: FeedCoverage[] = []
+      const names = await run(servedUnderPlugin(['dsh-plugin', 'deepseek-harness']), collecting(coverage))
+      expect(names).toHaveLength(harness.required)
+      expect(coverage.find(c => c.keyword === 'deepseek-harness')).toMatchObject({
+        acrossKeywords: overCap, enumerated: harness.required, required: harness.required,
+      })
+      // No object deepseek-harness served lists dsh-plugin, so nothing flows
+      // the other way.
+      expect(coverage.find(c => c.keyword === 'dsh-plugin')).toMatchObject({ acrossKeywords: 0, enumerated: overCap, required: overCap })
+      // The control: the same names, served by the same query, their objects
+      // not listing deepseek-harness.
+      await expect(run(servedUnderPlugin(['dsh-plugin'])))
+        .rejects.toThrow(new RegExp(`a tail shortfall of ${overCap}`))
+    })
+
+    it('does not credit a keyword listed in another case or with spaces', async () => {
+      // Exact equality, code unit for code unit (section 3.1). npm may match
+      // a variant the rule ignores, so the rule can under-credit; it must not
+      // credit a name on a keyword the object does not list exactly. Each
+      // object lists both variants, so case folding alone or trimming alone
+      // would credit all of them and let the run pass.
+      const harness = shortOnItsOwn('deepseek-harness')
+      const fetchImpl = stubSearchWithPackages({
+        ...harness.pages,
+        'keywords:dsh-plugin': harness.missing.map(name => pkg(name, ['dsh-plugin', 'DeepSeek-Harness', ' deepseek-harness'])),
+      })
+      await expect(run(fetchImpl)).rejects.toThrow(new RegExp(`a tail shortfall of ${overCap}`))
+    })
+
+    it('no keywords, no credit', async () => {
+      // An object carrying no `keywords` field lists nothing, so it credits
+      // nothing to any keyword: not the one whose query served it, and not
+      // another.
+      const harness = shortOnItsOwn('deepseek-harness')
+      const fetchImpl = stubSearchWithPackages({
+        ...harness.pages,
+        'keywords:dsh-plugin': harness.missing.map(name => pkg(name)),
+      })
+      await expect(run(fetchImpl)).rejects.toThrow(new RegExp(`a tail shortfall of ${overCap}`))
+    })
+
+    it('credits the keyword the harvest pages first, from the keyword it pages second', async () => {
+      // The mirror of the first case. While each keyword was paged and judged
+      // before the next was paged, `dsh-plugin` -- HARVEST_KEYWORDS' first
+      // entry -- was judged before `deepseek-harness` served a single page,
+      // so no name only the second keyword's pages held could count for it
+      // (section 3.2).
+      expect(HARVEST_KEYWORDS[0]).toBe('dsh-plugin')
+      const plugin = shortOnItsOwn('dsh-plugin')
+      const fetchImpl = stubSearchWithPackages({
+        ...plugin.pages,
+        'keywords:deepseek-harness': plugin.missing.map(name => pkg(name, ['deepseek-harness', 'dsh-plugin'])),
+      })
+      const coverage: FeedCoverage[] = []
+      await expect(run(fetchImpl, collecting(coverage))).resolves.toHaveLength(plugin.required)
+      expect(coverage.find(c => c.keyword === 'dsh-plugin')).toMatchObject({
+        acrossKeywords: overCap, enumerated: plugin.required, required: plugin.required,
+      })
+    })
+
+    it('credits a name the earlier keyword\'s retry pass served', async () => {
+      // `dsh-plugin` is judged first. Its first paging serves one of its two
+      // names, so it pages again, and the second paging also serves `extra`:
+      // a name deepseek-harness's own cells miss, listing deepseek-harness.
+      // deepseek-harness, judged after it, is otherwise
+      // MAX_UNREACHABLE_RESIDUAL + 1 short; `extra` brings it to the cap,
+      // which passes. A credit read only from what phase one paged would
+      // miss it.
+      const harness = shortOnItsOwn('deepseek-harness')
+      const extra = `deepseek-harness-${SEARCH_WINDOW + recovered}`
+      expect(harness.missing).toContain(extra)
+      const own = { name: 'plugin-own', keywords: ['dsh-plugin'], maintainers: [] }
+      const plugin = stubSearchWithRetriedPages({ 'keywords:dsh-plugin': 2 }, {
+        'keywords:dsh-plugin': [
+          [own],
+          [own, { name: extra, keywords: ['dsh-plugin', 'deepseek-harness'], maintainers: [] }],
+        ],
+      })
+      const rest = stubSearchWithPackages(harness.pages)
+      const fetchImpl = (async (url: string | URL, init?: RequestInit) =>
+        (new URL(String(url)).searchParams.get('text') === 'keywords:dsh-plugin' ? plugin : rest)(url, init)) as unknown as typeof fetch
+      const coverage: FeedCoverage[] = []
+      const shortfalls: KeywordShortfall[] = []
+      const names = await run(fetchImpl, collecting(coverage), s => shortfalls.push(s))
+      expect(names).toContain(extra)
+      expect(coverage.find(c => c.keyword === 'deepseek-harness')).toMatchObject({ acrossKeywords: 1 })
+      expect(shortfalls).toEqual([expect.objectContaining({ keyword: 'deepseek-harness', tailShortfall: MAX_UNREACHABLE_RESIDUAL })])
+    })
+
+    it('a cross-credited carrier is not feed-only', async () => {
+      // The feed step runs after the cross credit (section 3.2), so a carrier
+      // another keyword's page already served is neither verified -- no
+      // owner cell is paged for it -- nor counted in `feed supplied`.
+      const harness = shortOnItsOwn('deepseek-harness')
+      const carrier = `deepseek-harness-${SEARCH_WINDOW + recovered}`
+      expect(harness.missing).toContain(carrier)
+      const stub = stubSearchWithPackages({
+        ...harness.pages,
+        'keywords:dsh-plugin': harness.missing.map(name => pkg(name, ['dsh-plugin', 'deepseek-harness'])),
+      })
+      const texts: string[] = []
+      const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+        texts.push(new URL(String(url)).searchParams.get('text') ?? '')
+        return stub(url, init)
+      }) as unknown as typeof fetch
+      const coverage: FeedCoverage[] = []
+      await run(fetchImpl, {
+        carriers: new Map([['deepseek-harness', new Map([[carrier, 'alice']])]]),
+        seed: 0,
+        onCoverage: c => { coverage.push(c) },
+      })
+      expect(coverage.find(c => c.keyword === 'deepseek-harness')).toMatchObject({ feedOnly: 0, supplied: 0, acrossKeywords: overCap })
+      expect(texts.filter(text => text.includes('maintainer:'))).toEqual([])
+    })
+
+    it('a credit npm does not count shows as over', async () => {
+      // deepseek-harness is whole on its own, and dsh-plugin also serves two
+      // names listing deepseek-harness that deepseek-harness's own query never
+      // counts. The credits take the count past npm's total, and the line says
+      // by how much, beside the clause that explains it: coverage is still
+      // measured against npm's own total (section 6).
+      const fetchImpl = stubSearchWithPackages({
+        'keywords:deepseek-harness': ['h0', 'h1', 'h2'].map(name => pkg(name, ['deepseek-harness'])),
+        'keywords:dsh-plugin': [
+          pkg('p0', ['dsh-plugin']),
+          ...['uncounted0', 'uncounted1'].map(name => pkg(name, ['dsh-plugin', 'deepseek-harness'])),
+        ],
+      })
+      const coverage: FeedCoverage[] = []
+      await run(fetchImpl, collecting(coverage))
+      expect(coverage.filter(c => c.keyword === 'deepseek-harness').map(describeFeedCoverage)).toEqual([
+        'keywords:deepseek-harness feed supplied 0 (owners verified 0 of 0); 2 served under another harvest keyword; enumerated 5 of 3 (2 over)',
+      ])
     })
   })
 })
