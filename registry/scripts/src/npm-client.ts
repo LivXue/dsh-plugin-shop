@@ -3,7 +3,7 @@ import { compareStrings } from './identity.ts'
 import { escapeCell, lockNpmNames } from './emit.ts'
 import { classifyDeparture, departedNames, departureRejection, summarizeDepartures, type DepartureAnswer, type DepartureOutcome, type DepartureSummary } from './departures.ts'
 import { deprecationMessageOf } from './gate.ts'
-import { allocateProbeBudgets, atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, isPinnableKeyword, MAX_PINNED_PER_KEYWORD, probeOrder, type AxisOutcome, type HarvestedName, type PublisherState } from './publisher-state.ts'
+import { allocateProbeBudgets, atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, isPinnableKeyword, MAX_PINNED_PER_KEYWORD, probeOrder, seedableNames, type AxisOutcome, type HarvestedName, type PublisherState } from './publisher-state.ts'
 import { FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, isDeprecated, NO_FEED, planConfirmations, planFeedVerification, type FeedCoverage, type FeedInput } from './feed-state.ts'
 import type { Candidate, Compatibility, Rejection } from './types.ts'
 
@@ -438,6 +438,15 @@ export interface PublisherAxisReport extends AxisOutcome {
   readonly cursor: number
   readonly rotatedProbed: number
   readonly rotatedSupplied: number
+  /**
+   * The at-risk names this run saw that the change feed does not carry: the
+   * population seeding read, and so the one {@link AxisOutcome.seeded} came
+   * from (design
+   * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
+   * section 4.1). A carrier is left out because the feed credits it whenever
+   * no search cell serves it, so a pin for its owner buys nothing. With no feed
+   * there are no carriers, and this is every at-risk name seen.
+   */
   readonly atRiskNames: number
 }
 
@@ -472,13 +481,19 @@ export function describePublisherAxis(report: PublisherAxisReport): string {
   // seeding a permanent no-op and print a line indistinguishable from a
   // healthy run.
   //
-  // "at-risk name(s) SEEN THIS RUN", not "at-risk name(s)": for a keyword the
-  // harvest partitions past SEARCH_WINDOW, the count below is only what the
-  // window sweep actually showed, never the keyword's whole at-risk
+  // "at-risk name(s) the change feed does not carry, SEEN THIS RUN", not
+  // "at-risk name(s)": the figure is narrower than the noun in two ways.
+  // For a keyword the harvest partitions past SEARCH_WINDOW, it is only what
+  // the window sweep actually showed, never the keyword's whole at-risk
   // population -- names past the window are exactly what this axis exists to
   // reach, so the unqualified noun would read as a completeness this line
-  // cannot promise. See design doc §4's 2026-09-18 amendment.
-  parts.push(`seeded ${report.seeded.length} owner(s) from ${report.atRiskNames} at-risk name(s) seen this run`)
+  // cannot promise. See design doc §4's 2026-09-18 amendment. And it is what
+  // seeding READ, which leaves out every name the change feed carries: the
+  // feed credits a carrier whenever no search cell serves it, so a pin for its
+  // owner buys nothing (design 2026-10-20, section 4.1). The figure and the
+  // seeded owners come from one population, so a reader comparing the two is
+  // not left to think seeding dropped owners it should have kept.
+  parts.push(`seeded ${report.seeded.length} owner(s) from ${report.atRiskNames} at-risk name(s) the change feed does not carry, seen this run`)
   if (report.evicted.length > 0) parts.push(`unpinned ${report.evicted.length} with no package left`)
   if (report.pinnedSet >= MAX_PINNED_PER_KEYWORD) parts.push(`pinned set is FULL at ${MAX_PINNED_PER_KEYWORD}`)
   // Escaped, like every other untrusted string this repo renders into the
@@ -2351,10 +2366,13 @@ export async function searchByKeywords(
   /**
    * The change feed's carriers for this run (spec 2026-10-04, section
    * 4.5): per harvest keyword, each carrier's owner. Credited after the
-   * publisher cells, so the axis selects, probes, earns and evicts exactly
-   * as before, and after the cross-keyword credit, so a carrier another
-   * keyword's page served is not feed-only. An empty map -- the default,
-   * and what an unavailable feed passes -- is today's harvest exactly.
+   * publisher cells, so the axis selects, probes and evicts exactly as
+   * before, and after the cross-keyword credit, so a carrier another
+   * keyword's page served is not feed-only. Two rules of the axis read the
+   * carriers all the same: seeding and earning leave a carrier out, because
+   * the feed already credits it and a pin for its owner buys nothing (design
+   * 2026-10-20, section 4.1). An empty map -- the default, and what an
+   * unavailable feed passes -- is today's harvest exactly.
    */
   feed: FeedInput = NO_FEED,
 ): Promise<string[]> {
@@ -2566,6 +2584,18 @@ export async function searchByKeywords(
      * for it, which is what the publisher filter measures a cell against. */
     const servedFor = new Map<string, Set<string>>()
     /**
+     * What the change feed carries for this keyword, each carrier to its owner
+     * (spec 2026-10-04, section 4.5): the one list the feed step, seeding and
+     * earning all read. The feed credits a carrier whenever no search cell
+     * serves it, so a pin for its owner buys nothing the feed does not already
+     * give, and the pins had gone to those owners rather than to the names only
+     * a pin can reach (design
+     * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
+     * sections 1.3 and 4.1). Empty when the feed is unavailable, which leaves
+     * seeding and earning what they were before the feed existed.
+     */
+    const carried: ReadonlyMap<string, string | null> = feed.carriers.get(keyword) ?? new Map<string, string | null>()
+    /**
      * The publisher cells worth paging, chosen ONCE. The probes that pick them
      * are the axis's real cost, and `search` runs twice whenever a keyword's
      * residual sends it round again — which for `deepseek-harness` is every
@@ -2605,9 +2635,11 @@ export async function searchByKeywords(
     /** Pinned maintainers whose cell answered zero this run — see the exit
      * rule below. Exit is this and nothing else. */
     const evicted: string[] = []
-    /** Rotated maintainers whose paging delta proved worth pinning this run
-     * (design doc §3's outcome entry) — see `search`'s rotated loop.
-     * Merged into `seeded` where `onPublisherAxis` is called. */
+    /** Rotated maintainers whose cell supplied a name the union lacked and the
+     * change feed does not carry, which is what proves a pin worth having
+     * (design doc §3's outcome entry, as design 2026-10-20 section 4.1 amends
+     * it) — see `search`'s rotated loop. Merged into `seeded` where
+     * `onPublisherAxis` is called. */
     const earned: string[] = []
     /**
      * Probe the pinned set first, then the rotation `probeOrder` (pure,
@@ -2768,7 +2800,7 @@ export async function searchByKeywords(
         for (const name of feedCredited) forKeyword.add(name)
         return
       }
-      const ownerOf = feed.carriers.get(keyword) ?? new Map<string, string | null>()
+      const ownerOf = carried
       const feedOnly = [...ownerOf.keys()].filter(name => !forKeyword.has(name))
       const plan = planFeedVerification(feedOnly, ownerOf, FEED_VERIFY_OWNERS, feed.seed)
       const before = forKeyword.size
@@ -2902,10 +2934,11 @@ export async function searchByKeywords(
         // keyword's run — and attributed to pinned or rotated by which half
         // of `publisherCells` the cell came from.
         //
-        // This loop reruns on the retry path below (`forKeyword` only grows
+        // These loops rerun on the retry path below (`forKeyword` only grows
         // and a cell's own query is stable within one run), so a cell already
-        // paged once pages the same names again and its delta is 0 the second
-        // time: nothing here can be credited twice.
+        // paged once pages the same names again and adds none of them the
+        // second time, its delta 0 and its `fresh` empty: nothing here can be
+        // credited twice.
         for (const cell of publisherCells.pinned) {
           const before = forKeyword.size
           await pageCell(cell, forKeyword, 'throw', undefined, harvested)
@@ -2913,16 +2946,24 @@ export async function searchByKeywords(
           if (delta > 0) pinnedSupplied += delta
         }
         for (const cell of publisherCells.rotated) {
-          const before = forKeyword.size
-          await pageCell(cell, forKeyword, 'throw', undefined, harvested)
-          const delta = forKeyword.size - before
-          if (delta > 0) {
-            rotatedSupplied += delta
-            // Outcome entry (design doc §3): a rotated cell that supplied a
-            // name nothing else had earns a pinned spot, so the next run
-            // probes it directly instead of waiting for rotation to return.
-            if (cell.maintainer !== undefined) earned.push(cell.maintainer)
-          }
+          // Paged into a set of its own, so the names this cell served can be
+          // told from the union it joins. `fresh` is the ones it adds: the
+          // count the pinned half measures as a before/after delta, and here
+          // the names themselves, which the rule below needs.
+          const got = new Set<string>()
+          await pageCell(cell, got, 'throw', undefined, harvested)
+          const fresh = [...got].filter(name => !forKeyword.has(name))
+          for (const name of got) forKeyword.add(name)
+          rotatedSupplied += fresh.length
+          // Outcome entry (design doc §3): a rotated cell that supplied a name
+          // nothing else had earns a pinned spot, so the next run probes it
+          // directly instead of waiting for rotation to return. Only a name
+          // the change feed does not carry counts toward it (design
+          // 2026-10-20, section 4.1): the feed credits a carrier whenever no
+          // search cell serves it, so a cell whose every new name is a carrier
+          // reached nothing a pin is needed for. Supply above is still
+          // measured over every new name, carriers included, as it always was.
+          if (cell.maintainer !== undefined && fresh.some(name => !carried.has(name))) earned.push(cell.maintainer)
         }
       }
     }
@@ -3004,8 +3045,14 @@ export async function searchByKeywords(
       const reachable = partitioned
         ? cells.flatMap(cell => (cell.keywords.length === 2 && cell.keywords[1] !== undefined ? [cell.keywords[1]] : []))
         : PARTITION_KEYWORDS
-      const harvestedNames = [...harvested.values()]
-      const seeded = [...new Set([...atRiskOwners(harvestedNames, keyword, reachable), ...earned])]
+      // Only the names the change feed does not carry (design 2026-10-20,
+      // section 4.1). The feed credits a carrier whenever no search cell serves
+      // it, so a pin for its owner buys nothing the feed does not already give:
+      // the set had filled with those owners until it refused the ones only a
+      // pin can reach. The owners below and the report's count both read this
+      // one list, so the line's figure is the population `seeded` came from.
+      const seedable = seedableNames(harvested, carried)
+      const seeded = [...new Set([...atRiskOwners(seedable, keyword, reachable), ...earned])]
         .sort(compareStrings)
       onPublisherAxis({
         keyword,
@@ -3027,7 +3074,7 @@ export async function searchByKeywords(
         // `judgedPins`. Until it does, no pin is judged and past the window only
         // an eviction removes one, as before.
         judged: [],
-        atRiskNames: atRiskNameCount(harvestedNames, keyword, reachable),
+        atRiskNames: atRiskNameCount(seedable, keyword, reachable),
       })
       // The feed step's line waits for the keyword's final count and sets its
       // credits beside it (spec section 4.7), the cross-keyword credits with
