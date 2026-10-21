@@ -3,7 +3,7 @@ import { compareStrings } from './identity.ts'
 import { escapeCell, lockNpmNames } from './emit.ts'
 import { classifyDeparture, departedNames, departureRejection, summarizeDepartures, type DepartureAnswer, type DepartureOutcome, type DepartureSummary } from './departures.ts'
 import { deprecationMessageOf } from './gate.ts'
-import { allocateProbeBudgets, atRiskNameCount, atRiskOwners, cursorFor, earnsPin, isMaintainerName, isPinnableKeyword, judgedPins, MAX_PINNED_PER_KEYWORD, probeOrder, seedableNames, type AxisOutcome, type HarvestedName, type PinCell, type PinObservation, type PublisherState } from './publisher-state.ts'
+import { allocateProbeBudgets, atRiskNameCount, atRiskOwners, cursorFor, earnsPin, isMaintainerName, isPinnableKeyword, judgedPins, MAX_PINNED_PER_KEYWORD, probeOrder, seedableNames, type AxisOutcome, type HarvestedName, type PinObservation, type PinPass, type PublisherState } from './publisher-state.ts'
 import { FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, isDeprecated, NO_FEED, planConfirmations, planFeedVerification, type FeedCoverage, type FeedInput } from './feed-state.ts'
 import type { Candidate, Compatibility, Rejection } from './types.ts'
 
@@ -2279,6 +2279,22 @@ export function toCandidate(packument: unknown): Candidate | null {
 }
 
 /**
+ * What {@link searchByKeywords} measured of one pin's cell during a keyword's
+ * run, until `finish` reads its names through the run's harvested records and
+ * hands `judgedPins` a {@link PinObservation}. Measurements only: whether any
+ * of it is evidence is the pure module's call.
+ *
+ * - `zero` and `over-window` carry nothing more.
+ * - `skipped` carries the total the cell's probe answered and the names of the
+ *   owner's the window and refinement cells had served when it was skipped.
+ * - `paged` carries every pass, and every name the cell served over them.
+ */
+type PinSeen =
+  | { readonly cell: 'zero' | 'over-window' }
+  | { readonly cell: 'skipped'; readonly total: number; readonly names: ReadonlySet<string> }
+  | { readonly cell: 'paged'; readonly passes: PinPass[]; readonly names: Set<string> }
+
+/**
  * List every package name carrying one of the harvest keywords: one paged
  * search per keyword, unioned and deduplicated, sorted for determinism.
  *
@@ -2635,9 +2651,9 @@ export async function searchByKeywords(
     // — but a coverage mechanism does not trade coverage for speed on a
     // suspicion. Bring it back only with a measurement of what pass two
     // actually recovers from these cells.
-    /** Names credited to a cell's own PAGING (the before/after delta measured
-     * in `search` below), never to its probe — a probe only proves a cell
-     * could supply something, not that it did. */
+    /** Names credited to a cell's own PAGING (the names `pagePublisherCell`
+     * below measures it adding to the union), never to its probe — a probe
+     * only proves a cell could supply something, not that it did. */
     let pinnedSupplied = 0
     let rotatedSupplied = 0
     /** Pinned maintainers whose cell answered zero this run, confirmed: one
@@ -2645,16 +2661,16 @@ export async function searchByKeywords(
      * below. */
     const evicted: string[] = []
     /**
-     * What each pin `probeOrder` returned showed this run, keyed by maintainer
-     * in probe order: the evidence `judgedPins` (pure, `publisher-state.ts`)
-     * reads to decide which pins the run JUDGED (design
+     * What each pin in `probeOrder`'s pinned half showed this run, keyed by
+     * maintainer in probe order: what `finish` hands `judgedPins` (pure,
+     * `publisher-state.ts`) to decide which pins the run JUDGED (design
      * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
-     * §4.2). `selectPublisherCells` records every probed pin's cell once,
-     * whatever became of it; `search`'s pinned loop adds what a paged cell
-     * served, and whether it served the cell whole, on every pass. `names`
-     * holds package names until `finish` reads them through `harvested`.
+     * §4.2). `selectPublisherCells` records every such pin's cell once,
+     * whatever became of it, and `pagePublisherCell` adds each pass of a
+     * paged one. Names stay package names until `finish` reads them through
+     * `harvested`.
      */
-    const pinSeen = new Map<string, { readonly cell: PinCell; whole: boolean; readonly names: Set<string> }>()
+    const pinSeen = new Map<string, PinSeen>()
     /** Rotated maintainers whose cell supplied a name the union lacked and the
      * change feed does not carry, which is what proves a pin worth having
      * (design doc §3's outcome entry, as design 2026-10-20 section 4.1 amends
@@ -2696,21 +2712,19 @@ export async function searchByKeywords(
      * it and seeding did not name it (design
      * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
      * §4.2), which is why every pin's cell is recorded in `pinSeen`, whatever
-     * became of it. `judgedPins` decides; this only measures. Judged is not
-     * "supplied nothing": it means the run was served as many of the owner's
-     * names as the pin's cell answered -- skipped because the window and
-     * refinement cells had already served exactly as many, or paged in full
-     * on some pass -- so seeding's silence about its owner is an answer.
-     * Those are counts met, not a name-by-name match, which is why a cell
-     * skipped for answering FEWER names than the window served its owner is
-     * recorded as `disagrees` and never judged: there the `maintainer:`
-     * qualifier and the `maintainers` arrays disagree on which packages are
-     * the owner's. A pin the filters below skip unjudged (over the window, or
-     * disagreeing), or whose cell served short of its own total on every
-     * pass, is left in place for the next run to probe again, exactly as an
-     * un-pinned rotated cell is (design doc §3) — a rule evicting on
-     * "supplied nothing" would empty the pinned set during exactly the days
-     * seeding exists to prepare for.
+     * became of it. `judgedPins` decides; this only measures: a skipped
+     * cell's total beside the names the window and refinement cells had
+     * served its owner, and each pass of a paged one (`pagePublisherCell`).
+     * Judged is not "supplied nothing": it means the run was served as many
+     * of the owner's names as the pin's cell answered -- skipped because the
+     * window and refinement cells had served exactly as many, and no more by
+     * the end of the run, or paged in full on some pass -- so seeding's
+     * silence about its owner is an answer. A pin left unjudged -- a cell
+     * over the window, one skipped on a count that disagrees, or one that
+     * served short of its own total on every pass -- is left in place for the
+     * next run to probe again, exactly as an un-pinned rotated cell is (design
+     * doc §3) — a rule evicting on "supplied nothing" would empty the pinned
+     * set during exactly the days seeding exists to prepare for.
      */
     const selectPublisherCells = async (): Promise<{ pinned: Cell[]; rotated: Cell[] }> => {
       const pinnedCells: Cell[] = []
@@ -2720,8 +2734,8 @@ export async function searchByKeywords(
       rotatedProbed = order.rotated.length
       stepped = order.stepped
       /** Record a PIN's cell; a rotated cell is no pin, and nothing judges it. */
-      const record = (source: 'pinned' | 'rotated', maintainer: string, cell: PinCell, names: Iterable<string> = []): void => {
-        if (source === 'pinned') pinSeen.set(maintainer, { cell, whole: false, names: new Set(names) })
+      const record = (source: 'pinned' | 'rotated', maintainer: string, seen: PinSeen): void => {
+        if (source === 'pinned') pinSeen.set(maintainer, seen)
       }
       for (const [source, users] of [['pinned', order.pinned], ['rotated', order.rotated]] as const) {
         for (const maintainer of users) {
@@ -2731,7 +2745,7 @@ export async function searchByKeywords(
             // Recorded whether or not the second probe confirms it. A zero is
             // never evidence for judging, so an unconfirmed one leaves the pin
             // where it was.
-            record(source, maintainer, 'zero')
+            record(source, maintainer, { cell: 'zero' })
             // CONFIRMED before it evicts, and only the pinned half can evict
             // at all. A zero total is not an error and this module says so
             // elsewhere: `{"objects":[],"total":0}` is what npm serves for a
@@ -2756,28 +2770,51 @@ export async function searchByKeywords(
           // account with more than SEARCH_WINDOW packages is beyond this
           // axis, not a partition failure.
           if (cellTotal > SEARCH_WINDOW) {
-            record(source, maintainer, 'over-window')
+            record(source, maintainer, { cell: 'over-window' })
             continue
           }
           const served = servedFor.get(maintainer)
           if (cellTotal <= (served?.size ?? 0)) {
-            // Skipped either way, as before: the filter pages only a cell
-            // claiming more names than the window and refinement cells served
-            // its owner. But only an EQUAL total is evidence that they showed
-            // every name it holds. A smaller one contradicts what they served,
-            // so it is recorded as such and never judged. The names are
-            // copied, so the verdict rests on what the skip was decided on: a
-            // name the retry pass serves this owner later is read by seeding
-            // like any other.
-            record(source, maintainer, cellTotal === served?.size ? 'redundant' : 'disagrees', served)
+            // Skipped, as before: the filter pages only a cell claiming more
+            // names than the window and refinement cells served its owner.
+            // Whether the skip is evidence is `judgedPins`' call, on the total
+            // beside what those cells had served the owner when it was skipped
+            // and once the last pass has run (`finish`). The names are copied,
+            // so the ones the skip was decided on stay apart from any a retry
+            // pass serves the owner later.
+            record(source, maintainer, { cell: 'skipped', total: cellTotal, names: new Set(served) })
             continue
           }
-          record(source, maintainer, 'paged')
+          record(source, maintainer, { cell: 'paged', passes: [], names: new Set() })
           if (source === 'pinned') pinnedCells.push(cell)
           else rotatedCells.push(cell)
         }
       }
       return { pinned: pinnedCells, rotated: rotatedCells }
+    }
+    /**
+     * Page one selected publisher cell into the union, and measure the pass
+     * for the pin the cell belongs to, if it belongs to one. `pinSeen` holds
+     * only the pinned half (`selectPublisherCells`' `record`), so a rotated
+     * cell's pass is supply and judges nothing.
+     *
+     * Paged into a set of its own, so the pass can be measured against the
+     * total it answered and the names it served told from the union they
+     * join.
+     * @returns the names this pass added to the union: the cell's supply,
+     *   and what outcome entry reads for a rotated cell.
+     */
+    const pagePublisherCell = async (cell: Cell): Promise<string[]> => {
+      const got = new Set<string>()
+      const answered = await pageCell(cell, got, 'throw', undefined, harvested)
+      const fresh = [...got].filter(name => !forKeyword.has(name))
+      for (const name of got) forKeyword.add(name)
+      const pin = cell.maintainer === undefined ? undefined : pinSeen.get(cell.maintainer)
+      if (pin?.cell === 'paged') {
+        pin.passes.push({ answered, served: got.size })
+        for (const name of got) pin.names.add(name)
+      }
+      return fresh
     }
     /** The names `creditAcross` added to the union, which the coverage line
      * reports as `acrossKeywords`. */
@@ -2987,46 +3024,19 @@ export async function searchByKeywords(
       if (partitioned) {
         publisherCells ??= await selectPublisherCells()
         // Selection only proves a cell COULD supply something not already
-        // seen; only paging proves it DID. Measured as a before/after delta
-        // on the union — never trusted from the probe's `cellTotal`, which
-        // counts the cell's own packages, not how many are NEW to this
-        // keyword's run — and attributed to pinned or rotated by which half
-        // of `publisherCells` the cell came from.
+        // seen; only paging proves it DID. Measured as the names a cell's
+        // paging added to the union — never trusted from the probe's
+        // `cellTotal`, which counts the cell's own packages, not how many are
+        // NEW to this keyword's run — and attributed to pinned or rotated by
+        // which half of `publisherCells` the cell came from.
         //
         // These loops rerun on the retry path below (`forKeyword` only grows
         // and a cell's own query is stable within one run), so a cell already
         // paged once pages the same names again and adds none of them the
-        // second time, its delta 0 and its `fresh` empty: nothing here can be
-        // credited twice.
-        for (const cell of publisherCells.pinned) {
-          // Paged into a set of its own, as the rotated loop below is, so this
-          // pass's own paging can be measured against the total it answered.
-          // Supply is still the before/after delta on the union.
-          const got = new Set<string>()
-          const answered = await pageCell(cell, got, 'throw', undefined, harvested)
-          const before = forKeyword.size
-          for (const name of got) forKeyword.add(name)
-          pinnedSupplied += forKeyword.size - before
-          const seenPin = cell.maintainer === undefined ? undefined : pinSeen.get(cell.maintainer)
-          if (seenPin !== undefined) {
-            for (const name of got) seenPin.names.add(name)
-            // Whole when this pass served every name its cell answered. A
-            // pass answering ZERO is not: zero names is "at least" a total of
-            // zero, but a zero total is never evidence (design 2026-10-20,
-            // section 4.2), and taken as whole it would let a later pass that
-            // served short be judged on the union of what both served.
-            if (answered > 0 && got.size >= answered) seenPin.whole = true
-          }
-        }
+        // second time: nothing here can be credited twice.
+        for (const cell of publisherCells.pinned) pinnedSupplied += (await pagePublisherCell(cell)).length
         for (const cell of publisherCells.rotated) {
-          // Paged into a set of its own, so the names this cell served can be
-          // told from the union it joins. `fresh` is the ones it adds: the
-          // count the pinned half measures as a before/after delta, and here
-          // the names themselves, which the rule below needs.
-          const got = new Set<string>()
-          await pageCell(cell, got, 'throw', undefined, harvested)
-          const fresh = [...got].filter(name => !forKeyword.has(name))
-          for (const name of got) forKeyword.add(name)
+          const fresh = await pagePublisherCell(cell)
           rotatedSupplied += fresh.length
           // Outcome entry (design doc §3): a rotated cell that supplied a name
           // nothing else had can earn a pinned spot, so the next run probes it
@@ -3130,12 +3140,28 @@ export async function searchByKeywords(
       // filled, so a pin is judged on the same records seeding just read. A
       // name it lacks counts as one with no keywords, which `judgedPins`
       // refuses as evidence.
-      const observations: PinObservation[] = [...pinSeen].map(([maintainer, seen]) => ({
-        maintainer,
-        cell: seen.cell,
-        whole: seen.whole,
-        names: [...seen.names].map(name => harvested.get(name) ?? { keywords: [], maintainers: [] }),
-      }))
+      const read = (names: Iterable<string>): HarvestedName[] =>
+        [...names].map(name => harvested.get(name) ?? { keywords: [], maintainers: [] })
+      const observations = [...pinSeen].map(([maintainer, seen]): PinObservation => {
+        switch (seen.cell) {
+          case 'skipped':
+            // `servedAtEnd` is what the window and refinement cells have
+            // served the owner now that this keyword's last pass, a retry
+            // included, has run.
+            return {
+              maintainer,
+              cell: 'skipped',
+              total: seen.total,
+              servedWhenSkipped: seen.names.size,
+              servedAtEnd: servedFor.get(maintainer)?.size ?? 0,
+              names: read(seen.names),
+            }
+          case 'paged':
+            return { maintainer, cell: 'paged', passes: seen.passes, names: read(seen.names) }
+          default:
+            return { maintainer, cell: seen.cell }
+        }
+      })
       onPublisherAxis({
         keyword,
         partitioned,

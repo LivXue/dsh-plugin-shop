@@ -771,45 +771,102 @@ export function retainPinned(state: PublisherState, keywords: readonly string[])
 export const MAX_EVICTIONS_PER_RUN = 8
 
 /**
- * What became of a probed pin's `keywords:K maintainer:U` cell this run.
+ * What the run did with a probed pin's `keywords:K maintainer:U` cell: the four
+ * ways the shell deals with a cell, each of which it can tell without judging
+ * anything.
  *
  * - `zero`: the probe answered a total of zero, confirmed or not.
  * - `over-window`: the answered total is past the search window, so no paging
  *   reaches all of it.
- * - `redundant`: the cell was skipped, because the window and refinement cells
- *   had already served exactly as many of the owner's names as the cell
- *   answered.
- * - `disagrees`: the cell was skipped for the same reason, but it answered
- *   FEWER names than those cells had already served the owner. The registry's
- *   count contradicts what the run saw, so it is no evidence that the run saw
- *   every name the cell holds: a `maintainer:` qualifier that counts an
- *   owner's packages differently from their `maintainers` arrays can answer
- *   a set the window never showed.
+ * - `skipped`: not paged, because the window and refinement cells had already
+ *   served the owner at least as many names as the cell answered.
  * - `paged`: the cell was paged, on one pass or more.
+ *
+ * Whether a skipped or paged cell is evidence is {@link judgedPins}' call, made
+ * on the counts its {@link PinObservation} carries. Read off that union rather
+ * than listed again, so the two cannot drift apart.
  */
-export type PinCell = 'zero' | 'over-window' | 'redundant' | 'disagrees' | 'paged'
+export type PinCell = PinObservation['cell']
+
+/** One pass's paging of a pin's cell. */
+export interface PinPass {
+  /** The total the cell answered on this pass. */
+  readonly answered: number
+  /** How many distinct names this pass served. */
+  readonly served: number
+}
 
 /**
- * One probed pin as the run saw it: the evidence {@link judgedPins} reads. The
- * shell measures it and this module judges it, so a fixture can drive every
- * verdict.
+ * One probed pin as the run saw it, by the kind its cell was ({@link PinCell}):
+ * the evidence {@link judgedPins} reads. The shell measures it and this module
+ * judges it, so a fixture can drive every verdict. A `zero` or `over-window`
+ * cell carries nothing more, because neither is ever evidence.
  */
-export interface PinObservation {
-  readonly maintainer: string
-  readonly cell: PinCell
-  /**
-   * Whether some pass paged the cell in full, serving as many names as the
-   * cell answered on that pass, a total above zero: zero names served meets a
-   * zero total, which is never evidence. Only a `paged` cell can be whole: a
-   * `redundant` or `disagrees` one was never paged.
-   */
-  readonly whole: boolean
-  /**
-   * The names the verdict rests on: the ones the window and refinement cells
-   * served for this owner when the cell was skipped as `redundant` or
-   * `disagrees`, and the ones the owner's own cell served when it was `paged`.
-   */
-  readonly names: readonly HarvestedName[]
+export type PinObservation =
+  | { readonly maintainer: string; readonly cell: 'zero' | 'over-window' }
+  | {
+    readonly maintainer: string
+    readonly cell: 'skipped'
+    /** The total the cell's probe answered. */
+    readonly total: number
+    /**
+     * How many distinct names of the owner's the window and refinement cells
+     * had served when the cell was skipped: the count the skip was decided on.
+     */
+    readonly servedWhenSkipped: number
+    /**
+     * The same count once the keyword's last pass has run, a retry pass
+     * included. It can only grow: a later pass can serve the owner a name the
+     * first pass omitted.
+     */
+    readonly servedAtEnd: number
+    /** The names `servedWhenSkipped` counted. */
+    readonly names: readonly HarvestedName[]
+  }
+  | {
+    readonly maintainer: string
+    readonly cell: 'paged'
+    /** Every pass that paged the cell, in order. */
+    readonly passes: readonly PinPass[]
+    /** Every name the cell served, over every pass. */
+    readonly names: readonly HarvestedName[]
+  }
+
+/**
+ * The names a pin's verdict rests on when its counts show the run was served
+ * as many of the owner's names as its own cell answered, and `undefined` when
+ * they do not: the half of {@link judgedPins}' rule that reads the counts.
+ */
+function evidenceOf(observation: PinObservation): readonly HarvestedName[] | undefined {
+  switch (observation.cell) {
+    case 'skipped':
+      // Equal when the cell was skipped: the window and refinement cells had
+      // served the owner exactly as many names as the cell answered. A smaller
+      // total contradicts what the run saw. A `maintainer:` qualifier that
+      // counts an owner's packages differently from their `maintainers` arrays
+      // can answer a set the window never showed, so such a skip is no
+      // evidence that the run saw every name the cell holds.
+      //
+      // And still equal at the end. A retry pass can serve the owner a name the
+      // first pass omitted, which leaves the cell answering fewer names than
+      // the run was served: the same disagreement, found after the skip.
+      return observation.servedWhenSkipped === observation.total
+        && observation.servedAtEnd === observation.servedWhenSkipped
+        ? observation.names
+        : undefined
+    case 'paged':
+      // Some pass served as many names as the cell answered on that pass, a
+      // total above zero. Zero names served meets a zero total, but a zero
+      // total is never evidence, and counted as whole it would let a short
+      // pass beside it be judged.
+      return observation.passes.some(pass => pass.answered > 0 && pass.served >= pass.answered)
+        ? observation.names
+        : undefined
+    default:
+      // A zero total is the registry's answer, which the eviction exit owns,
+      // and a cell over the window can never be paged in full.
+      return undefined
+  }
 }
 
 /**
@@ -820,35 +877,37 @@ export interface PinObservation {
  * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`, §4.2).
  *
  * An observation judges its pin when all three hold:
- * - the cell was `redundant`, or `paged` with `whole` set: the window and
- *   refinement cells had served exactly as many of the owner's names as the
- *   cell answered, or the cell's own paging served as many as it answered.
- *   Those are counts met, not a name-by-name match: `redundant` reads an
- *   equal count as the same names, which holds while the `maintainer:`
- *   qualifier and the `maintainers` arrays agree on which packages are the
- *   owner's. A zero total is the registry's answer, which the eviction exit
- *   owns; a cell over the window was never seen whole; one that served short
- *   on every pass left names unshown; and one that `disagrees` answered fewer
- *   names than were already seen, which shows the two disagreeing.
- * - `names` is not empty. No names is no evidence.
- * - every name lists at least one keyword. {@link isAtRisk} reads a name
- *   without keywords as not at risk, so a response that stopped carrying the
- *   field would leave seeding naming nobody and every probed pin read as
- *   released at once. Requiring the field is what shows the verdict came from
- *   the data it reads.
+ * - its counts were met. Either the cell was skipped because the window and
+ *   refinement cells had served exactly as many of the owner's names as it
+ *   answered, and they had served no more once the keyword's last pass had
+ *   run; or some pass of the cell's own paging served as many names as it
+ *   answered, a total above zero. Those are counts met, not a name-by-name
+ *   match: a skip reads an equal count as the same names, which holds while
+ *   the `maintainer:` qualifier and the `maintainers` arrays agree on which
+ *   packages are the owner's. A zero total, a cell over the window, a skip
+ *   whose count disagrees at the skip or by the end, and a cell that served
+ *   short on every pass are never evidence.
+ * - the names the counts rest on are not empty. No names is no evidence.
+ * - every one of those names lists at least one keyword. {@link isAtRisk}
+ *   reads a name without keywords as not at risk, so a response that stopped
+ *   carrying the field would leave seeding naming nobody and every probed pin
+ *   read as released at once. Requiring the field is what shows the verdict
+ *   came from the data it reads.
  *
- * A pin the run did not probe, such as one past the pinned half of the
- * budget, has no observation and is not judged. The result is sorted by code
- * unit and unique, and each name passes {@link isMaintainerName}, the grammar
- * a handoff's `seeded` and `evicted` are held to.
+ * Only a pin probed from the pinned half of the budget has an observation. A
+ * pin past that half has none, though the rotation can probe it: a rotated
+ * cell is no pin's own probe, so only the pinned half records evidence. The
+ * result is sorted by code unit and unique, and each name passes {@link
+ * isMaintainerName}, the grammar a handoff's `seeded` and `evicted` are held
+ * to.
  */
 export function judgedPins(observations: readonly PinObservation[]): string[] {
   const judged = new Set<string>()
-  for (const { maintainer, cell, whole, names } of observations) {
-    if (!isMaintainerName(maintainer)) continue
-    if (cell !== 'redundant' && !(cell === 'paged' && whole)) continue
-    if (names.length === 0 || names.some(name => name.keywords.length === 0)) continue
-    judged.add(maintainer)
+  for (const observation of observations) {
+    if (!isMaintainerName(observation.maintainer)) continue
+    const names = evidenceOf(observation)
+    if (names === undefined || names.length === 0 || names.some(name => name.keywords.length === 0)) continue
+    judged.add(observation.maintainer)
   }
   return [...judged].sort(compareStrings)
 }

@@ -3597,8 +3597,9 @@ describe('searchByKeywords', () => {
     // seeding did not name it. Judged means the run was served as many of the
     // owner's names under the keyword as the pin's own cell answered, so
     // seeding's silence about its owner is an answer rather than a gap in what
-    // was paged. The shell measures which pins that was; `judgedPins` in
-    // publisher-state.ts decides.
+    // was paged. The shell measures the counts that rests on; `judgedPins` in
+    // publisher-state.ts decides, and its fixtures own each rule. These cases
+    // check the run end to end: that it measures what those rules read.
     describe('which probed pins the run judged', () => {
       /** The run's `deepseek-harness` report, with `pinned` its pinned set and
        * an empty vocabulary, so every cell probed is a pin's. A budget of 4
@@ -3722,6 +3723,75 @@ describe('searchByKeywords', () => {
         const report = await judge(recording(hers({ inWindow: 2, cellTotal: 1 }), urls), ['pinowner'])
         expect(passesPaging(urls, 'pinowner')).toBe(0)
         expect(report?.judged).toEqual([])
+      })
+
+      /**
+       * `deepseek-harness` past its window by `dsh0`, which the `,dsh`
+       * refinement reaches, with `pinowner`'s first `hersInWindow` names
+       * heading the window. The FIRST pass's first window page omits
+       * `omitted` -- the documented short page -- so the union reads one name
+       * short and the keyword is paged again, and the retry serves it. Her
+       * cell answers `cell`. Every name lists `dsh`, so seeding names nobody.
+       */
+      const retried = (
+        { hersInWindow, omitted, cell }: { hersInWindow: number; omitted: string; cell: readonly string[] },
+      ): typeof fetch => {
+        const pkg = (name: string, owner?: string) => ({
+          package: { name, keywords: ['deepseek-harness', 'dsh'], maintainers: owner === undefined ? [] : [{ username: owner }] },
+        })
+        const window = [
+          ...Array.from({ length: hersInWindow }, (_, i) => pkg(`head${i}`, 'pinowner')),
+          ...Array.from({ length: SEARCH_WINDOW - hersInWindow }, (_, i) => pkg(`w${i}`)),
+        ]
+        let windowPages = 0
+        return (async (url: string | URL) => {
+          const params = new URL(String(url)).searchParams
+          const text = params.get('text') ?? ''
+          const from = Number(params.get('from') ?? '0')
+          const probe = params.get('size') === '1'
+          const answer = (total: number, objects: readonly object[]): Response =>
+            new Response(JSON.stringify({ total, objects: probe ? [] : objects }), { status: 200 })
+          if (text === 'keywords:deepseek-harness') {
+            const page = from > MAX_SEARCH_FROM ? [] : window.slice(from, from + 250)
+            const short = !probe && from === 0 && windowPages++ === 0
+            return answer(SEARCH_WINDOW + 1, short ? page.filter(o => o.package.name !== omitted) : page)
+          }
+          if (text === 'keywords:deepseek-harness,dsh') return answer(1, [pkg('dsh0')])
+          if (text === 'keywords:deepseek-harness maintainer:pinowner') {
+            return answer(cell.length, cell.map(name => pkg(name, 'pinowner')))
+          }
+          return answer(0, [])
+        }) as unknown as typeof fetch
+      }
+
+      it('does not judge a covered cell once a retry pass serves its owner more names than it answered', async () => {
+        // The window's first pass served her `head0` and `head1`, and her
+        // cell answered two, so it was skipped as covered. The retry serves
+        // `head2`, which that pass omitted: the window has now served her
+        // three names against a cell answering two, the two counting
+        // differently exactly as a cell answering fewer at the skip does
+        // (design 2026-10-20, section 4.2). Her cell holds `y`, which nothing
+        // served. Judged on the count the skip saw, she would be released.
+        const urls: string[] = []
+        const report = await judge(
+          recording(retried({ hersInWindow: 3, omitted: 'head2', cell: ['head0', 'y'] }), urls), ['pinowner'])
+        expect(urls.filter(url => url.includes('text=keywords:deepseek-harness&size=250&from=0'))).toHaveLength(2)
+        expect(report?.pinnedProbed).toBe(1)
+        expect(passesPaging(urls, 'pinowner')).toBe(0)
+        expect(report?.seeded).toEqual([])
+        expect(report?.judged).toEqual([])
+      })
+
+      it('still judges a covered cell when the retry pass serves its owner nothing new', async () => {
+        // The control: the same retry, but the name the first pass omitted is
+        // another owner's, so the window served her as many names as her
+        // cell answered before the retry and after it.
+        const urls: string[] = []
+        const report = await judge(
+          recording(retried({ hersInWindow: 2, omitted: 'w0', cell: ['head0', 'head1'] }), urls), ['pinowner'])
+        expect(urls.filter(url => url.includes('text=keywords:deepseek-harness&size=250&from=0'))).toHaveLength(2)
+        expect(passesPaging(urls, 'pinowner')).toBe(0)
+        expect(report?.judged).toEqual(['pinowner'])
       })
 
       it('does not judge a zero-total pin, or one over the window', async () => {
