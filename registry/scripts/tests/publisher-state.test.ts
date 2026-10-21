@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import {
   MAINTAINER_MAX_LENGTH, MAX_EVICTIONS_PER_RUN, MAX_PINNED_KEYWORDS, MAX_PINNED_PER_KEYWORD, MAX_PUBLISHERS,
   MIN_PROBE_BUDGET_PER_KEYWORD, PinObservation, PublisherState, advanceCursor, allocateProbeBudgets, applyAxisReport,
-  atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, judgedPins, mergePublishers, parsePublisherState,
+  atRiskNameCount, atRiskOwners, cursorFor, earnsPin, isMaintainerName, judgedPins, mergePublishers, parsePublisherState,
   pinFor, probeOrder, retainPinned, seedableNames, serializePublisherState, unpinFor,
 } from '../src/publisher-state.ts'
 import { HARVEST_KEYWORDS, PUBLISHER_PROBE_BUDGET_DEFAULT } from '../src/npm-client.ts'
@@ -392,6 +392,40 @@ describe('seedableNames', () => {
     // A run whose feed is unavailable has no carriers, so seeding reads what it
     // read before the feed was asked.
     expect(seedableNames(new Map([['a', A], ['b', B]]), new Set<string>())).toEqual([A, B])
+  })
+})
+
+describe('earnsPin', () => {
+  // `fresh` is what one rotated cell added to the keyword's union this run;
+  // `carried` is the change feed's carriers for the keyword, name to owner, of
+  // which only the keys are read (design 2026-10-20, section 4.1).
+  const carried = new Map([['dsh-c', 'carol']])
+
+  it('earns a pin for a cell that supplied a name the change feed does not carry', () => {
+    expect(earnsPin(['plain'], carried)).toBe(true)
+  })
+
+  it('earns nothing for a cell whose every new name the feed carries', () => {
+    // A pin for its owner would reach nothing the feed step does not already
+    // reach: that step credits such a name, or declines it only after the
+    // owner's own cell omitted it twice.
+    expect(earnsPin(['dsh-c'], carried)).toBe(false)
+  })
+
+  it('earns when SOME new name is beyond the feed, not only when every one is', () => {
+    expect(earnsPin(['dsh-c', 'plain'], carried)).toBe(true)
+  })
+
+  it('earns nothing for a cell that supplied no new name, whatever the feed holds', () => {
+    // A cell that only served names the union already held reached nothing a
+    // pin is needed for; what it served is not what it supplied.
+    expect(earnsPin([], new Set<string>())).toBe(false)
+  })
+
+  it('earns for any new name when the feed carries none', () => {
+    // A run whose feed is unavailable has no carriers, so earning is what it
+    // was before the feed existed.
+    expect(earnsPin(['dsh-c'], new Set<string>())).toBe(true)
   })
 })
 
