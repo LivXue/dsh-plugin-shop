@@ -304,6 +304,11 @@ and publisher cells. It is memoized like `publisherCells`, so the
 retry pass repeats none of its requests.
 
 1. **Feed-only names** are carriers of K that are not in `forKeyword`.
+   Amended 2026-10-20: the step now runs after the cross-keyword credit
+   (`2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`, §3.2), so
+   a carrier another harvest keyword's search page served, its object
+   listing K exactly, is already in `forKeyword`. It is not feed-only,
+   and is neither verified nor counted in `feed supplied`.
 2. **Verification.** Group the feed-only names by owner. Choose up to
    `FEED_VERIFY_OWNERS` owners in code-unit order, rotated by the next
    state's `seq`, so successive runs check different owners when there
@@ -366,7 +371,11 @@ The step runs after the publisher cells, so the publisher axis
 selects, probes, earns and evicts exactly as before; the feed only
 fills what the axis left. Running it first, so that the probe pool is
 spent only on residue the filter cannot see, is the #38 follow-up. It
-changes eviction dynamics, so it is not part of this change.
+changes eviction dynamics, so it is not part of this change. Amended
+2026-10-20: the step still runs after the publisher cells, but seeding
+and earning now leave its carriers out, so the pins, though not the
+rotation, go to names the feed does not carry
+(`2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`, §4.1).
 
 Verification pages are search pages, so the maintainers they carry join
 the publisher vocabulary as every page's do; at-risk seeding does not
@@ -441,7 +450,12 @@ line's `owners verified V of T` shows it.
   -- two pagings omitting a name are the question, not the verdict. U
   and C tell those causes apart (amended 2026-10-06, PR #76 review). E
   is the keyword's final count, after any retry pass, and R the total
-  it is measured against.
+  it is measured against. Amended 2026-10-20
+  (`2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`, §3.3):
+  `M served under another harvest keyword;` now precedes `enumerated`,
+  printed only when M is not zero, where M counts the names another
+  harvest keyword's search pages added to K's union, each listing K
+  exactly; E includes them.
 - E includes credited feed names, so a keyword the feed closes reads
   whole whether its credits were verified or not. The count is printed
   on every run, whole or short, so a keyword made whole by crediting

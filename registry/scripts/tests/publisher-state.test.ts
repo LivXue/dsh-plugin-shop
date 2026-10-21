@@ -752,10 +752,10 @@ describe('judgedPins', () => {
   })
 
   it('does not judge a cell whose total is below what the window served its owner, though it judges an equal one', () => {
-    // Both were skipped unpaged. An equal total says the window and refinement
-    // cells showed every name the cell holds; a smaller one contradicts what
-    // the run saw, so it is no evidence that they did. Same names, same
-    // `whole`: only the cell kind differs.
+    // Both were skipped unpaged. An equal total is the evidence that the
+    // window and refinement cells showed every name the cell holds; a smaller
+    // one contradicts what the run saw, so it is no evidence that they did.
+    // Same names, same `whole`: only the cell kind differs.
     expect(judgedPins([
       observe({ maintainer: 'equal', cell: 'redundant', whole: false, names: [kw] }),
       observe({ maintainer: 'fewer', cell: 'disagrees', whole: false, names: [kw] }),
@@ -840,8 +840,9 @@ describe('applyAxisReport', () => {
     // that only runs once a keyword partitions. Without this the pinned set of
     // a keyword still inside its window is MONOTONE -- it climbs to the bound
     // and then reports itself FULL about a set nothing has ever probed. Under
-    // the window every name was paged, so `seeded` IS the whole at-risk owner
-    // set and a pin it omits has stopped being at risk.
+    // the window every name was paged, so `seeded` names every owner of an
+    // at-risk name the change feed does not carry, and a pin it omits holds
+    // none.
     const after = applyAxisReport(
       base({ pinned: { k: ['gone', 'still'] } }),
       outcome({ seedingComplete: true, seeded: ['still'] }),
@@ -865,10 +866,10 @@ describe('applyAxisReport', () => {
 
   it('releases a judged pin that seeding no longer names, and keeps one it did not judge', () => {
     // Past the window `seeded` is only what the sweep showed, which is why an
-    // unjudged pin stays. A judged one leaves because its OWN cell showed every
-    // name its owner holds under the keyword, so seeding's silence about it is
-    // a complete answer rather than a gap in what was paged. `kept` is judged
-    // too, but seeding still names it, so it stays.
+    // unjudged pin stays. A judged one leaves because the run was served as
+    // many of its owner's names as its OWN cell answered, so seeding's silence
+    // about it is a complete answer rather than a gap in what was paged.
+    // `kept` is judged too, but seeding still names it, so it stays.
     const after = applyAxisReport(
       base({ pinned: { k: ['judged-gone', 'kept', 'unjudged'] } }),
       outcome({ seeded: ['kept'], judged: ['judged-gone', 'kept'] }),

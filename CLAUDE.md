@@ -106,6 +106,22 @@ This project would rather stop than publish something plausible and wrong. Concr
   unavailable feed is today's search-only harvest, which the cap of 14
   fails on any day search alone leaves more than 14 names short.
 
+  **A name counts toward every harvest keyword its search object lists,
+  and a pin is seeded and earned only for what the feed does not carry**
+  (`docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`).
+  A name any search page of the run served joins keyword K's coverage
+  when that page's object lists K exactly, whichever keyword's cell
+  served it, which is why every harvest keyword is paged before any is
+  judged; the credit changes what coverage counts, never what the gate
+  admits, and the coverage line counts it apart. Pins are seeded and
+  earned only from names the change feed does not carry, because the
+  feed credits a carrier whenever no search cell serves it. Past the
+  window a pin no longer leaves only on a confirmed zero: one this run
+  judged -- its cell's total met by the names the run was served for
+  its owner -- that seeding no longer names is released, unbounded by
+  `MAX_EVICTIONS_PER_RUN`, though a report whose evictions that cap
+  refused releases nothing.
+
   **`keywords:deepseek-harness` HAS NOW CROSSED that window** and the overshoot grows about eighty-three names a day — measured, and three times the "thirty" the code used to say. Everything about the current position is re-derived in `PARTITION_KEYWORDS`' comment in `npm-client.ts`: the totals, the tail, which refinements actually reach beyond the window and why the rest are redundant. Read it there rather than trusting this paragraph — no figure is restated here, because three copies of it had already drifted apart on one date. The structural options are policy — they change what gets published or how loudly the build fails — and are listed in the design doc's 2026-09-08 amendment.
 - A package that cannot be fetched becomes a `fetch-failed` rejection in the build report. Nothing disappears without a reason attached to its name.
 - **A listed npm package the harvest no longer returns is read once** (design 2026-09-26-market-borrowings §8). One whose latest version still carries a harvest keyword undeprecated is carried: it joins the candidates and is counted in no keyword's coverage. Any other leaves with one row on that build, `deprecated` quoting the author's message or `npm-gone` naming the cause. This runs where the npm harvest runs, `classify.ts` included, because the classifier prunes the category rows of names it does not hold. A github entry whose patch inserts a module its pinned commit does not resolve is refused `requires-build`, and the Detail names the file; the check's marker and reason live in `repo-state.json` — a checked marker is written for an answer, never for a transport failure — and a release-rescued repository is exempt, because the archive it installs was itself held to the same rule (design 2026-09-26-market-borrowings §9).

@@ -542,7 +542,7 @@ export function parsePublisherAxisReport(value: unknown, where: string): Publish
   }
   // Complete seeding means the keyword enumerated whole INSIDE its window, so
   // it cannot be claimed by a record that also reports a partition — and it is
-  // what licenses removing a pin.
+  // what licenses releasing a pin no probe judged.
   if (r.seedingComplete && r.partitioned) {
     throw new Error(`${where}: publisher axis record for \`${r.keyword}\` claims complete seeding and a partition, which cannot both be true; re-run the harvest that wrote it`)
   }
@@ -571,8 +571,8 @@ export function parsePublisherAxisReport(value: unknown, where: string): Publish
   // A pin is judged only by its own probe, so `judged` can name no more pins
   // than the run probed -- none at all for a keyword inside its window. Unlike
   // the counters above, this list REMOVES pins: wherever seeding is not
-  // complete, it is the only thing that lets a pin seeding does not name
-  // leave (design
+  // complete, it and a confirmed zero-total eviction are the only ways a pin
+  // leaves (design
   // `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`, §4.2).
   const judged = names('judged')
   if (judged.length > pinnedProbed) {
@@ -2697,15 +2697,20 @@ export async function searchByKeywords(
      * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
      * §4.2), which is why every pin's cell is recorded in `pinSeen`, whatever
      * became of it. `judgedPins` decides; this only measures. Judged is not
-     * "supplied nothing": it means the run saw every name the pin's cell
-     * holds -- skipped because the window and refinement cells had already
-     * served exactly as many as it answered, or paged in full on some pass --
-     * so seeding's silence about its owner is an answer. A cell that merely
-     * fails the filters below, or served short of its own total, is left in
-     * place for the next run to probe again, exactly as an un-pinned rotated
-     * cell is (design doc §3) — a rule evicting on "supplied nothing" would
-     * empty the pinned set during exactly the days seeding exists to prepare
-     * for.
+     * "supplied nothing": it means the run was served as many of the owner's
+     * names as the pin's cell answered -- skipped because the window and
+     * refinement cells had already served exactly as many, or paged in full
+     * on some pass -- so seeding's silence about its owner is an answer.
+     * Those are counts met, not a name-by-name match, which is why a cell
+     * skipped for answering FEWER names than the window served its owner is
+     * recorded as `disagrees` and never judged: there the `maintainer:`
+     * qualifier and the `maintainers` arrays disagree on which packages are
+     * the owner's. A pin the filters below skip unjudged (over the window, or
+     * disagreeing), or whose cell served short of its own total on every
+     * pass, is left in place for the next run to probe again, exactly as an
+     * un-pinned rotated cell is (design doc §3) — a rule evicting on
+     * "supplied nothing" would empty the pinned set during exactly the days
+     * seeding exists to prepare for.
      */
     const selectPublisherCells = async (): Promise<{ pinned: Cell[]; rotated: Cell[] }> => {
       const pinnedCells: Cell[] = []
