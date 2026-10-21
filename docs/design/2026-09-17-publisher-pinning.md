@@ -198,7 +198,8 @@ The probe is no longer the only exit past the window
 leaves when this run judged it and seeding did not name it, judged meaning
 that the run probed it and was served as many of its owner's names as its
 cell answered, either by the window and refinement cells (an equal total,
-so the cell was skipped) or by the cell's own paging on some pass. That
+so the cell was skipped, and still equal once the keyword's last pass had
+run) or by the cell's own paging on some pass. That
 exit is not bounded by `MAX_EVICTIONS_PER_RUN`, but a report whose
 evictions that bound refused releases nothing, on this exit or the
 complete-seeding one above, which, since seeding reads only the names the

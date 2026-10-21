@@ -202,16 +202,18 @@ not name it.
 **Judged** means the pin was probed this run and one of the following
 holds:
 - its cell was skipped because the window and refinement cells had already
-  served exactly as many of its names as the cell answered;
+  served exactly as many of its names as the cell answered, and they had
+  served no more of them once the keyword's last pass had run;
 - some pass paged its cell in full, serving as many names as the cell
   answered on that pass, a total above zero.
 
 **Not judged** are:
-- a pin past the pinned half of the budget;
+- a pin past the pinned half of the budget, even one the rotation probes;
 - a zero-total probe, whether confirmed or not;
 - a cell over the window;
 - a cell skipped because it answered fewer names than the window and
-  refinement cells had already served its owner (`disagrees`);
+  refinement cells had served its owner, when it was skipped or once the
+  keyword's last pass had run (the counts disagree);
 - a cell that served short of its own total on every pass.
 
 **What equal counts establish.** Each way of being judged is a count met:
@@ -222,8 +224,10 @@ answered.
   `maintainer:` qualifier counts the same packages as the `maintainers`
   arrays on the objects those cells served.
 - A cell answering fewer names than those cells served its owner shows the
-  two counting differently. That skip is recorded as `disagrees` and is
-  never evidence.
+  two counting differently, and such a skip is never evidence. The
+  difference can show only after the skip: a retry pass can serve the owner
+  a name the first pass omitted, so the count is read again at the end of
+  the run.
 - A paging pass whose cell answered a total of zero never counts as paged
   in full. Zero names served meets a zero total, and a zero total is never
   evidence.
@@ -287,9 +291,16 @@ These are estimates from 2026-10-20's data, not guarantees.
   sits beside the final count on the report.
 - **No new requests.** Cross credit reads fields already fetched. Feed-aware
   pins change which owners are probed, not how many probes are made.
-- **The pure core keeps every policy decision.** The at-risk filter and the
-  release rule live in `publisher-state.ts`. The shell only measures which
-  pins were judged.
+- **The pure core keeps every policy decision.** The at-risk filter
+  (`seedableNames`), the earning rule (`earnsPin`), the evidence rules that
+  judge a pin (`judgedPins`) and the release rule (`applyAxisReport`) live
+  in `publisher-state.ts`. The shell only measures:
+  - for a pin whose cell it skipped, the cell's total, and how many of the
+    owner's names the window and refinement cells had served when it was
+    skipped and once the last pass had run;
+  - for a pin whose cell it paged, each pass's total and how many names
+    that pass served;
+  - for a rotated cell, the names it added to the union.
 
 ## 7. Testing
 
@@ -305,15 +316,20 @@ These are estimates from 2026-10-20's data, not guarantees.
   - Skipped as redundant: judged.
   - Paged in full: judged.
   - Served short on every pass: not judged.
-  - Skipped with a total below what the window served (`disagrees`): not
-    judged.
+  - Skipped with a total below what the window served: not judged.
+  - Skipped as redundant, then a retry pass serves the owner a name past
+    the cell's total: not judged.
   - A pass whose cell answered zero: not paged in full.
   - Zero total: not judged.
   - Over the window: not judged.
   - Any name without keywords: not judged.
-- **Seeding and earning** ignore carriers.
+  - A pin past the pinned half, probed by the rotation: not judged.
+- **Seeding and earning** ignore carriers, and earning reads only the names
+  a cell added to the union.
 
 `publisher-state.test.ts`:
+- `judgedPins` and `earnsPin` own their rules: a fixture drives every
+  verdict.
 - `applyAxisReport` releases judged pins that seeding did not name.
 - It keeps unjudged pins and seeded pins.
 - It releases nothing for a keyword with no record.

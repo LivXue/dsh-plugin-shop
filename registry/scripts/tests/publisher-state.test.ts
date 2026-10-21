@@ -750,78 +750,108 @@ describe('the pinned map cannot grow without bound or keep a key nothing uses', 
 })
 
 describe('judgedPins', () => {
+  // The rules that decide whether a probed pin's cell is evidence live here,
+  // and an observation carries the raw counts they are decided on. These cases
+  // replace the ones written against `redundant`, `disagrees` and `whole`: the
+  // shell used to decide those itself, so no fixture could reach either rule
+  // (design 2026-10-20, section 6, "the shell only measures").
+  //
   // A name as a search served it: its keywords list the harvest keyword.
   const kw = { keywords: ['k'], maintainers: ['u'] }
   // One whose `keywords` came back empty, which `isAtRisk` reads as not at risk.
   const bare = { keywords: [], maintainers: ['u'] }
-  // Judged unless a case overrides what stops it, so each case below changes
-  // one field and the field is what its verdict is about.
-  const observe = (over: Partial<PinObservation> = {}): PinObservation =>
-    ({ maintainer: 'u', cell: 'paged', whole: true, names: [kw], ...over })
+  type Skipped = Extract<PinObservation, { cell: 'skipped' }>
+  type Paged = Extract<PinObservation, { cell: 'paged' }>
+  // Each is judged unless a case overrides what stops it, so each case below
+  // changes one field and the field is what its verdict is about. The skipped
+  // cell answered one name, and the window and refinement cells had served its
+  // owner one when it was skipped and still one at the end; the paged cell's
+  // one pass served the one name it answered.
+  const skipped = (over: Partial<Skipped> = {}): PinObservation =>
+    ({ maintainer: 'u', cell: 'skipped', total: 1, servedWhenSkipped: 1, servedAtEnd: 1, names: [kw], ...over })
+  const paged = (over: Partial<Paged> = {}): PinObservation =>
+    ({ maintainer: 'u', cell: 'paged', passes: [{ answered: 1, served: 1 }], names: [kw], ...over })
 
-  it('judges a pin whose cell was skipped as redundant', () => {
-    // The window and refinement cells had already served as many of its names
-    // as the cell answered, so there was nothing left for the cell to page and
-    // `whole` is false because nothing paged it.
-    expect(judgedPins([observe({ cell: 'redundant', whole: false, names: [kw] })])).toEqual(['u'])
+  it('judges a pin whose cell was skipped because the run had served as many of its names as it answered', () => {
+    expect(judgedPins([skipped()])).toEqual(['u'])
   })
 
-  it('judges a pin whose cell some pass paged in full', () => {
-    expect(judgedPins([observe({ cell: 'paged', whole: true, names: [kw] })])).toEqual(['u'])
+  it('does not judge a skipped cell that answered fewer names than the run had served its owner', () => {
+    // Skipped unpaged all the same, but the registry's count contradicts what
+    // the run saw: a `maintainer:` qualifier counting an owner's packages
+    // differently from their `maintainers` arrays can answer a set the window
+    // never showed, so the skip is no evidence that the run saw every name the
+    // cell holds.
+    expect(judgedPins([skipped({ total: 1, servedWhenSkipped: 2, servedAtEnd: 2, names: [kw, kw] })])).toEqual([])
+  })
+
+  it('does not judge a covered cell once a later pass served its owner more names than it answered', () => {
+    // Equal when it was skipped, and then the retry pass served the owner a
+    // name the first pass omitted: the same disagreement as a smaller total,
+    // found after the skip. The count the skip was decided on is not the
+    // verdict.
+    expect(judgedPins([skipped({ total: 2, servedWhenSkipped: 2, servedAtEnd: 3, names: [kw, kw] })])).toEqual([])
+  })
+
+  it('judges a pin whose cell some pass paged in full, whichever pass that was', () => {
+    // SOME pass, not every one: a short pass, the documented 249-of-250 page,
+    // does not undo a whole one beside it, before it or after it.
+    const three = [kw, kw, kw]
+    expect(judgedPins([paged({ passes: [{ answered: 3, served: 2 }, { answered: 3, served: 3 }], names: three })])).toEqual(['u'])
+    expect(judgedPins([paged({ passes: [{ answered: 3, served: 3 }, { answered: 3, served: 2 }], names: three })])).toEqual(['u'])
   })
 
   it('does not judge a pin whose cell served short of its own total on every pass', () => {
     // Names the owner holds under `K` were never shown, so seeding's silence
     // about it proves nothing.
-    expect(judgedPins([observe({ cell: 'paged', whole: false, names: [kw] })])).toEqual([])
+    expect(judgedPins([paged({ passes: [{ answered: 4, served: 3 }, { answered: 4, served: 3 }], names: [kw, kw, kw] })])).toEqual([])
+  })
+
+  it('does not count a pass whose cell answered zero as one that served it whole', () => {
+    // Zero names served meets a zero total, but a zero total is never
+    // evidence: npm has answered an empty result for a real cell. Taken as
+    // whole, the zero pass would let the short pass beside it be judged.
+    expect(judgedPins([paged({ passes: [{ answered: 0, served: 0 }, { answered: 4, served: 3 }], names: [kw, kw, kw] })])).toEqual([])
   })
 
   it('does not judge a zero-total probe, whether or not it was confirmed', () => {
-    // `whole` and the names would otherwise qualify; the cell kind alone refuses.
-    expect(judgedPins([observe({ cell: 'zero', whole: true, names: [kw] })])).toEqual([])
+    // The registry's answer, which the eviction exit owns.
+    expect(judgedPins([{ maintainer: 'u', cell: 'zero' }])).toEqual([])
   })
 
   it('does not judge a cell over the window, which cannot be paged in full', () => {
-    expect(judgedPins([observe({ cell: 'over-window', whole: true, names: [kw] })])).toEqual([])
+    expect(judgedPins([{ maintainer: 'u', cell: 'over-window' }])).toEqual([])
   })
 
-  it('does not judge a cell whose total is below what the window served its owner, though it judges an equal one', () => {
-    // Both were skipped unpaged. An equal total is the evidence that the
-    // window and refinement cells showed every name the cell holds; a smaller
-    // one contradicts what the run saw, so it is no evidence that they did.
-    // Same names, same `whole`: only the cell kind differs.
-    expect(judgedPins([
-      observe({ maintainer: 'equal', cell: 'redundant', whole: false, names: [kw] }),
-      observe({ maintainer: 'fewer', cell: 'disagrees', whole: false, names: [kw] }),
-    ])).toEqual(['equal'])
+  it.each([
+    ['paged', paged({ passes: [{ answered: 2, served: 2 }], names: [kw, bare] })],
+    ['skipped', skipped({ total: 2, servedWhenSkipped: 2, servedAtEnd: 2, names: [kw, bare] })],
+  ] as const)('does not judge a %s cell whose verdict rests on a name with no keywords', (_cell, observation) => {
+    // `isAtRisk` reads a name with no keywords as not at risk, so a response
+    // that stopped carrying the field would make seeding name nobody and
+    // every probed pin read as released at once. Requiring the field is what
+    // shows the verdict came from the data it reads.
+    expect(judgedPins([observation])).toEqual([])
   })
 
-  it.each(['paged', 'redundant'] as const)(
-    'does not judge a %s verdict that rests on a name with no keywords',
-    cell => {
-      // `isAtRisk` reads a name with no keywords as not at risk, so a response
-      // that stopped carrying the field would make seeding name nobody and
-      // every probed pin read as released at once. Requiring the field is what
-      // shows the verdict came from the data it reads.
-      expect(judgedPins([observe({ cell, whole: cell === 'paged', names: [kw, bare] })])).toEqual([])
-    },
-  )
-
-  it('does not judge a pin with no names to judge it by: no evidence', () => {
-    expect(judgedPins([observe({ cell: 'redundant', whole: false, names: [] })])).toEqual([])
+  it('does not judge a pin with no names to judge it by, whatever its counts claim', () => {
+    // No names is no evidence. A run cannot produce this -- a count met is a
+    // count of names the run holds -- so it is a malformed observation, and
+    // refused like one.
+    expect(judgedPins([skipped({ names: [] }), paged({ names: [] })])).toEqual([])
   })
 
   it('returns each judged maintainer once, sorted by code unit', () => {
     const judged = judgedPins([
-      observe({ maintainer: 'zb' }),
-      observe({ maintainer: 'za' }),
-      observe({ maintainer: 'za' }),
+      paged({ maintainer: 'zb' }),
+      skipped({ maintainer: 'za' }),
+      paged({ maintainer: 'za' }),
     ])
     expect(judged).toEqual(['za', 'zb'])
   })
 
   it('returns nothing for a maintainer outside the username grammar', () => {
-    expect(judgedPins([observe({ maintainer: 'Not A Name' })])).toEqual([])
+    expect(judgedPins([paged({ maintainer: 'Not A Name' }), skipped({ maintainer: 'Not A Name' })])).toEqual([])
   })
 })
 
