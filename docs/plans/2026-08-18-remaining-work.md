@@ -87,6 +87,24 @@ These block a real launch, not the code.
    Issue #38 -- search alone reaching the residue -- stays open: on a
    day the feed cannot be read the harvest is search's alone, and that
    day now fails the build.
+
+   -> Amended 2026-10-21: from 2026-10-19 every catalog run but one
+   stopped at Classify on `keywords:deepseek-harness`'s tail cap, and a
+   red run commits nothing.
+   [2026-10-20-cross-keyword-credit-and-feed-aware-pins.md](../design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md)
+   holds the runs (§0), the census behind them (§1) and the fix, built on
+   branch `fix/tail-cross-keyword-pins`: a name counts toward every
+   harvest keyword its search object lists, pins are seeded and earned
+   only for names the change feed does not carry, and a judged pin that
+   seeding no longer names is released. Two things wait:
+   - The pins move only once a run passes and commits
+     `registry/publisher-state.json`. Until one does, every run starts
+     from the pinned set the last passing run left (§0, §4.3).
+   - The stale-carrier change is deferred to its own PR (§2, §8). npm's
+     replication feed emits no row for an unpublish, so a carrier npm has
+     since unpublished goes on being credited, and removing those credits
+     raises the reported shortfall by as many names, which is why it
+     follows this fix.
 6. **dsh 0.1.7 — two open questions, raised 2026-09-26.** The shop is ready
    for it ([2026-09-26-dsh-017-readiness.md](../design/2026-09-26-dsh-017-readiness.md))
    and runs on 0.1.5-rc.3 and 0.1.7-rc.2 alike, but two things are not code
