@@ -1486,14 +1486,18 @@ export const KEYWORDS_MAX_COUNT = 128
  * PEERS_MAX_COUNT}), which both pair a count bound with a length bound.
  *
  * Its reach is narrower than those two, and worth stating exactly rather than
- * by analogy: {@link keywordsOf} has one call site, which fills
- * `HarvestedName.keywords`, which only `isAtRisk` reads — so a keyword this
- * field returns reaches `atRiskOwners`/`atRiskNameCount` and stops there.
- * Those return usernames and a count; no keyword of a package leaves them,
- * and none reaches `plugins.json` or the build report (the axis line prints
- * the HARVEST keyword, a `HARVEST_KEYWORDS` literal, never a package's own
- * tag). The bound is therefore defence in depth on registry-controlled input
- * held in memory for the length of a run, not a guard on a published byte.
+ * by analogy: {@link keywordsOf} has two call sites, both in the search
+ * paging loop. One fills `HarvestedName.keywords`, which only `isAtRisk`
+ * reads — so a keyword it returns reaches `atRiskOwners`/`atRiskNameCount`
+ * and stops there. The other fills the run's `indexedKeywords`, which only
+ * `creditAcross` reads, comparing each entry to a harvest keyword. Those
+ * return usernames, a count and union membership; no keyword of a package
+ * leaves them, and none reaches `plugins.json` or the build report (the axis
+ * and coverage lines print the HARVEST keyword, a `HARVEST_KEYWORDS` literal,
+ * never a package's own tag). The bound is therefore defence in depth on
+ * registry-controlled input held in memory for the length of a run, not a
+ * guard on a published byte, and a keyword either bound drops can only go
+ * uncredited across keywords, never be credited wrongly.
  * 128 matches the sibling bounds rather than a fresh measurement: no real npm
  * keyword approaches it, so this is a defensive ceiling, not a trim of an
  * observed tail.
@@ -1508,7 +1512,9 @@ export const KEYWORD_MAX_LENGTH = 128
  * The keywords one search object declares. The bytes are already fetched and
  * parsed — the paging loop reads {@link maintainersOf} off this same object —
  * so reading this field costs no request. It is what decides whether a name is
- * reachable by any refinement cell at all; see `atRiskOwners`.
+ * reachable by any refinement cell at all, see `atRiskOwners`, and whether a
+ * harvest keyword other than the one whose cell served the name may count it,
+ * see `creditAcross` in {@link searchByKeywords}.
  */
 export function keywordsOf(pkg: unknown): string[] {
   if (typeof pkg !== 'object' || pkg === null) return []
@@ -2261,6 +2267,17 @@ export function toCandidate(packument: unknown): Candidate | null {
  * shortfall exactly and share one per-keyword noise allowance. Larger gaps
  * must satisfy the window bound, recovery floor and residual cap.
  *
+ * Every keyword is paged before any is judged (design
+ * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
+ * section 3.2). Phase one pages every keyword's search cells: window,
+ * refinement, oversized and publisher cells. Phase two judges each keyword in
+ * turn, and first credits across keywords: a name any search page of the run
+ * served joins the keyword's union when that page's object lists the keyword
+ * exactly, whichever keyword's cell served it. The coverage line counts those
+ * names apart, so a keyword the credit makes whole shows how. The credit
+ * decides coverage only, never what is harvested: every name a page served
+ * is in the result either way.
+ *
  * Harvesting by keyword rather than by name pattern is deliberate: a name
  * pattern is trivially spoofed. A keyword search that cannot complete
  * aborts the harvest — harvesting only the keywords that answered would
@@ -2335,13 +2352,25 @@ export async function searchByKeywords(
    * The change feed's carriers for this run (spec 2026-10-04, section
    * 4.5): per harvest keyword, each carrier's owner. Credited after the
    * publisher cells, so the axis selects, probes, earns and evicts exactly
-   * as before. An empty map -- the default, and what an unavailable feed
-   * passes -- is today's harvest exactly.
+   * as before, and after the cross-keyword credit, so a carrier another
+   * keyword's page served is not feed-only. An empty map -- the default,
+   * and what an unavailable feed passes -- is today's harvest exactly.
    */
   feed: FeedInput = NO_FEED,
 ): Promise<string[]> {
   const publishers = publisherState.publishers
   const seen = new Set<string>()
+  /**
+   * Every name a search page served this run, under any harvest keyword, to
+   * the keywords its object listed: what each keyword's `creditAcross` reads
+   * (design `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
+   * section 3.1). Filled by every `pageCell` call, so by window, refinement,
+   * oversized, publisher and verification cells alike, and by nothing else: a
+   * probe reads a total, never a page. FIRST observation wins, for the reason
+   * `harvested` gives in `pageCell`: every page serving a name carries the
+   * same registry record.
+   */
+  const indexedKeywords = new Map<string, readonly string[]>()
   const probe = (cell: Cell): Promise<number> =>
     searchTotal(cell, fetchImpl, sleep, token, backupRegistry, timeoutMs)
   /**
@@ -2365,18 +2394,18 @@ export async function searchByKeywords(
      * name set, never a counter: the window sweep and a refinement cell serve
      * many of the same names, so occurrences over-count and would let the
      * redundancy filter below skip a cell that really does hold something new.
-     * Being a set also makes it idempotent, which matters because `enumerate`
+     * Being a set also makes it idempotent, which matters because `search`
      * runs twice on the retry path.
      */
     tally?: Map<string, Set<string>>,
     /**
      * Where to collect this page's names for the at-risk rule, keyed to one
-     * harvest keyword's run and, within it, by package name — `enumerate()`
+     * harvest keyword's run and, within it, by package name — `search()`
      * re-runs every cell on the retry path, and a partitioned keyword's
      * publisher cells can re-serve a name its window cell already supplied,
      * so an unkeyed collection would count one name's at-risk observation
      * more than once. Optional so a caller that has no use for it — none yet
-     * does, outside the per-keyword loop below — pays nothing extra.
+     * does, outside `keywordRun` below — pays nothing extra.
      */
     harvested?: Map<string, HarvestedName>,
   ): Promise<number> => {
@@ -2423,6 +2452,11 @@ export async function searchByKeywords(
         if (typeof found === 'string') {
           seen.add(found)
           into.add(found)
+          // Indexed whichever keyword's cell served it, since another harvest
+          // keyword's union may count it (`creditAcross`). Kept apart from
+          // `harvested` below, which belongs to one keyword's run and takes
+          // that run's first observation, not the whole run's.
+          if (!indexedKeywords.has(found)) indexedKeywords.set(found, keywordsOf(object?.package))
         }
         const owners = maintainersOf(object?.package)
         observed.push(...owners)
@@ -2433,7 +2467,7 @@ export async function searchByKeywords(
         // duplicate it. FIRST observation wins rather than last: a name is
         // served many times over one keyword's run (the window sweep, then
         // most of the refinement cells, then the publisher cells, and the
-        // whole of `enumerate` twice), and every one of those carries the same
+        // whole of `search` twice), and every one of those carries the same
         // registry record, so overwriting rebuilt an identical value — a
         // fresh Set, a spread and an object literal — some fifteen thousand
         // times per keyword to no effect.
@@ -2470,14 +2504,19 @@ export async function searchByKeywords(
   /**
    * Every keyword's partition, measured before ANY of them is paged.
    *
-   * Hoisted out of the loop below for one reason: the probe budget is
+   * Hoisted out of `keywordRun` below for one reason: the probe budget is
    * allocated by demand, and a demand-proportional split cannot be computed
    * from the first keyword's tail alone. It costs no extra request on a run
    * that completes — `partitionKeyword` is still called exactly once per
-   * keyword — and on a run that throws while paging, it has spent the LATER
-   * keyword's refinement probes early. The converse is the better half of
-   * the trade: a keyword no refinement splits now throws before the earlier
-   * keyword pages five thousand names it is about to discard.
+   * keyword — and on a run that throws while paging the earlier keyword, it
+   * has spent the LATER keyword's refinement probes early. A run that throws
+   * while JUDGING a keyword has spent far more than that now, and not because
+   * of this hoist: both keywords are paged before either is judged (design
+   * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
+   * section 3.2), so the later keyword's pages are spent on a run that is red
+   * either way. The converse is the better half of the trade: a keyword no
+   * refinement splits still throws before any keyword pages five thousand
+   * names it is about to discard.
    */
   const partitions: { keyword: string; cells: Cell[]; oversized: Cell[]; total: number; partitioned: boolean }[] = []
   for (const keyword of HARVEST_KEYWORDS) {
@@ -2493,7 +2532,17 @@ export async function searchByKeywords(
     partitions.map(part => ({ keyword: part.keyword, tail: Math.max(0, part.total - SEARCH_WINDOW) })),
     publisherProbeBudgetPerKeyword,
   )
-  for (const { keyword, cells, oversized, total, partitioned } of partitions) {
+  /**
+   * One harvest keyword's run, in the two halves the phases at the end of
+   * this function call (design
+   * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
+   * section 3.2): `search` pages the keyword's own search cells, and `finish`
+   * judges the keyword once every keyword has been searched. The state below
+   * is the keyword's own and lives across both halves.
+   */
+  const keywordRun = (
+    { keyword, cells, oversized, total, partitioned }: (typeof partitions)[number],
+  ): { search(): Promise<void>; finish(): Promise<void> } => {
     const forKeyword = new Set<string>()
     /**
      * Every name this keyword's run has paged, reduced to what the at-risk
@@ -2518,7 +2567,7 @@ export async function searchByKeywords(
     const servedFor = new Map<string, Set<string>>()
     /**
      * The publisher cells worth paging, chosen ONCE. The probes that pick them
-     * are the axis's real cost, and `enumerate` runs twice whenever a keyword's
+     * are the axis's real cost, and `search` runs twice whenever a keyword's
      * residual sends it round again — which for `deepseek-harness` is every
      * run. Re-probing there would double the cost of the axis to buy a second
      * opinion on a question whose answer cannot have changed mid-run.
@@ -2533,7 +2582,7 @@ export async function searchByKeywords(
      * `rotatedProbed`: the walk skips a candidate already pinned, consuming a
      * position without returning one. */
     let stepped = 0
-    // A publisher cell IS re-paged when `enumerate` runs again, exactly as a
+    // A publisher cell IS re-paged when `search` runs again, exactly as a
     // partition cell is, and skipping it to save the requests was tried and
     // reverted the same day (2026-09-18). The saving is real — for
     // `deepseek-harness` the retry runs on every run, so every selected
@@ -2549,7 +2598,7 @@ export async function searchByKeywords(
     // suspicion. Bring it back only with a measurement of what pass two
     // actually recovers from these cells.
     /** Names credited to a cell's own PAGING (the before/after delta measured
-     * in `enumerate` below), never to its probe — a probe only proves a cell
+     * in `search` below), never to its probe — a probe only proves a cell
      * could supply something, not that it did. */
     let pinnedSupplied = 0
     let rotatedSupplied = 0
@@ -2557,7 +2606,7 @@ export async function searchByKeywords(
      * rule below. Exit is this and nothing else. */
     const evicted: string[] = []
     /** Rotated maintainers whose paging delta proved worth pinning this run
-     * (design doc §3's outcome entry) — see `enumerate`'s rotated loop.
+     * (design doc §3's outcome entry) — see `search`'s rotated loop.
      * Merged into `seeded` where `onPublisherAxis` is called. */
     const earned: string[] = []
     /**
@@ -2567,7 +2616,7 @@ export async function searchByKeywords(
      *
      * Selection only proves a cell COULD supply something; it makes no
      * pinning decision itself. Only paging proves a cell DID, which is why
-     * outcome entry (`earned`, above) is decided in `enumerate`'s paging loop,
+     * outcome entry (`earned`, above) is decided in `search`'s paging loop,
      * not here — a cell selected because `cellTotal > served` can still page
      * zero NEW names, when every package it claims was already seen
      * redundantly through the window or another cell.
@@ -2639,25 +2688,58 @@ export async function searchByKeywords(
       }
       return { pinned: pinnedCells, rotated: rotatedCells }
     }
+    /** The names `creditAcross` added to the union, which the coverage line
+     * reports as `acrossKeywords`. */
+    const across = new Set<string>()
     /**
-     * The change-feed step (spec 2026-10-04, section 4.5). It runs at the
-     * end of every `enumerate` pass, after the window, refinement,
-     * oversized and publisher cells, and is memoized like
-     * `publisherCells`: the first pass verifies and credits, and a retry
-     * pass re-adds what the first credited and repeats no request.
+     * Credit across keywords (design
+     * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
+     * section 3.1). A name joins this keyword's union when a search page of
+     * this run served it, from any harvest keyword's cell, and that page's
+     * object listed this keyword exactly, code unit for code unit. That is a
+     * measurement, not an assumption: `keywords:K` counts the packages whose
+     * indexed keywords hold K, and the search object carries those same
+     * keywords. Exact equality can only under-credit, since npm may also
+     * match a case or spacing variant this rule ignores, and the design's
+     * measurement found no name it would over-credit (section 1.5).
      *
-     * A feed-only name -- one the feed holds and no search cell served --
-     * is checked by paging its owner's `keywords:K maintainer:U` cell,
-     * because crediting a name npm search does not count would cancel a
-     * genuinely missing one in `required - forKeyword.size`. `harvested`
-     * is withheld from those pages, so at-risk seeding sees what it saw
-     * before; their maintainers still reach `onPublishers`, as every
-     * search page's do.
+     * It only ever adds to the union, so running it twice credits nothing
+     * twice; `finish` runs it before every feed step, so a credited name is
+     * never feed-only. It decides coverage alone: a credited name reaches the
+     * candidates because the page that served it already put it in `seen`.
+     */
+    const creditAcross = (): void => {
+      for (const [name, keywords] of indexedKeywords) {
+        if (!forKeyword.has(name) && keywords.includes(keyword)) {
+          forKeyword.add(name)
+          across.add(name)
+        }
+      }
+    }
+    /**
+     * The change-feed step (spec 2026-10-04, section 4.5). `finish` runs it
+     * after `creditAcross`, on the first pass and again after a retry pass's
+     * `search`, and it is memoized like `publisherCells`: the first run
+     * verifies and credits, and the second re-adds what the first credited
+     * and repeats no request.
+     *
+     * A feed-only name -- one the feed holds and the union does not: no
+     * search cell of this keyword served it, and no other keyword's page
+     * credited it -- is checked by paging its owner's `keywords:K
+     * maintainer:U` cell, because crediting a name npm search does not count
+     * would cancel a genuinely missing one in `required - forKeyword.size`.
+     * Running after the cross credit keeps a name another keyword's page
+     * served out of that check and out of `supplied` (design 2026-10-20,
+     * section 3.2). `harvested` is withheld from those pages, so at-risk
+     * seeding sees what it saw before; their maintainers still reach
+     * `onPublishers`, and their keywords `indexedKeywords`, as every search
+     * page's do.
      */
     let feedCredited: readonly string[] | undefined
     /** What the feed step did, held until the keyword's count is final: its
-     * line carries that count, and its throw waits for the line. */
-    let feedStep: Omit<FeedCoverage, 'enumerated' | 'required'> | undefined
+     * line carries that count and the cross credit's, and its throw waits
+     * for the line. */
+    let feedStep: Omit<FeedCoverage, 'acrossKeywords' | 'enumerated' | 'required'> | undefined
     /** Page one owner's cell under this keyword into the union. Complete
      * when it served every name its own total promised; a failure is
      * incomplete, never an empty answer. */
@@ -2783,7 +2865,11 @@ export async function searchByKeywords(
         disagreed: disagreed.sort(compareStrings),
       }
     }
-    const enumerate = async (): Promise<void> => {
+    /** Page this keyword's own search cells: its window, refinement,
+     * oversized and publisher cells. Phase one runs it for every keyword
+     * before any keyword is judged, and `finish` runs it again on a retry
+     * pass. */
+    const search = async (): Promise<void> => {
       // The keyword's own reachable window, unioned in beside the refinement
       // cells and deliberately NON-COMPLETING. A refinement partition is not
       // covering by construction — there is no negation qualifier — so
@@ -2798,7 +2884,7 @@ export async function searchByKeywords(
       if (partitioned) await pageCell({ keywords: [keyword] }, windowNames, 'stop', servedFor, harvested)
       // The window's names belong to the union too; kept in their own set as
       // well so the coverage arithmetic can tell the two halves apart.
-      // Idempotent, and `enumerate` runs twice on the retry path.
+      // Idempotent, and `search` runs twice on the retry path.
       for (const name of windowNames) forKeyword.add(name)
       for (const cell of cells) await pageCell(cell, forKeyword, 'throw', servedFor, harvested)
       // 'stop', because this cell's own total is past the window BY
@@ -2839,185 +2925,212 @@ export async function searchByKeywords(
           }
         }
       }
+    }
+    /**
+     * Judge the keyword, once every keyword's `search` has run (design
+     * 2026-10-20, section 3.2): credit across keywords, run the feed step,
+     * measure the union against the keyword's total, re-page once on a
+     * shortfall, then report and check.
+     */
+    const finish = async (): Promise<void> => {
+      creditAcross()
       await runFeedStep()
-    }
-    await enumerate()
-    // The API has no complement operator, so a partition's coverage is
-    // measured rather than assumed: `min` of the totals before and after
-    // absorbs a package published or unpublished during the run, and a
-    // genuine partition gap is hundreds of names and still throws. An
-    // unpartitioned keyword gets the same floor AND the same re-probe: a
-    // stale `total` reused as `after` gives `required = total` exactly, so
-    // it could absorb no churn at all — an ordinary unpublish between the
-    // probe and the page landing then looked identical to a truncated
-    // harvest. The re-probe costs one extra size=1 request per top-level
-    // keyword; it also catches a mid-stream empty page: the `||` that ends
-    // pageCell above returns on ANY empty page, even one arriving before the
-    // cell's own total says the cell is exhausted.
-    let required = Math.min(total, await probe({ keywords: [keyword] }))
-    if (forKeyword.size < required) {
-      // ONE re-page before the throw. The floor is exact, and the anomaly
-      // that motivated it does not survive it: npm served a 249-object page
-      // of a 600-name result set, `from` advances by PAGE_SIZE, so the object
-      // npm omitted is never re-requested and that keyword enumerates 599 of
-      // 600. Same for a `total` npm overstates by one. One registry hiccup
-      // would freeze the shelf for the day with no catalog published. A
-      // second full pass separates a transient omission from a genuine
-      // partition gap — the distinction both messages below already claim to
-      // draw — and it is bounded at one, so a registry really serving short
-      // still fails the build rather than looping. It UNIONS into the same
-      // set, because pass two may omit a different object than pass one did,
-      // and the floor takes the minimum across every total observed, so churn
-      // during the retry is tolerated exactly as churn during the first pass.
-      await enumerate()
-      required = Math.min(required, await probe({ keywords: [keyword] }))
-    }
-    const shortfall = required - forKeyword.size
-    // Computed and reported UNCONDITIONALLY, before the early `continue`: the
-    // productivity signal this axis selects on cannot exist before a keyword
-    // crosses the window (under it `selectPublisherCells` is never called), so
-    // seeding is the only thing to report for a whole keyword, and it would
-    // never be reported at all if this sat after the guard below.
-    // Merged with `earned` rather than reported alongside it: the caller
-    // persists one pinned set per keyword and does not need to know which
-    // entry path (design doc §2 seeding or §3 outcome) put a given owner in
-    // it.
-    //
-    // Measured against the refinements that actually REACH a name this run,
-    // not against PARTITION_KEYWORDS wholesale. A refinement whose own cell is
-    // `oversized` is paged with 'stop' — truncated at SEARCH_WINDOW exactly as
-    // the bare keyword is — so a name carrying only that refinement is
-    // reachable by nothing past its rank, and scoring it safe because the
-    // refinement is "in the list" hides precisely the population this axis
-    // exists for. `keywords:deepseek-harness,dsh` crossing its own window is
-    // not hypothetical: `partitionKeyword`'s comment records it costing the
-    // catalog 24 packages between 2026-09-11 and 2026-09-14. Only a
-    // two-keyword cell counts — a deeper `[K, R, S]` split reaches a name only
-    // if it also carries S, so it does not make R alone sufficient.
-    //
-    // Under the window there is no partition and nothing has been measured, so
-    // the full list is the right forecast: the question there is which names
-    // WILL be stranded when the keyword crosses, and every refinement still
-    // has its own window to spend.
-    const reachable = partitioned
-      ? cells.flatMap(cell => (cell.keywords.length === 2 && cell.keywords[1] !== undefined ? [cell.keywords[1]] : []))
-      : PARTITION_KEYWORDS
-    const harvestedNames = [...harvested.values()]
-    const seeded = [...new Set([...atRiskOwners(harvestedNames, keyword, reachable), ...earned])]
-      .sort(compareStrings)
-    onPublisherAxis({
-      keyword,
-      partitioned,
-      seedingComplete: !partitioned && shortfall <= 0,
-      vocabulary: publishers.length,
-      pinnedSet: (publisherState.pinned?.[keyword] ?? []).length,
-      pinnedProbed,
-      pinnedSupplied,
-      cursor: cursorFor(publisherState, keyword),
-      rotatedProbed,
-      rotatedSupplied,
-      stepped,
-      seeded,
-      evicted,
-      // Not measured yet: Task 4 of the plan
-      // (docs/plans/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md)
-      // records what each probed pin's cell showed and fills this from
-      // `judgedPins`. Until it does, no pin is judged and past the window only
-      // an eviction removes one, as before.
-      judged: [],
-      atRiskNames: atRiskNameCount(harvestedNames, keyword, reachable),
-    })
-    // The feed step's line waits for the keyword's final count and sets its
-    // credits beside it (spec section 4.7): a keyword the feed closes reads
-    // whole, and only the count says how much of that was credited rather
-    // than served. The step's throw waits for the line, so a run that
-    // throws still logs it; a search request failing on the retry pass
-    // above throws first, as it would with no feed.
-    if (feedStep !== undefined) {
-      feed.onCoverage?.({ ...feedStep, enumerated: forKeyword.size, required })
-      if (feedStep.disagreed.length > FEED_MAX_DISAGREEMENTS) {
-        throw new Error(`the change feed holds ${feedStep.disagreed.length} name(s) carrying ${keywordQuery([keyword])} that two complete pagings of a current owner's search cell did not serve, past the ${FEED_MAX_DISAGREEMENTS} one run may absorb: its membership rule no longer describes npm search, and crediting through it would cancel missing names one for one`)
+      // The API has no complement operator, so a partition's coverage is
+      // measured rather than assumed: `min` of the totals before and after
+      // absorbs a package published or unpublished during the run, and a
+      // genuine partition gap is hundreds of names and still throws. An
+      // unpartitioned keyword gets the same floor AND the same re-probe: a
+      // stale `total` reused as `after` gives `required = total` exactly, so
+      // it could absorb no churn at all — an ordinary unpublish between the
+      // probe and the page landing then looked identical to a truncated
+      // harvest. The re-probe costs one extra size=1 request per top-level
+      // keyword; it also catches a mid-stream empty page: the `||` that ends
+      // pageCell above returns on ANY empty page, even one arriving before the
+      // cell's own total says the cell is exhausted.
+      let required = Math.min(total, await probe({ keywords: [keyword] }))
+      if (forKeyword.size < required) {
+        // ONE re-page before the throw. The floor is exact, and the anomaly
+        // that motivated it does not survive it: npm served a 249-object page
+        // of a 600-name result set, `from` advances by PAGE_SIZE, so the object
+        // npm omitted is never re-requested and that keyword enumerates 599 of
+        // 600. Same for a `total` npm overstates by one. One registry hiccup
+        // would freeze the shelf for the day with no catalog published. A
+        // second full pass separates a transient omission from a genuine
+        // partition gap — the distinction both messages below already claim to
+        // draw — and it is bounded at one, so a registry really serving short
+        // still fails the build rather than looping. It UNIONS into the same
+        // set, because pass two may omit a different object than pass one did,
+        // and the floor takes the minimum across every total observed, so churn
+        // during the retry is tolerated exactly as churn during the first pass.
+        //
+        // Credited across keywords again after the re-page, in the order
+        // design 2026-10-20 section 3.2 gives, so the union stays closed under
+        // the rule whatever the retry paged. A name the retry serves can count
+        // for a keyword judged after this one, never for one already judged.
+        // That errs toward under-crediting, which can redden a build but
+        // never hide a missing name.
+        await search()
+        creditAcross()
+        await runFeedStep()
+        required = Math.min(required, await probe({ keywords: [keyword] }))
       }
-    }
-    if (shortfall <= 0) continue // whole, even when the keyword is past the window
-    // Every refinement cell this keyword PAGED, the oversized ones included.
-    // `cells.length` alone understates the partition in both messages below,
-    // and those messages are read to decide which half failed.
-    const pagedCells = cells.length + oversized.length
-    // The shortfall splits into the two faults it can carry, and the split
-    // holds as an identity on the union alone:
-    //
-    //   shortfall === windowShortfall + tailShortfall
-    //
-    // START FROM WHAT IS OBSERVABLE, because the obvious reading is not.
-    // A cell answers with names and no ranks, so a name a cell supplied and
-    // the window sweep did not CANNOT be placed on either side of the
-    // boundary: a sweep serving 5,246 of 5,250 while the cells return 157
-    // names produces the same union whether those 157 are all tail (window
-    // missed 4) or 4 in-window plus 153 tail (partition missed 4). The two
-    // are indistinguishable, and every attempt to tell them apart is a
-    // choice about which one to charge.
-    //
-    // `recovered` charges every ambiguous name to the WINDOW, by measuring
-    // against what the window can ADDRESS rather than against `windowNames`,
-    // the sweep's own contribution. That is the safe direction: it can only
-    // understate tail recovery, never overstate it, so the rate floor and the
-    // residual cap can never be paid with window noise. Subtracting the sweep
-    // instead credits the cells for in-window names the sweep missed — a
-    // window serving 5,247 of 5,250 while the cells reach 26 of a 30-name
-    // tail then reports 29 of 30 (96.7%) and publishes, where the true 86.7%
-    // is under the floor.
-    //
-    // The cost of that choice, stated so it is not rediscovered as a bug: an
-    // in-window miss the cells happened to cover is charged to the tail term.
-    // This conservative allocation is still subject to one aggregate noise
-    // allowance; only a union that does not fill one window's worth is a
-    // definite window deficit for the diagnostic split.
-    // A window-bound error also reports `windowNames.size`, so the sweep's
-    // observed contribution remains available for diagnosis.
-    const unreachable = Math.max(0, required - SEARCH_WINDOW)
-    const recovered = Math.max(0, forKeyword.size - SEARCH_WINDOW)
-    // What the cells failed to reach past the window, and what the union
-    // failed to reach inside it. Neither is inferred from the other.
-    const tailShortfall = unreachable - recovered
-    const windowShortfall = shortfall - tailShortfall
-    // Inside the window every rank is addressable in one query, so a name
-    // definitely missing from here is the registry serving short — never a
-    // partition that stopped covering the tail. Gated on the UNION, not on
-    // the sweep: a sweep that came up short while a cell supplied the same
-    // names left nothing missing, and nothing missing is not a reason to
-    // fail a build. Gating on the sweep threw on a complete harvest.
-    if (windowShortfall > MAX_SEARCH_SHORTFALL) {
-      if (!partitioned) {
-        throw new Error(`npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names, and a second full pass found no more; the search ended before reaching the answered total, so the harvest would be silently short`)
+      const shortfall = required - forKeyword.size
+      // Computed and reported UNCONDITIONALLY, before the early `return`: the
+      // productivity signal this axis selects on cannot exist before a keyword
+      // crosses the window (under it `selectPublisherCells` is never called), so
+      // seeding is the only thing to report for a whole keyword, and it would
+      // never be reported at all if this sat after the guard below.
+      // Merged with `earned` rather than reported alongside it: the caller
+      // persists one pinned set per keyword and does not need to know which
+      // entry path (design doc §2 seeding or §3 outcome) put a given owner in
+      // it.
+      //
+      // Measured against the refinements that actually REACH a name this run,
+      // not against PARTITION_KEYWORDS wholesale. A refinement whose own cell is
+      // `oversized` is paged with 'stop' — truncated at SEARCH_WINDOW exactly as
+      // the bare keyword is — so a name carrying only that refinement is
+      // reachable by nothing past its rank, and scoring it safe because the
+      // refinement is "in the list" hides precisely the population this axis
+      // exists for. `keywords:deepseek-harness,dsh` crossing its own window is
+      // not hypothetical: `partitionKeyword`'s comment records it costing the
+      // catalog 24 packages between 2026-09-11 and 2026-09-14. Only a
+      // two-keyword cell counts — a deeper `[K, R, S]` split reaches a name only
+      // if it also carries S, so it does not make R alone sufficient.
+      //
+      // Under the window there is no partition and nothing has been measured, so
+      // the full list is the right forecast: the question there is which names
+      // WILL be stranded when the keyword crosses, and every refinement still
+      // has its own window to spend.
+      const reachable = partitioned
+        ? cells.flatMap(cell => (cell.keywords.length === 2 && cell.keywords[1] !== undefined ? [cell.keywords[1]] : []))
+        : PARTITION_KEYWORDS
+      const harvestedNames = [...harvested.values()]
+      const seeded = [...new Set([...atRiskOwners(harvestedNames, keyword, reachable), ...earned])]
+        .sort(compareStrings)
+      onPublisherAxis({
+        keyword,
+        partitioned,
+        seedingComplete: !partitioned && shortfall <= 0,
+        vocabulary: publishers.length,
+        pinnedSet: (publisherState.pinned?.[keyword] ?? []).length,
+        pinnedProbed,
+        pinnedSupplied,
+        cursor: cursorFor(publisherState, keyword),
+        rotatedProbed,
+        rotatedSupplied,
+        stepped,
+        seeded,
+        evicted,
+        // Not measured yet: Task 4 of the plan
+        // (docs/plans/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md)
+        // records what each probed pin's cell showed and fills this from
+        // `judgedPins`. Until it does, no pin is judged and past the window only
+        // an eviction removes one, as before.
+        judged: [],
+        atRiskNames: atRiskNameCount(harvestedNames, keyword, reachable),
+      })
+      // The feed step's line waits for the keyword's final count and sets its
+      // credits beside it (spec section 4.7), the cross-keyword credits with
+      // them (design 2026-10-20, section 3.3): a keyword the credits close
+      // reads whole, and only the counts say how much of that was credited
+      // rather than served. The step's throw waits for the line, so a run that
+      // throws still logs it; a search request failing on the retry pass
+      // above throws first, as it would with no feed.
+      if (feedStep !== undefined) {
+        feed.onCoverage?.({ ...feedStep, acrossKeywords: across.size, enumerated: forKeyword.size, required })
+        if (feedStep.disagreed.length > FEED_MAX_DISAGREEMENTS) {
+          throw new Error(`the change feed holds ${feedStep.disagreed.length} name(s) carrying ${keywordQuery([keyword])} that two complete pagings of a current owner's search cell did not serve, past the ${FEED_MAX_DISAGREEMENTS} one run may absorb: its membership rule no longer describes npm search, and crediting through it would cancel missing names one for one`)
+        }
       }
-      // Branching on `partitioned` and not on `unreachable`: a keyword that
-      // partitioned on its first probe and then re-probed back to or below
-      // the window still HAS a window sweep and cells, and blaming neither
-      // is how the message stopped naming the failing half.
-      throw new Error(`npm search for ${keywordQuery([keyword])} reached only ${Math.min(required, SEARCH_WINDOW) - windowShortfall} of the ${Math.min(required, SEARCH_WINDOW)} names its own window can address (its window sweep served ${windowNames.size}, beside ${pagedCells} refinement cell(s)), and a second full pass found no more; that is inside the reachable range, so no partition can explain it`)
-    }
-    // One noise allowance covers the WHOLE keyword. An overstated total of
-    // 5251 can still pass with 5250 names, but three window misses plus three
-    // tail misses are six missing names, not two independent noise events.
-    // Beyond the aggregate allowance, require tail recovery even if the tail
-    // term alone is small. An in-window-only gap has already thrown above,
-    // so `unreachable` is positive here.
-    if (shortfall > MAX_SEARCH_SHORTFALL) {
-      const rate = recovered / unreachable
-      if (rate < MIN_UNREACHABLE_RECOVERY) {
-        throw new Error(`npm search for ${keywordQuery([keyword])} reaches ${Math.min(required, SEARCH_WINDOW)} of ${required} names in one query and the combined searches recovered ${recovered} of ${unreachable} beyond it across ${pagedCells} cell(s) — under the ${MIN_UNREACHABLE_RECOVERY} floor, so the refinement coverage needs to improve`)
+      if (shortfall <= 0) return // whole, even when the keyword is past the window
+      // Every refinement cell this keyword PAGED, the oversized ones included.
+      // `cells.length` alone understates the partition in both messages below,
+      // and those messages are read to decide which half failed.
+      const pagedCells = cells.length + oversized.length
+      // The shortfall splits into the two faults it can carry, and the split
+      // holds as an identity on the union alone:
+      //
+      //   shortfall === windowShortfall + tailShortfall
+      //
+      // START FROM WHAT IS OBSERVABLE, because the obvious reading is not.
+      // A cell answers with names and no ranks, so a name a cell supplied and
+      // the window sweep did not CANNOT be placed on either side of the
+      // boundary: a sweep serving 5,246 of 5,250 while the cells return 157
+      // names produces the same union whether those 157 are all tail (window
+      // missed 4) or 4 in-window plus 153 tail (partition missed 4). The two
+      // are indistinguishable, and every attempt to tell them apart is a
+      // choice about which one to charge.
+      //
+      // `recovered` charges every ambiguous name to the WINDOW, by measuring
+      // against what the window can ADDRESS rather than against `windowNames`,
+      // the sweep's own contribution. That is the safe direction: it can only
+      // understate tail recovery, never overstate it, so the rate floor and the
+      // residual cap can never be paid with window noise. Subtracting the sweep
+      // instead credits the cells for in-window names the sweep missed — a
+      // window serving 5,247 of 5,250 while the cells reach 26 of a 30-name
+      // tail then reports 29 of 30 (96.7%) and publishes, where the true 86.7%
+      // is under the floor.
+      //
+      // The cost of that choice, stated so it is not rediscovered as a bug: an
+      // in-window miss the cells happened to cover is charged to the tail term.
+      // This conservative allocation is still subject to one aggregate noise
+      // allowance; only a union that does not fill one window's worth is a
+      // definite window deficit for the diagnostic split.
+      // A window-bound error also reports `windowNames.size`, so the sweep's
+      // observed contribution remains available for diagnosis.
+      const unreachable = Math.max(0, required - SEARCH_WINDOW)
+      const recovered = Math.max(0, forKeyword.size - SEARCH_WINDOW)
+      // What the cells failed to reach past the window, and what the union
+      // failed to reach inside it. Neither is inferred from the other.
+      const tailShortfall = unreachable - recovered
+      const windowShortfall = shortfall - tailShortfall
+      // Inside the window every rank is addressable in one query, so a name
+      // definitely missing from here is the registry serving short — never a
+      // partition that stopped covering the tail. Gated on the UNION, not on
+      // the sweep: a sweep that came up short while a cell supplied the same
+      // names left nothing missing, and nothing missing is not a reason to
+      // fail a build. Gating on the sweep threw on a complete harvest.
+      if (windowShortfall > MAX_SEARCH_SHORTFALL) {
+        if (!partitioned) {
+          throw new Error(`npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names, and a second full pass found no more; the search ended before reaching the answered total, so the harvest would be silently short`)
+        }
+        // Branching on `partitioned` and not on `unreachable`: a keyword that
+        // partitioned on its first probe and then re-probed back to or below
+        // the window still HAS a window sweep and cells, and blaming neither
+        // is how the message stopped naming the failing half.
+        throw new Error(`npm search for ${keywordQuery([keyword])} reached only ${Math.min(required, SEARCH_WINDOW) - windowShortfall} of the ${Math.min(required, SEARCH_WINDOW)} names its own window can address (its window sweep served ${windowNames.size}, beside ${pagedCells} refinement cell(s)), and a second full pass found no more; that is inside the reachable range, so no partition can explain it`)
       }
-      // A healthy rate can still leave too many names missing. At this point
-      // the union exceeds one window, so windowShortfall is zero and the tail
-      // deficit equals the aggregate. Crossing the cap requires better
-      // coverage, not a larger allowance.
-      if (tailShortfall > MAX_UNREACHABLE_RESIDUAL) {
-        throw new Error(`npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names, recovering ${recovered} of ${unreachable} reported beyond one window — a tail shortfall of ${tailShortfall}, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`)
+      // One noise allowance covers the WHOLE keyword. An overstated total of
+      // 5251 can still pass with 5250 names, but three window misses plus three
+      // tail misses are six missing names, not two independent noise events.
+      // Beyond the aggregate allowance, require tail recovery even if the tail
+      // term alone is small. An in-window-only gap has already thrown above,
+      // so `unreachable` is positive here.
+      if (shortfall > MAX_SEARCH_SHORTFALL) {
+        const rate = recovered / unreachable
+        if (rate < MIN_UNREACHABLE_RECOVERY) {
+          throw new Error(`npm search for ${keywordQuery([keyword])} reaches ${Math.min(required, SEARCH_WINDOW)} of ${required} names in one query and the combined searches recovered ${recovered} of ${unreachable} beyond it across ${pagedCells} cell(s) — under the ${MIN_UNREACHABLE_RECOVERY} floor, so the refinement coverage needs to improve`)
+        }
+        // A healthy rate can still leave too many names missing. At this point
+        // the union exceeds one window, so windowShortfall is zero and the tail
+        // deficit equals the aggregate. Crossing the cap requires better
+        // coverage, not a larger allowance.
+        if (tailShortfall > MAX_UNREACHABLE_RESIDUAL) {
+          throw new Error(`npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names, recovering ${recovered} of ${unreachable} reported beyond one window — a tail shortfall of ${tailShortfall}, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`)
+        }
       }
+      onShortfall({ keyword, enumerated: forKeyword.size, required, unreachable, recovered, windowShortfall, tailShortfall })
     }
-    onShortfall({ keyword, enumerated: forKeyword.size, required, unreachable, recovered, windowShortfall, tailShortfall })
+    return { search, finish }
   }
+  // The two phases (design 2026-10-20, section 3.2), each in HARVEST_KEYWORDS'
+  // order. Every keyword's search cells are paged before any keyword is
+  // judged, so the keyword judged first can be credited from the pages of
+  // the one paged after it. The price is a red run's: the later keyword is
+  // paged even when the earlier one then fails its checks.
+  const runs = partitions.map(keywordRun)
+  for (const r of runs) await r.search()
+  for (const r of runs) await r.finish()
   return [...seen].sort()
 }
 

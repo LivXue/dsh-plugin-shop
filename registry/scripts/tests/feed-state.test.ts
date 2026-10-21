@@ -558,7 +558,8 @@ const unavailableReport: FeedRunReport = {
 }
 const coverage: FeedCoverage = {
   keyword: 'deepseek-harness', feedOnly: 16, supplied: 17, ownersVerified: 12, ownersTotal: 12,
-  verified: 16, unverified: 0, withdrawn: 0, unconfirmed: 0, disagreed: [], enumerated: 8530, required: 8530,
+  verified: 16, unverified: 0, withdrawn: 0, unconfirmed: 0, disagreed: [], acrossKeywords: 0,
+  enumerated: 8530, required: 8530,
 }
 
 describe('describeFeedRun', () => {
@@ -620,6 +621,15 @@ describe('describeFeedCoverage', () => {
     expect(describeFeedCoverage({ ...coverage, enumerated: 8519 }))
       .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12); enumerated 8519 of 8530 (11 short)')
   })
+
+  it('says how many names another harvest keyword served', () => {
+    // Design 2026-10-20 section 3.3: a keyword made whole by crediting
+    // across keywords shows how, beside the feed's own credits. Printed only
+    // above zero, like the line's other optional clauses, which is why
+    // every exact line above stays as it was.
+    expect(describeFeedCoverage({ ...coverage, acrossKeywords: 23 }))
+      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12); 23 served under another harvest keyword; enumerated 8530 of 8530')
+  })
 })
 
 describe('parseFeedRunReport', () => {
@@ -651,6 +661,9 @@ describe('parseFeedCoverage', () => {
     expect(parseFeedCoverage(JSON.parse(JSON.stringify(withWithdrawn)), 'harvest.json', KEYWORDS)).toEqual(withWithdrawn)
     const withUnconfirmed = { ...coverage, verified: 13, unconfirmed: 3 }
     expect(parseFeedCoverage(JSON.parse(JSON.stringify(withUnconfirmed)), 'harvest.json', KEYWORDS)).toEqual(withUnconfirmed)
+    // Non-zero, so a parse that dropped the count or read it as 0 cannot pass.
+    const withAcross = { ...coverage, acrossKeywords: 23 }
+    expect(parseFeedCoverage(JSON.parse(JSON.stringify(withAcross)), 'harvest.json', KEYWORDS)).toEqual(withAcross)
   })
 
   it.each([
@@ -666,6 +679,9 @@ describe('parseFeedCoverage', () => {
     ['no enumerated count', { enumerated: undefined }],
     ['a fractional required count', { required: 8530.5 }],
     ['more supplied than enumerated', { enumerated: 16 }],
+    ['no cross-keyword count', { acrossKeywords: undefined }],
+    // 17 supplied plus 8530 credited across keywords cannot fit in 8530.
+    ['credits past what it enumerated', { acrossKeywords: 8530 }],
   ])('throws on %s', (_what, patch) => {
     expect(() => parseFeedCoverage({ ...coverage, ...patch }, 'harvest.json', KEYWORDS))
       .toThrow(/harvest\.json: change-feed coverage record/)

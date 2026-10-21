@@ -592,7 +592,9 @@ export function planConfirmations(
 /** What the feed step did for one keyword in one run (spec section 4.7). */
 export interface FeedCoverage {
   readonly keyword: string
-  /** Carriers of the keyword no search cell had served when the step ran. */
+  /** Carriers of the keyword its union did not hold when the step ran: no
+   * search cell of its own served them, and no page of another harvest
+   * keyword credited them (see `acrossKeywords`). */
   readonly feedOnly: number
   /** The step's own delta on the keyword's union: credited names plus any
    * other name a verification cell served. */
@@ -623,8 +625,19 @@ export interface FeedCoverage {
    * though the packument still lists the keyword: neither listed nor
    * credited. Sorted. */
   readonly disagreed: readonly string[]
+  /**
+   * Names the keyword's union holds only because another harvest keyword's
+   * search page served them, that page's object listing this keyword exactly
+   * (design `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
+   * section 3). The credit runs before the feed step, so none of these is
+   * feed-only or in `supplied`, and none is counted twice. Counted when
+   * credited: a retry pass whose own cells later serve the name does not
+   * take it back, as it does not take back `supplied`.
+   */
+  readonly acrossKeywords: number
   /** The keyword's final count, after any retry pass: every name a search
-   * cell served or the feed credited. */
+   * cell served, another harvest keyword's page credited, or the feed
+   * credited. */
   readonly enumerated: number
   /** The total npm search promised for the keyword: the smallest it
    * answered during the run, which the count is measured against. A
@@ -694,7 +707,13 @@ export function describeFeedRun(report: FeedRunReport): string {
     + `${report.refused} refused); ${report.pending} pending; carriers: ${carriers}`
 }
 
-/** One line per keyword, beside the publisher-axis line (spec section 4.7). */
+/**
+ * One line per keyword, beside the publisher-axis line (spec section 4.7).
+ * Credits from another harvest keyword's pages sit beside the feed's own, so
+ * a keyword made whole by crediting shows how (design
+ * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
+ * section 3.3).
+ */
 export function describeFeedCoverage(coverage: FeedCoverage): string {
   const parts = [`owners verified ${coverage.ownersVerified} of ${coverage.ownersTotal}`]
   if (coverage.unverified > 0) parts.push(`${coverage.unverified} unverified`)
@@ -703,12 +722,15 @@ export function describeFeedCoverage(coverage: FeedCoverage): string {
   if (coverage.disagreed.length > 0) {
     parts.push(`${coverage.disagreed.length} disagreed: ${coverage.disagreed.map(escapeCell).join(', ')}`)
   }
+  // Optional like the counts above, so a run that credited nothing across
+  // keywords prints the line it printed before the credit existed.
+  const across = coverage.acrossKeywords > 0 ? `${coverage.acrossKeywords} served under another harvest keyword; ` : ''
   const { enumerated, required } = coverage
   const gap = enumerated > required ? ` (${enumerated - required} over)`
     : enumerated < required ? ` (${required - enumerated} short)`
     : ''
   return `keywords:${escapeCell(coverage.keyword)} feed supplied ${coverage.supplied} (${parts.join('; ')}); `
-    + `enumerated ${enumerated} of ${required}${gap}`
+    + `${across}enumerated ${enumerated} of ${required}${gap}`
 }
 
 const isCount = (value: unknown): value is number =>
@@ -784,6 +806,7 @@ export function parseFeedCoverage(value: unknown, where: string, harvestKeywords
     verified: count('verified'), unverified: count('unverified'), withdrawn: count('withdrawn'),
     unconfirmed: count('unconfirmed'),
     disagreed,
+    acrossKeywords: count('acrossKeywords'),
     enumerated: count('enumerated'), required: count('required'),
   }
   if (coverage.verified + coverage.unverified + coverage.withdrawn + coverage.unconfirmed + coverage.disagreed.length
@@ -792,6 +815,11 @@ export function parseFeedCoverage(value: unknown, where: string, harvestKeywords
   }
   if (coverage.ownersVerified > coverage.ownersTotal) return fail('verified more owners than it holds')
   if (coverage.supplied < coverage.verified + coverage.unverified) return fail('supplied fewer names than it credited')
-  if (coverage.enumerated < coverage.supplied) return fail('supplied more names than the keyword enumerated')
+  // What the feed step supplied and what the cross credit added are disjoint
+  // -- the credit runs first, and the step counts only what it adds -- and
+  // both sit inside the union.
+  if (coverage.enumerated < coverage.supplied + coverage.acrossKeywords) {
+    return fail('supplied and credited more names than the keyword enumerated')
+  }
   return coverage
 }
