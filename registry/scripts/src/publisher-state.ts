@@ -753,10 +753,17 @@ export const MAX_EVICTIONS_PER_RUN = 8
  * - `over-window`: the answered total is past the search window, so no paging
  *   reaches all of it.
  * - `redundant`: the cell was skipped, because the window and refinement cells
- *   had already served as many of the owner's names as the cell answered.
+ *   had already served exactly as many of the owner's names as the cell
+ *   answered.
+ * - `disagrees`: the cell was skipped for the same reason, but it answered
+ *   FEWER names than those cells had already served the owner. The registry's
+ *   count contradicts what the run saw, so it is no evidence that the run saw
+ *   every name the cell holds: a `maintainer:` qualifier that counts an
+ *   owner's packages differently from their `maintainers` arrays can answer
+ *   a set the window never showed.
  * - `paged`: the cell was paged, on one pass or more.
  */
-export type PinCell = 'zero' | 'over-window' | 'redundant' | 'paged'
+export type PinCell = 'zero' | 'over-window' | 'redundant' | 'disagrees' | 'paged'
 
 /**
  * One probed pin as the run saw it: the evidence {@link judgedPins} reads. The
@@ -768,14 +775,14 @@ export interface PinObservation {
   readonly cell: PinCell
   /**
    * Whether some pass paged the cell in full, serving as many names as the
-   * cell answered. Only a `paged` cell can be whole: a `redundant` one was
-   * never paged.
+   * cell answered. Only a `paged` cell can be whole: a `redundant` or
+   * `disagrees` one was never paged.
    */
   readonly whole: boolean
   /**
    * The names the verdict rests on: the ones the window and refinement cells
-   * served for this owner when the cell was `redundant`, and the ones the
-   * owner's own cell served when it was `paged`.
+   * served for this owner when the cell was skipped as `redundant` or
+   * `disagrees`, and the ones the owner's own cell served when it was `paged`.
    */
   readonly names: readonly HarvestedName[]
 }
@@ -791,7 +798,8 @@ export interface PinObservation {
  * - the cell was `redundant`, or `paged` with `whole` set. Those are the two
  *   ways a run sees all of an owner's names. A zero total is the registry's
  *   answer, which the eviction exit owns; a cell over the window was never
- *   seen whole; and one that served short on every pass left names unshown.
+ *   seen whole; one that served short on every pass left names unshown; and
+ *   one that `disagrees` answered a count the names already seen contradict.
  * - `names` is not empty. No names is no evidence.
  * - every name lists at least one keyword. {@link isAtRisk} reads a name
  *   without keywords as not at risk, so a response that stopped carrying the
@@ -856,8 +864,8 @@ export interface AxisOutcome {
    * the window leaves open (design
    * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
    * §4.2). A name that is not pinned is ignored. One also in `evicted` is
-   * never released: either its eviction applies, or the cap refuses it as
-   * suspect and the pin stays.
+   * never released: either its eviction applies, or the cap refuses the
+   * report's evictions as suspect, and then the report releases nothing at all.
    */
   readonly judged: readonly string[]
   /** Vocabulary positions the rotation walked — see {@link advanceCursor}. */
@@ -892,14 +900,15 @@ export interface AxisOutcome {
  *
  * `released` is what left because `seeded` did not name it: on complete
  * seeding, any pin it omits; past the window, a pin it omits that this run
- * judged. A pin the report lists as evicted is never counted here, whether the
- * eviction applied or the cap refused it. Neither the rule nor the count is
- * bounded by {@link MAX_EVICTIONS_PER_RUN}, which guards a registry answering
- * zero for real cells and cannot be triggered through this exit, because a
- * zero total is never judged. The first run to pass would release most of a
- * full set, and a bound that small would keep it full for weeks
- * (design `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
- * §4.2).
+ * judged. A pin the report lists as evicted is never counted here. Neither the
+ * rule nor the count is bounded by {@link MAX_EVICTIONS_PER_RUN}, which guards
+ * a registry answering zero for real cells and cannot be triggered through
+ * this exit, because a zero total is never judged. The first run to pass would
+ * release most of a full set, and a bound that small would keep it full for
+ * weeks (design
+ * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`, §4.2).
+ * The cap's REFUSAL does reach it: a report whose evictions the cap refused
+ * releases nothing at all, for the reason given where `released` is computed.
  */
 export function applyAxisReport(
   state: PublisherState, outcome: AxisOutcome,
@@ -909,8 +918,9 @@ export function applyAxisReport(
   // registry fault into a silent partial one. Enforced here rather than where
   // the probes run, because `evicted` also arrives from an untrusted
   // `--harvest-from` handoff that never probed anything at all.
-  const evicted = outcome.evicted.length > MAX_EVICTIONS_PER_RUN ? [] : outcome.evicted
-  const evictionsRefused = outcome.evicted.length > MAX_EVICTIONS_PER_RUN ? outcome.evicted.length : 0
+  const refuseEvictions = outcome.evicted.length > MAX_EVICTIONS_PER_RUN
+  const evicted = refuseEvictions ? [] : outcome.evicted
+  const evictionsRefused = refuseEvictions ? outcome.evicted.length : 0
   const keep = new Set(outcome.seeded)
   const judged = new Set(outcome.judged)
   const answeredZero = new Set(outcome.evicted)
@@ -928,14 +938,19 @@ export function applyAxisReport(
   // seeding rule has left holding owners it no longer names stays FULL for good
   // and refuses the owners it should hold.
   //
-  // Neither exit takes a pin the report lists as evicted, the ones the cap just
-  // refused included: `answeredZero` is the raw list, not `evicted`. A refusal
-  // says those zero answers are not to be trusted, and that distrust has to
-  // reach these exits too, because a pin the report also lists as judged, or
-  // that complete seeding does not name, would otherwise leave through them
-  // although its eviction was refused. The eviction owns such a pin, applied
-  // or not.
-  const released =(state.pinned?.[outcome.keyword] ?? [])
+  // A report whose evictions the cap refused releases nothing, through either
+  // exit. The refusal says this run's registry answered zero for real cells,
+  // and every release rests on totals that same registry answered in that
+  // same run: a cell skipped because the window had already served exactly as
+  // many names as it answered, a cell paged in full, a keyword enumerated
+  // whole. So the distrust reaches every pin, not only the ones the report
+  // lists as evicted -- and "removed no pins", which is how build.ts words a
+  // refusal, stays true.
+  //
+  // Otherwise neither exit takes a pin the report lists as evicted: the
+  // eviction owns it, so a hand-built or handed-off report naming one pin on
+  // both lists does not count it as released as well.
+  const released = refuseEvictions ? [] : (state.pinned?.[outcome.keyword] ?? [])
     .filter(user => !keep.has(user) && !answeredZero.has(user) && (outcome.seedingComplete || judged.has(user)))
     .sort(compareStrings)
   let next = unpinFor(state, outcome.keyword, [...evicted, ...released])

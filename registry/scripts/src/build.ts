@@ -569,6 +569,13 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     if (applied.refused.length > 0) {
       notes.push(`refused ${applied.refused.length} new residue owner(s): the pinned set is FULL at ${MAX_PINNED_PER_KEYWORD}`)
     }
+    // Named with its count because the exit is unbounded by design: the first
+    // run to pass releases most of a full set (design
+    // 2026-10-20-cross-keyword-credit-and-feed-aware-pins, section 4.2), and a
+    // set that shrinks by hundreds in silence reads as a fault.
+    if (applied.released.length > 0) {
+      notes.push(`released ${applied.released.length} pin(s) seeding no longer names`)
+    }
     // Loud, because the alternative reading of a large eviction list is a
     // registry fault and the run just declined to act on it. Left silent this
     // would look like a healthy run that evicted nothing.

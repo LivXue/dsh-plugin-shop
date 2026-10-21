@@ -254,15 +254,15 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
   for (const [label, value] of [
     ['a string', '"nope"'],
     ['null', 'null'],
-    ['missing cursor', '[{"keyword":"dsh-plugin","vocabulary":0,"partitioned":false,"seedingComplete":true,"pinnedSet":0,"pinnedProbed":0,"pinnedSupplied":0,"rotatedProbed":0,"rotatedSupplied":0,"stepped":0,"seeded":[],"evicted":[],"atRiskNames":0}]'],
-    ['missing rotatedProbed', '[{"keyword":"dsh-plugin","vocabulary":0,"partitioned":false,"seedingComplete":true,"pinnedSet":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedSupplied":0,"stepped":0,"seeded":[],"evicted":[],"atRiskNames":0}]'],
-    ['an ungrammatical seeded username', '[{"keyword":"dsh-plugin","vocabulary":0,"partitioned":false,"seedingComplete":true,"pinnedSet":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedProbed":0,"rotatedSupplied":0,"stepped":0,"seeded":["Alice"],"evicted":[],"atRiskNames":0}]'],
+    ['missing cursor', '[{"keyword":"dsh-plugin","vocabulary":0,"partitioned":false,"seedingComplete":true,"pinnedSet":0,"pinnedProbed":0,"pinnedSupplied":0,"rotatedProbed":0,"rotatedSupplied":0,"stepped":0,"seeded":[],"evicted":[],"judged":[],"atRiskNames":0}]'],
+    ['missing rotatedProbed', '[{"keyword":"dsh-plugin","vocabulary":0,"partitioned":false,"seedingComplete":true,"pinnedSet":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedSupplied":0,"stepped":0,"seeded":[],"evicted":[],"judged":[],"atRiskNames":0}]'],
+    ['an ungrammatical seeded username', '[{"keyword":"dsh-plugin","vocabulary":0,"partitioned":false,"seedingComplete":true,"pinnedSet":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedProbed":0,"rotatedSupplied":0,"stepped":0,"seeded":["Alice"],"evicted":[],"judged":[],"atRiskNames":0}]'],
     // A dangerous keyword is exactly as unusable as a missing one: it reaches
     // pinFor/unpinFor as the map key, and pinFor's own guard now refuses it --
     // but parsePublisherAxisReport must refuse it itself, at the handoff
     // boundary, the same way it refuses an ungrammatical seeded username
     // rather than leaving that to whatever pinFor happens to do with it.
-    ['a dangerous keyword', '[{"keyword":"__proto__","vocabulary":0,"partitioned":false,"seedingComplete":true,"pinnedSet":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedProbed":0,"rotatedSupplied":0,"stepped":0,"seeded":[],"evicted":[],"atRiskNames":0}]'],
+    ['a dangerous keyword', '[{"keyword":"__proto__","vocabulary":0,"partitioned":false,"seedingComplete":true,"pinnedSet":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedProbed":0,"rotatedSupplied":0,"stepped":0,"seeded":[],"evicted":[],"judged":[],"atRiskNames":0}]'],
   ] as const) {
     it(`refuses a handoff whose publisherAxis field is ${label}, before writing anything`, () => {
       // Strict like `publishers`, not lenient like `shortfalls`: this field
@@ -304,7 +304,7 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
       const record = (keyword: string, stepped: number) => ({
         keyword, partitioned: true, seedingComplete: false, vocabulary: 600, pinnedSet: 0, pinnedProbed: 0, pinnedSupplied: 0,
         cursor: 0, rotatedProbed: stepped, rotatedSupplied: 0, stepped,
-        seeded: [], evicted: [], atRiskNames: 0,
+        seeded: [], evicted: [], judged: [], atRiskNames: 0,
       })
       writeFileSync(join(cwd, 'dist', 'harvest.json'), `${JSON.stringify({
         candidates: [], rejections: [], shortfalls: [],

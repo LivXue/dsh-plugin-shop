@@ -1152,11 +1152,36 @@ describe('parsePublisherAxisReport', () => {
   const record = {
     keyword: 'dsh-plugin', partitioned: true, seedingComplete: false, vocabulary: 3775, pinnedSet: 38,
     pinnedProbed: 38, pinnedSupplied: 0, cursor: 1305, rotatedProbed: 462,
-    rotatedSupplied: 7, stepped: 462, seeded: [], evicted: [], atRiskNames: 81,
+    rotatedSupplied: 7, stepped: 462, seeded: [], evicted: [], judged: [], atRiskNames: 81,
   }
 
   it('accepts a record the production path can actually emit', () => {
     expect(parsePublisherAxisReport(record, 'handoff.json').keyword).toBe('dsh-plugin')
+  })
+
+  it('reads the pins the run judged, which build.ts releases when seeding does not name them', () => {
+    expect(parsePublisherAxisReport({ ...record, judged: ['alice', 'bob'] }, 'handoff.json').judged)
+      .toEqual(['alice', 'bob'])
+  })
+
+  it('refuses a record with no judged array, or one naming something that is not a username', () => {
+    // Strict like `seeded` and `evicted`: `judged` licenses a release, which
+    // writes the committed file. Read as empty, a malformed one would keep
+    // every pin while looking like a run that judged nothing.
+    const { judged: _omitted, ...without } = record
+    expect(() => parsePublisherAxisReport(without, 'handoff.json'))
+      .toThrow(/has no `judged` array of maintainer usernames/)
+    expect(() => parsePublisherAxisReport({ ...record, judged: ['Not A Name'] }, 'handoff.json'))
+      .toThrow(/has no `judged` array of maintainer usernames/)
+  })
+
+  it('refuses a record judging more pins than it probed', () => {
+    // A pin is judged only by its own probe, so a record naming more judged
+    // pins than it probed describes two different runs -- and, unlike a
+    // counter, this list removes pins: wherever seeding is not complete, it
+    // is the only thing that lets a pin seeding does not name leave.
+    expect(() => parsePublisherAxisReport({ ...record, pinnedProbed: 1, judged: ['alice', 'bob'] }, 'handoff.json'))
+      .toThrow(/judged 2 pin\(s\) but probed 1/)
   })
 
   it('refuses a walk shorter than the rotation it claims to have produced', () => {
@@ -3527,6 +3552,164 @@ describe('searchByKeywords', () => {
           expect(report?.seeded).toEqual(['erin'])
           expect(report?.rotatedSupplied).toBe(2)
         })
+      })
+    })
+
+    // Design 2026-10-20, section 4.2: a pin leaves when this run JUDGED it and
+    // seeding did not name it. Judged means the run saw every name the pin's
+    // own cell holds under the keyword, so seeding's silence about its owner is
+    // an answer rather than a gap in what was paged. The shell measures which
+    // pins that was; `judgedPins` in publisher-state.ts decides.
+    describe('which probed pins the run judged', () => {
+      /** The run's `deepseek-harness` report, with `pinned` its pinned set and
+       * an empty vocabulary, so every cell probed is a pin's. A budget of 4
+       * gives the pinned half two probes, enough for every case below. */
+      const judge = async (fetchImpl: typeof fetch, pinned: readonly string[]): Promise<PublisherAxisReport | undefined> => {
+        const reports: PublisherAxisReport[] = []
+        await searchByKeywords(
+          fetchImpl, undefined, undefined, undefined, undefined,
+          () => {}, () => {}, { publishers: [], pinned: { 'deepseek-harness': [...pinned] } }, 4,
+          r => reports.push(r),
+        )
+        return reports.find(r => r.keyword === 'deepseek-harness')
+      }
+      /** `inner`, recording every URL it answers, decoded. */
+      const recording = (inner: typeof fetch, urls: string[]): typeof fetch =>
+        (async (url: string | URL, init?: RequestInit) => {
+          urls.push(decodeURIComponent(String(url)))
+          return inner(url, init)
+        }) as unknown as typeof fetch
+      /** How many passes paged `user`'s cell: each opens with a `from=0` page. */
+      const passesPaging = (urls: readonly string[], user: string): number =>
+        urls.filter(url => url.includes(`maintainer:${user}&size=250&from=0`)).length
+      /**
+       * `deepseek-harness` past its window, with `pinowner` pinned. Her first
+       * `inWindow` packages head the window and `beyond` more sit past it,
+       * where only her own cell reaches them; her cell answers the first
+       * `cellTotal` of hers, all of them by default. `dsh0`, past the window
+       * too, is reached by the `,dsh` refinement, which is what gives the
+       * keyword a partition at all, and the union reads whole on one pass.
+       * Every object lists `keywords` unless it is `null`: by default the
+       * harvest keyword and `dsh`, a live refinement, so no name is at risk and
+       * seeding names nobody.
+       */
+      const hers = (
+        { inWindow = 0, beyond = 0, cellTotal, keywords = ['deepseek-harness', 'dsh'] }:
+          { inWindow?: number; beyond?: number; cellTotal?: number; keywords?: readonly string[] | null },
+      ): typeof fetch => {
+        const pkg = (name: string, owner?: string) =>
+          ({ name, ...(keywords === null ? {} : { keywords }), maintainers: owner === undefined ? [] : [owner] })
+        const head = Array.from({ length: inWindow }, (_, i) => pkg(`head${i}`, 'pinowner'))
+        const tail = Array.from({ length: beyond }, (_, i) => pkg(`tail${i}`, 'pinowner'))
+        return stubSearchWithPackages({
+          'keywords:deepseek-harness': [
+            ...head, ...Array.from({ length: SEARCH_WINDOW - inWindow }, (_, i) => pkg(`w${i}`)), pkg('dsh0'), ...tail,
+          ],
+          'keywords:deepseek-harness,dsh': [pkg('dsh0')],
+          'keywords:deepseek-harness maintainer:pinowner': [...head, ...tail].slice(0, cellTotal),
+        })
+      }
+
+      it('judges a pinned cell paged in full, and the report releases it when seeding does not name it', async () => {
+        // Her cell answered three and served three. Every name lists `dsh`, so
+        // none is at risk and seeding names nobody: applied, the report
+        // releases the pin, the one exit past the window for a pin whose cell
+        // still answers.
+        const report = await judge(outcomeStub('pinowner', 3, ['beyond0', 'beyond1', 'beyond2'], false), ['pinowner'])
+        expect(report?.pinnedProbed).toBe(1)
+        expect(report?.pinnedSupplied).toBe(3)
+        expect(report?.judged).toEqual(['pinowner'])
+        expect(report?.seeded).toEqual([])
+        const state: PublisherState = { publishers: [], pinned: { 'deepseek-harness': ['pinowner'] } }
+        expect(applyAxisReport(state, report as PublisherAxisReport).released).toEqual(['pinowner'])
+      })
+
+      it('does not judge a pinned cell that served short of its total', async () => {
+        // Four answered and three served, on the first pass and again on the
+        // retry the window's short first page sends the keyword round for: a
+        // name she holds under the keyword was never shown, so seeding's
+        // silence about her proves nothing.
+        const urls: string[] = []
+        const report = await judge(recording(outcomeStub('pinowner', 4, ['beyond0', 'beyond1', 'beyond2'], true), urls), ['pinowner'])
+        expect(passesPaging(urls, 'pinowner')).toBe(2)
+        expect(report?.judged).toEqual([])
+      })
+
+      it('judges a pinned cell that only the retry pass paged in full', async () => {
+        // SOME pass, not every one: her cell's first paging omits a name (the
+        // documented 249-of-250 page, aimed at her cell) and the retry serves
+        // all three, which shows every name her cell holds.
+        const urls: string[] = []
+        const report = await judge(recording(outcomeStub('pinowner', 3, ['beyond0', 'beyond1', 'beyond2'], true, true), urls), ['pinowner'])
+        expect(passesPaging(urls, 'pinowner')).toBe(2)
+        expect(report?.judged).toEqual(['pinowner'])
+      })
+
+      it('does not count a paging that answered zero as one that served its cell whole', async () => {
+        // No names served is "at least" a total of zero, but a zero total is
+        // no evidence: npm has answered an empty result for a real cell. Taken
+        // as whole, this first pass would let the retry's short paging -- three
+        // names of the four her cell answers -- be judged.
+        const inner = outcomeStub('pinowner', 4, ['beyond0', 'beyond1', 'beyond2'], true)
+        let answeredZero = false
+        const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+          if (!answeredZero && decodeURIComponent(String(url)).includes('maintainer:pinowner&size=250')) {
+            answeredZero = true
+            return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
+          }
+          return inner(url, init)
+        }) as unknown as typeof fetch
+        const report = await judge(fetchImpl, ['pinowner'])
+        expect(answeredZero).toBe(true)
+        expect(report?.pinnedSupplied).toBe(3)
+        expect(report?.judged).toEqual([])
+      })
+
+      it('judges a pinned cell the window had already covered', async () => {
+        // Her cell answers two and the window already served two of hers, so
+        // the cell is skipped unpaged: it holds nothing the run has not seen.
+        const urls: string[] = []
+        const report = await judge(recording(hers({ inWindow: 2 }), urls), ['pinowner'])
+        expect(report?.pinnedProbed).toBe(1)
+        expect(passesPaging(urls, 'pinowner')).toBe(0)
+        expect(report?.judged).toEqual(['pinowner'])
+      })
+
+      it('does not judge a pinned cell answering fewer names than the window served its owner', async () => {
+        // Skipped unpaged all the same, but her cell's count of one contradicts
+        // the two the window served her, so it is no evidence that the run saw
+        // every name her cell holds.
+        const urls: string[] = []
+        const report = await judge(recording(hers({ inWindow: 2, cellTotal: 1 }), urls), ['pinowner'])
+        expect(passesPaging(urls, 'pinowner')).toBe(0)
+        expect(report?.judged).toEqual([])
+      })
+
+      it('does not judge a zero-total pin, or one over the window', async () => {
+        // Neither cell is paged. A zero total is the registry's answer, which
+        // the eviction exit owns, confirmed or not; a cell past the window can
+        // never be paged in full.
+        const report = await judge(probeStubWithTotals({ zero: 0, huge: SEARCH_WINDOW + 1 }), ['huge', 'zero'])
+        expect(report?.pinnedProbed).toBe(2)
+        expect(report?.evicted).toEqual(['zero'])
+        expect(report?.judged).toEqual([])
+        // A zero the confirming probe contradicts: not evicted, not judged.
+        const transient = await judge(probeStubTransientZero(4), ['flaky'])
+        expect(transient?.pinnedProbed).toBe(1)
+        expect(transient?.evicted).toEqual([])
+        expect(transient?.judged).toEqual([])
+      })
+
+      it.each([
+        ['paged in full', { beyond: 2 }],
+        ['skipped as already covered', { inWindow: 2 }],
+      ] as const)('a pin whose names arrived without keywords is not judged: %s', async (_label, shape) => {
+        // `isAtRisk` reads a name with no keywords as not at risk, so a
+        // response that stopped carrying the field would make seeding name
+        // nobody and release every judged pin at once. The same cell with
+        // keywords is the control: judged.
+        expect((await judge(hers({ ...shape, keywords: null }), ['pinowner']))?.judged).toEqual([])
+        expect((await judge(hers(shape), ['pinowner']))?.judged).toEqual(['pinowner'])
       })
     })
   })

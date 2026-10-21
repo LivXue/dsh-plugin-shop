@@ -751,6 +751,17 @@ describe('judgedPins', () => {
     expect(judgedPins([observe({ cell: 'over-window', whole: true, names: [kw] })])).toEqual([])
   })
 
+  it('does not judge a cell whose total is below what the window served its owner, though it judges an equal one', () => {
+    // Both were skipped unpaged. An equal total says the window and refinement
+    // cells showed every name the cell holds; a smaller one contradicts what
+    // the run saw, so it is no evidence that they did. Same names, same
+    // `whole`: only the cell kind differs.
+    expect(judgedPins([
+      observe({ maintainer: 'equal', cell: 'redundant', whole: false, names: [kw] }),
+      observe({ maintainer: 'fewer', cell: 'disagrees', whole: false, names: [kw] }),
+    ])).toEqual(['equal'])
+  })
+
   it.each(['paged', 'redundant'] as const)(
     'does not judge a %s verdict that rests on a name with no keywords',
     cell => {
@@ -931,6 +942,46 @@ describe('applyAxisReport', () => {
     const complete = applyAxisReport(base({ pinned: { k: ['z'] } }), outcome({ evicted, seedingComplete: true }))
     expect(complete.state.pinned?.k).toEqual(['z'])
     expect(complete.released).toEqual([])
+  })
+
+  it('releases nothing at all when the cap refused this report\'s evictions', () => {
+    // More than MAX_EVICTIONS_PER_RUN zero answers read as a registry
+    // answering wrongly this run, and every release rests on totals the same
+    // registry answered in the same run: a cell skipped as covered, a cell
+    // paged in full, a keyword enumerated whole. So the refusal reaches every
+    // pin, not only the ones the report lists as evicted, and build.ts's
+    // "REMOVED NO PINS" note stays true. `judged-gone` would leave on any
+    // other run: judged, pinned, and not seeded.
+    const evicted = Array.from({ length: MAX_EVICTIONS_PER_RUN + 1 }, (_, i) => `zero${String(i).padStart(3, '0')}`)
+    const pinned = ['judged-gone', 'kept', 'unjudged', ...evicted]
+    const after = applyAxisReport(
+      base({ pinned: { k: pinned } }),
+      outcome({ evicted, judged: ['judged-gone', 'kept'], seeded: ['kept'] }),
+    )
+    expect(after.released).toEqual([])
+    expect(after.evictionsRefused).toBe(MAX_EVICTIONS_PER_RUN + 1)
+    expect(after.state.pinned?.k).toEqual(pinned)
+    // Complete seeding is the other exit, and the same refusal holds there:
+    // `judged-gone` and `unjudged` are both pins it does not name.
+    const complete = applyAxisReport(
+      base({ pinned: { k: pinned } }),
+      outcome({ evicted, seedingComplete: true, seeded: ['kept'] }),
+    )
+    expect(complete.released).toEqual([])
+    expect(complete.state.pinned?.k).toEqual(pinned)
+  })
+
+  it('releases every judged pin seeding no longer names, however many: the eviction cap does not bound it', () => {
+    // MAX_EVICTIONS_PER_RUN guards a registry answering zero for real cells,
+    // and a zero total is never judged, so this exit is not how that fault
+    // arrives. The first run to pass releases most of a full set (design
+    // 2026-10-20, section 4.2); a bound that small would keep it FULL for
+    // weeks.
+    const many = Array.from({ length: MAX_EVICTIONS_PER_RUN + 1 }, (_, i) => `u${String(i).padStart(3, '0')}`)
+    const after = applyAxisReport(base({ pinned: { k: many } }), outcome({ judged: many }))
+    expect(after.released).toEqual(many)
+    expect(after.state.pinned?.k).toBeUndefined()
+    expect(after.evictionsRefused).toBe(0)
   })
 
   it('lists the pins it released in code-unit order, whatever order the state held them in', () => {
