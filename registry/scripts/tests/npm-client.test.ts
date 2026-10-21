@@ -3489,6 +3489,34 @@ describe('searchByKeywords', () => {
         expect(names).toContain('beyond2')
       })
 
+      it('earns no pin for a rotated cell that only re-serves a name an earlier cell supplied', async () => {
+        // `fay` and `gus` co-maintain `shared`, past the window, where only
+        // their own cells reach it. `fay`'s cell is paged first and supplies
+        // it, so she earns a pin. `gus`'s cell serves the same name again and
+        // adds nothing to the union: a pin is earned by what a cell SUPPLIED
+        // (design doc §3's outcome entry), and a name it merely served again
+        // is no reason to probe it every run.
+        const pkg = (name: string, maintainers: string[] = []) =>
+          ({ name, keywords: ['deepseek-harness', 'dsh'], maintainers })
+        const shared = pkg('shared', ['fay', 'gus'])
+        const reports: PublisherAxisReport[] = []
+        await searchByKeywords(
+          stubSearchWithPackages({
+            'keywords:deepseek-harness': [...Array.from({ length: SEARCH_WINDOW }, (_, i) => pkg(`w${i}`)), shared],
+            'keywords:deepseek-harness,dsh': [pkg('w0')],
+            'keywords:deepseek-harness maintainer:fay': [shared],
+            'keywords:deepseek-harness maintainer:gus': [shared],
+          }), undefined, undefined, undefined, undefined,
+          () => {}, () => {}, { publishers: ['fay', 'gus'] }, 5,
+          r => reports.push(r),
+        )
+        const report = reports.find(r => r.keyword === 'deepseek-harness')
+        // Both cells were probed and paged; one name between them was new.
+        expect(report?.rotatedProbed).toBe(2)
+        expect(report?.rotatedSupplied).toBe(1)
+        expect(report?.seeded).toEqual(['fay'])
+      })
+
       describe('a rotated cell and the names the change feed carries', () => {
         /**
          * `deepseek-harness` past its window by every name `cells` lists, each
@@ -3535,6 +3563,12 @@ describe('searchByKeywords', () => {
           // names are new to the union, the carried one included.
           expect(report?.rotatedProbed).toBe(2)
           expect(report?.rotatedSupplied).toBe(2)
+          // Both cells were paged in full, and neither is judged: a rotated
+          // cell is no pin, and only a pin's own probe can judge it (design
+          // 2026-10-20, section 4.2). The handoff parser refuses a record
+          // judging more pins than it probed, and this run probed none.
+          expect(report?.pinnedProbed).toBe(0)
+          expect(report?.judged).toEqual([])
         })
 
         it('earns both pins when the feed is unavailable', async () => {
@@ -3543,6 +3577,9 @@ describe('searchByKeywords', () => {
           const report = await rotate({ carol: ['dsh-c'], dave: ['plain-d'] }, NO_FEED)
           expect(report?.seeded).toEqual(['carol', 'dave'])
           expect(report?.rotatedSupplied).toBe(2)
+          // Paged in full and unjudged, as above: earning is the rotation's
+          // only outcome.
+          expect(report?.judged).toEqual([])
         })
 
         it('a rotated cell that supplies a carried name and one the feed does not hold still earns', async () => {
@@ -3712,6 +3749,53 @@ describe('searchByKeywords', () => {
         // keywords is the control: judged.
         expect((await judge(hers({ ...shape, keywords: null }), ['pinowner']))?.judged).toEqual([])
         expect((await judge(hers(shape), ['pinowner']))?.judged).toEqual(['pinowner'])
+      })
+
+      it.each([
+        ['paged in full', false],
+        ['skipped as already covered', true],
+      ] as const)('a pin past the pinned half that the rotation probes is not judged: %s', async (_label, cInWindow) => {
+        // `probeOrder` probes at most half the budget from the pinned set, so
+        // with a budget of 4 `a` and `b` are the pinned half and `c`, pinned
+        // too, is left to the rotation, which reaches it through the
+        // vocabulary. Its cell is then probed and dealt with exactly as `a`'s
+        // and `b`'s are, but a rotated cell is no pin's own probe, so it
+        // judges nothing (design 2026-10-20, section 4.2): `a` and `b` are
+        // judged and `c` is not. Were it judged, the record would name three
+        // judged pins against two probed, and the handoff parser refuses
+        // that, so every build would stop there.
+        const pkg = (name: string, owner?: string) =>
+          ({ name, keywords: ['deepseek-harness', 'dsh'], maintainers: owner === undefined ? [] : [owner] })
+        const own = (owner: string, inWindow: boolean) => pkg(`${inWindow ? 'head' : 'tail'}-${owner}`, owner)
+        const c = own('c', cInWindow)
+        const head = cInWindow ? [c] : []
+        const fetchImpl = stubSearchWithPackages({
+          'keywords:deepseek-harness': [
+            ...head, ...Array.from({ length: SEARCH_WINDOW - head.length }, (_, i) => pkg(`w${i}`)),
+            pkg('dsh0'), own('a', false), own('b', false), ...(cInWindow ? [] : [c]),
+          ],
+          'keywords:deepseek-harness,dsh': [pkg('dsh0')],
+          'keywords:deepseek-harness maintainer:a': [own('a', false)],
+          'keywords:deepseek-harness maintainer:b': [own('b', false)],
+          'keywords:deepseek-harness maintainer:c': [c],
+        })
+        const urls: string[] = []
+        const reports: PublisherAxisReport[] = []
+        await searchByKeywords(
+          recording(fetchImpl, urls), undefined, undefined, undefined, undefined,
+          () => {}, () => {}, { publishers: ['c'], pinned: { 'deepseek-harness': ['a', 'b', 'c'] } }, 4,
+          r => reports.push(r),
+        )
+        const report = reports.find(r => r.keyword === 'deepseek-harness')
+        expect(report?.pinnedProbed).toBe(2)
+        expect(report?.rotatedProbed).toBe(1)
+        // `c`'s cell was paged in full, or skipped because the window had
+        // already served its one name: either way the evidence a pin's own
+        // probe would have given.
+        expect(passesPaging(urls, 'c')).toBe(cInWindow ? 0 : 1)
+        expect(report?.judged).toEqual(['a', 'b'])
+        expect(report?.judged.length).toBeLessThanOrEqual(report?.pinnedProbed ?? 0)
+        expect(() => parsePublisherAxisReport(report, 'handoff.json')).not.toThrow()
       })
     })
   })

@@ -3,7 +3,7 @@ import { compareStrings } from './identity.ts'
 import { escapeCell, lockNpmNames } from './emit.ts'
 import { classifyDeparture, departedNames, departureRejection, summarizeDepartures, type DepartureAnswer, type DepartureOutcome, type DepartureSummary } from './departures.ts'
 import { deprecationMessageOf } from './gate.ts'
-import { allocateProbeBudgets, atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, isPinnableKeyword, judgedPins, MAX_PINNED_PER_KEYWORD, probeOrder, seedableNames, type AxisOutcome, type HarvestedName, type PinCell, type PinObservation, type PublisherState } from './publisher-state.ts'
+import { allocateProbeBudgets, atRiskNameCount, atRiskOwners, cursorFor, earnsPin, isMaintainerName, isPinnableKeyword, judgedPins, MAX_PINNED_PER_KEYWORD, probeOrder, seedableNames, type AxisOutcome, type HarvestedName, type PinCell, type PinObservation, type PublisherState } from './publisher-state.ts'
 import { FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, isDeprecated, NO_FEED, planConfirmations, planFeedVerification, type FeedCoverage, type FeedInput } from './feed-state.ts'
 import type { Candidate, Compatibility, Rejection } from './types.ts'
 
@@ -3029,14 +3029,13 @@ export async function searchByKeywords(
           for (const name of got) forKeyword.add(name)
           rotatedSupplied += fresh.length
           // Outcome entry (design doc §3): a rotated cell that supplied a name
-          // nothing else had earns a pinned spot, so the next run probes it
-          // directly instead of waiting for rotation to return. Only a name
-          // the change feed does not carry counts toward it (design
-          // 2026-10-20, section 4.1): the feed credits a carrier whenever no
-          // search cell serves it, so a cell whose every new name is a carrier
-          // reached nothing a pin is needed for. Supply above is still
-          // measured over every new name, carriers included, as it always was.
-          if (cell.maintainer !== undefined && fresh.some(name => !carried.has(name))) earned.push(cell.maintainer)
+          // nothing else had can earn a pinned spot, so the next run probes it
+          // directly instead of waiting for rotation to return. Whether it
+          // does is `earnsPin`'s call (pure, `publisher-state.ts`), which
+          // reads the names this cell supplied and the change feed's carriers
+          // (design 2026-10-20, section 4.1). Supply above is still measured
+          // over every new name, carriers included, as it always was.
+          if (cell.maintainer !== undefined && earnsPin(fresh, carried)) earned.push(cell.maintainer)
         }
       }
     }

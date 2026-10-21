@@ -495,13 +495,15 @@ export interface HarvestedName {
 }
 
 /**
- * The harvested names a pin may be seeded or earned from: those `carried` does
- * not hold, in `harvested`'s own order.
+ * The harvested names a pin may be seeded from: those `carried` does not hold,
+ * in `harvested`'s own order. {@link earnsPin} holds earning to the same rule.
  *
- * `carried` is what the change feed carries for the keyword. The feed credits a
- * carrier whenever no search cell serves it, so a pin for its owner buys
- * nothing the feed does not already give, and the pins had gone to those owners
- * rather than to the names only a pin can reach (design
+ * `carried` is what the change feed carries for the keyword, and a pin for a
+ * carrier's owner reaches nothing the feed step does not already reach. That
+ * step credits a carrier no search cell served, and declines one only after
+ * two complete pagings of its owner's own `keywords:K maintainer:U` cell --
+ * the cell a pin for that owner would page -- omitted it. The pins had gone to
+ * those owners rather than to the names only a pin can reach (design
  * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`, §1 and
  * §4.1). {@link atRiskOwners} and {@link atRiskNameCount} read this list
  * instead of everything harvested.
@@ -519,6 +521,28 @@ export function seedableNames(
     if (!carried.has(name)) out.push(harvestedName)
   }
   return out
+}
+
+/**
+ * Whether a rotated cell earned its owner a pin: whether `fresh`, the names the
+ * cell added to the keyword's union this run, holds one `carried` does not
+ * (design `docs/design/2026-09-17-publisher-pinning.md` §3's outcome entry, as
+ * design `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`
+ * §4.1 amends it).
+ *
+ * - `fresh`, not every name the cell served: one the window, a refinement or
+ *   an earlier cell had already put in the union was reached without this
+ *   cell, so serving it again is no reason to probe the cell on every run.
+ * - Not carried, for the reason {@link seedableNames} gives: the feed step
+ *   already reaches a carrier.
+ * - SOME such name, not every new one: a name only this cell reached is worth
+ *   the pin whatever else the cell served.
+ *
+ * Only `carried`'s keys are read, as in {@link seedableNames}, and an empty one
+ * leaves earning what it was before the feed existed.
+ */
+export function earnsPin(fresh: readonly string[], carried: { has(name: string): boolean }): boolean {
+  return fresh.some(name => !carried.has(name))
 }
 
 /**
