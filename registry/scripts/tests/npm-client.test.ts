@@ -3869,6 +3869,47 @@ describe('searchByKeywords', () => {
         expect(report?.judged).toEqual(['pinowner'])
       })
 
+      it('keeps a pin whose owner co-maintains an at-risk name that only a rotated cell served', async () => {
+        // Publisher cells do not write `servedFor`, so `servedAtEnd` never
+        // counts a name a rotated cell served her. Here her own cell answers
+        // the one name the window showed her and is skipped on it, while a
+        // rotated cell serves a second name whose `maintainers` list her: the
+        // `maintainer:` qualifier and that array disagree, the one case where
+        // the count misses a name of hers (PR #108 review). The pin must not
+        // be lost to it. `shared` carries no refinement keyword, so it is at
+        // risk, and only a pin or the rotation can reach it.
+        const pkg = (name: string, keywords: readonly string[], maintainers: string[]) => ({ name, keywords, maintainers })
+        const reachable = ['deepseek-harness', 'dsh']
+        const fetchImpl = stubSearchWithPackages({
+          'keywords:deepseek-harness': [
+            pkg('head0', reachable, ['pinowner']),
+            ...Array.from({ length: SEARCH_WINDOW - 1 }, (_, i) => pkg(`w${i}`, reachable, [])),
+            pkg('dsh0', reachable, []),
+            pkg('shared', ['deepseek-harness'], ['coowner', 'pinowner']),
+          ],
+          'keywords:deepseek-harness,dsh': [pkg('dsh0', reachable, [])],
+          'keywords:deepseek-harness maintainer:pinowner': [pkg('head0', reachable, ['pinowner'])],
+          'keywords:deepseek-harness maintainer:coowner': [pkg('shared', ['deepseek-harness'], ['coowner', 'pinowner'])],
+        })
+        const urls: string[] = []
+        const reports: PublisherAxisReport[] = []
+        await searchByKeywords(
+          recording(fetchImpl, urls), undefined, undefined, undefined, undefined,
+          () => {}, () => {}, { publishers: ['coowner'], pinned: { 'deepseek-harness': ['pinowner'] } }, 4,
+          r => reports.push(r),
+        )
+        const report = reports.find(r => r.keyword === 'deepseek-harness')
+        // The scenario is the one claimed: her cell was probed and skipped
+        // unpaged, and the rotated cell is what served `shared`.
+        expect(report?.pinnedProbed).toBe(1)
+        expect(passesPaging(urls, 'pinowner')).toBe(0)
+        expect(report?.rotatedSupplied).toBe(1)
+        const state: PublisherState = { publishers: ['coowner'], pinned: { 'deepseek-harness': ['pinowner'] } }
+        const applied = applyAxisReport(state, report as PublisherAxisReport)
+        expect(applied.released).toEqual([])
+        expect(applied.state.pinned?.['deepseek-harness']).toContain('pinowner')
+      })
+
       it('does not judge a zero-total pin, or one over the window', async () => {
         // Neither cell is paged. A zero total is the registry's answer, which
         // the eviction exit owns, confirmed or not; a cell past the window can
