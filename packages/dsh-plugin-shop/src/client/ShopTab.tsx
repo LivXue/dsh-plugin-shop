@@ -4,10 +4,10 @@
  * details — never markup, so hostile npm descriptions cannot inject (spec
  * §11.3.4): no render path here may ever use dangerouslySetInnerHTML. */
 
-import { Component, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
+import { Component, Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, listedOnShelf, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, updateAwaitsRestart, utcDay, versionLabel, versionLabelKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type InstallView, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, listedOnShelf, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, updateAwaitsRestart, utcDay, versionLabel, versionLabelKey } from './present.ts'
 import { createPageStore, switchKey, type OwedNotice, type ShopPageStore, type SwitchSurface } from './page-store.ts'
 import { readRestartMonitor, requestRestart, subscribeRestartMonitor, type RestartMonitorState } from './restart-monitor.ts'
 import { useRegistryFlows, type InstallFlow, type UninstallFlow, type UseUninstallFlows } from './useFlows.ts'
@@ -220,6 +220,10 @@ const EntryCard = memo(function EntryCard({ entry, stars, order, shelfDay, insta
     repo: entry.repo,
     subdir: entry.subdir,
   }
+  // Where an uninstall of this card's plugin stands (the installed branch
+  // below says what each changes).
+  const uninstalling = uninstallFlow.view.kind === 'running'
+  const removed = uninstallFlow.view.kind === 'done'
   return (
     <div className={css.card} data-shop-entry={entry.name} data-category={category}>
       <span className={css.cardSpine} aria-hidden="true" />
@@ -378,8 +382,27 @@ const EntryCard = memo(function EntryCard({ entry, stars, order, shelfDay, insta
        * active install/uninstall flow (gate, log, notices) takes the full
        * width below them, where it has room. */}
       <div className={css.cardActions} data-shop-actions>
+        {/* Keyed, in both branches: the card changes branch when the installed
+          * list catches up with an install or an uninstall, and the two branches
+          * hold the panels in different orders. By position, React would draw
+          * the receipt on screen again as a new node in that moment — a
+          * reader's focus on its Dismiss lost, and a probe holding the old node
+          * reading a detached element (the e2e's contrast check, once, on
+          * 0.2.0-rc.2, 2026-10-22). By key, each panel stays the node it was. */}
         {installed === undefined ? (
           <>
+            {uninstallFlow.view.kind !== 'idle' && (
+              // A completed uninstall stays mounted after installed() drops
+              // this row (I-1): the row saying so is gone, but the flow keyed
+              // by identity is not, so its outcome — and any reload/restart
+              // offer — remains on screen exactly like a completed install.
+              // Above the Install button, as an install's receipt stands above
+              // the controls it leaves: what happened reads first, and the
+              // card's last line is its action beside its size and author.
+              // Below the button, the receipt left the size alone on a third
+              // line (measured 2026-10-22).
+              <UninstallPanel key="uninstall" name={entry.name} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} flow={uninstallFlow} />
+            )}
             {/* Suppressed only in the Installed view. There, membership
               * (wave 2, `matched`) requires `installedByKey.has(key) ||
               * uninstallFlow.view.kind !== 'idle'` — so inside this view
@@ -393,36 +416,40 @@ const EntryCard = memo(function EntryCard({ entry, stars, order, shelfDay, insta
               * is still browsable, and a live Install button beside its
               * uninstall receipt is the intended pairing. */}
             {!inInstalledView && (
-              <InstallPanel target={installTarget} tier={entry.tier} blockers={blockers} blockersStated flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
-            )}
-            {uninstallFlow.view.kind !== 'idle' && (
-              // A completed uninstall stays mounted after installed() drops
-              // this row (I-1): the row saying so is gone, but the flow keyed
-              // by identity is not, so its outcome — and any reload/restart
-              // offer — remains on screen exactly like a completed install.
-              <UninstallPanel name={entry.name} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} flow={uninstallFlow} />
+              <InstallPanel key="install" target={installTarget} tier={entry.tier} blockers={blockers} blockersStated flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
             )}
           </>
         ) : (
           <>
-            {installed.outdated || flow.view.kind !== 'idle' ? (
+            {/* An uninstall of this installation speaks for the card from the
+              * press (2026-10-22). While it runs, an install receipt it is
+              * undoing gives way to the label or the waiting Update button,
+              * and the switch waits. Once it lands, the label, Update and the
+              * switch describe an installation that is gone, so only its
+              * receipt stands until the installed list stops listing the
+              * plugin — the list alone says a package is gone, so no Install
+              * is offered early. A failed uninstall removed nothing, and all
+              * of it comes back. */}
+            {removed ? null : installed.outdated || (flow.view.kind !== 'idle' && !(uninstalling && flow.view.kind !== 'running')) ? (
               // The update button drives the same install flow for the
               // catalog's latest version; a completed flow stays mounted
               // after installed() catches up so its outcome remains visible.
-              <InstallPanel target={installTarget} tier={entry.tier} variant={installed.outdated ? 'update' : 'install'} blockers={blockers} blockersStated flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
+              <InstallPanel key="install" target={installTarget} tier={entry.tier} variant={installed.outdated ? 'update' : 'install'} locked={uninstalling} blockers={blockers} blockersStated flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
             ) : (
               // No button on this branch, so the badge follows the label that
               // takes its place: an installed plugin whose modules are absent
               // is exactly the case that most needs to say so.
-              <>
+              <Fragment key="installed">
                 <p className={css.installedLabel} data-shop-installed>{t('installed')}</p>
                 <BlockerBadge blockers={blockers} t={t} />
-              </>
+              </Fragment>
             )}
             {/* The hot enable/disable switch (§8) sits on every installed
              * row — current or outdated — and reads the inventory state. */}
-            <EnabledSwitch row={installed} surface="card" page={page} t={t} setEnabled={setEnabled} restart={restart} restartBlocked={restartBlocked} reload={reload} />
-            <UninstallPanel name={entry.name} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} flow={uninstallFlow} />
+            {!removed && (
+              <EnabledSwitch key="switch" row={installed} surface="card" page={page} t={t} setEnabled={setEnabled} restart={restart} restartBlocked={restartBlocked} reload={reload} locked={uninstalling} />
+            )}
+            <UninstallPanel key="uninstall" name={entry.name} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} flow={uninstallFlow} />
           </>
         )}
         {/* How big it is and who put it here, pushed to the right edge of the
@@ -613,7 +640,7 @@ function BlockerBadge({ blockers, t }: {
  * keeps a second press from becoming a second RPC. The page states the
  * dialog's facts nowhere since 2026-10-15 (the shop design's §7 amendment of
  * that date). */
-function InstallPanel({ target, tier, blockers, blockersStated = false, variant = 'install', flow, t, restart, restartBlocked, reload }: {
+function InstallPanel({ target, tier, blockers, blockersStated = false, variant = 'install', locked = false, flow, t, restart, restartBlocked, reload }: {
   /** The install request this panel drives, identity included. */
   target: InstallArgs
   tier: CatalogEntry['tier']
@@ -627,6 +654,14 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
    * the reasons are written out under the row. */
   blockersStated?: boolean
   variant?: 'install' | 'update'
+  /** An uninstall of this installation is running. The settled outcome of an
+   * install it is undoing no longer speaks for the card — "running now, no
+   * restart needed" above an uninstall taking the plugin away — so the idle
+   * branch stands in for it, and its button waits: an Update pressed now
+   * would queue behind the removal and install the plugin again. A running
+   * install keeps its own view. The flow itself is untouched, so a failed
+   * uninstall, which removed nothing, brings the receipt back. */
+  locked?: boolean
   /** Shared by every panel rendering this install identity. */
   flow: InstallFlow
   t: ShopTabProps['t']
@@ -634,7 +669,8 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
   restartBlocked: RestartBlockedReason | null
   reload: () => void
 }): ReactNode {
-  const { view, start, starting, reset } = flow
+  const { view: flowView, start, starting, reset } = flow
+  const view: InstallView = locked && flowView.kind !== 'running' ? { kind: 'idle' } : flowView
   // One click installs. `acknowledged: true` is the click itself for an
   // entry the community tier covers; a verified one installs without it,
   // because there is nothing to acknowledge (§9.3). The host's check is
@@ -658,7 +694,7 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
       <div className={css.installPanel}>
         <p className={css.installing}>{t(installPhaseKey(view.phase))}</p>
         {view.log.length > 0 && (
-          <div className={css.log}>
+          <div className={css.log} data-shop-log>
             {view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
           </div>
         )}
@@ -667,14 +703,14 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
   }
   if (view.kind === 'done') {
     return (
-      <div className={css.installedActions}>
+      <div className={css.receipt}>
         {/* The log outlives the install, exactly as it does on `failed`. It
             used to stop at the terminal state, so the outcome that leaves
             something worth reading — what landed, what pnpm did — was the one
             that showed nothing, and a user who looked away and back read that
             as the log having been lost (reported 2026-09-06). */}
         {view.log.length > 0 && (
-          <div className={css.log}>
+          <div className={css.log} data-shop-log>
             {view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
           </div>
         )}
@@ -692,17 +728,22 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
           {t(activationNoticeKey(view.activation, view.restartReason))}
         </p>
         {view.detail !== undefined && <p className={css.notice} data-shop-done-note>{view.detail}</p>}
-        <ActivationOffer activation={view.activation} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} where="install" />
-        {/* The way out of `done`, as the uninstall receipt has. The page
-            store keeps this view for the page's life (design
-            2026-10-16-shop-sidebar-page §5.2), and on a card whose plugin is
-            no longer installed — removed through dsh's Plugins page or the
-            CLI — it stands where the Install button would: without this, a
-            `live` install, which offers nothing beside its notice, left the
-            shop no way to install the plugin again until a page reload. */}
-        <button type="button" className={css.cancelButton} data-shop-install-dismiss onClick={reset}>
-          {t('dismiss')}
-        </button>
+        {/* The Dismiss rides with the offer, in its row: the way out of
+            `done`, as the uninstall receipt has. The page store keeps this
+            view for the page's life (design 2026-10-16-shop-sidebar-page
+            §5.2), and on a card whose plugin is no longer installed — removed
+            through dsh's Plugins page or the CLI — it stands where the Install
+            button would: without this, a `live` install, which offers nothing
+            beside its notice, left the shop no way to install the plugin
+            again until a page reload. */}
+        <ActivationOffer
+          activation={view.activation} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} where="install"
+          trailing={(
+            <button type="button" className={css.cancelButton} data-shop-install-dismiss onClick={reset}>
+              {t('dismiss')}
+            </button>
+          )}
+        />
       </div>
     )
   }
@@ -710,9 +751,14 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
     return (
       <div className={css.installPanel}>
         <p className={css.failedHeading}>{t('installFailed')}</p>
-        <div className={css.log}>
-          {view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
-        </div>
+        {/* A failure that logged nothing — the request never reached the
+            host, or the host refused it at the start — has no box: an empty
+            one is what stood between the heading and its sentence. */}
+        {view.log.length > 0 && (
+          <div className={css.log} data-shop-log>
+            {view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
+          </div>
+        )}
         {/* An empty detail marks a TRANSPORT failure (the install registry's
             start mapping):
             the wire detail is private and never rendered, so the localized line
@@ -728,15 +774,17 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
             refuses), no retry can help, so the rejected view's Dismiss
             stands in its place; dismissing lands the card on the idle
             branch's refused label. */}
-        {refused && word !== null ? (
-          <button type="button" className={css.cancelButton} data-shop-install-dismiss onClick={reset}>
-            {t('dismiss')}
-          </button>
-        ) : (
-          <button type="button" className={css.installButton} data-shop-install-retry disabled={starting} onClick={() => { void start(request) }}>
-            {t('retry')}
-          </button>
-        )}
+        <div className={css.offerActions} data-shop-offer>
+          {refused && word !== null ? (
+            <button type="button" className={css.cancelButton} data-shop-install-dismiss onClick={reset}>
+              {t('dismiss')}
+            </button>
+          ) : (
+            <button type="button" className={css.installButton} data-shop-install-retry disabled={starting} onClick={() => { void start(request) }}>
+              {t('retry')}
+            </button>
+          )}
+        </div>
       </div>
     )
   }
@@ -794,8 +842,9 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
         className={css.installButton}
         // Between the click and the host's answer. `starting` is the shared
         // flow's own state, so the outdated row's button shows it too; the
-        // wait cursor is the CSS's half of the same fact.
-        disabled={starting}
+        // wait cursor is the CSS's half of the same fact. `locked`: an
+        // uninstall of this installation is under way (see the prop).
+        disabled={starting || locked}
         {...(update ? { 'data-shop-update': true } : { 'data-shop-install': true })}
         onClick={() => { void start(request) }}
       >
@@ -854,7 +903,7 @@ function UninstallPanel({ name, t, restart, restartBlocked, reload, flow }: {
       <div className={css.installPanel}>
         <p className={css.installing}>{t('uninstalling')}</p>
         {view.log.length > 0 && (
-          <div className={css.log}>
+          <div className={css.log} data-shop-log>
             {view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
           </div>
         )}
@@ -863,31 +912,37 @@ function UninstallPanel({ name, t, restart, restartBlocked, reload, flow }: {
   }
   if (view.kind === 'done') {
     return (
-      <div className={css.installedActions}>
+      <div className={css.receipt}>
         {/* The log outlives the uninstall, for the reason the install panel's
             done view gives for its own. */}
         {view.log.length > 0 && (
-          <div className={css.log}>
+          <div className={css.log} data-shop-log>
             {view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
           </div>
         )}
         <p className={css.notice} data-shop-uninstall-done>{t(uninstallActivationNoticeKey(view.activation))}</p>
         {/* A `live` uninstall is already done — the plugin stopped
             immediately and the boot composition picks the removal up at the
-            next restart on its own — so it offers nothing. A `reload`
-            uninstall stopped too, but this page still shows the plugin as
-            installed until reloaded. */}
-        <ActivationOffer activation={view.activation} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} where="uninstall" />
-        {/* The way out of `done`. Without it the registry could enter this
-            state and never leave: the receipt outlives the ROW it describes
-            by design (I-1), but it also outlived the IDENTITY — a reinstall
-            rendered "removed" over a freshly installed plugin, with no
-            Uninstall button under it, and under the Installed filter the
-            phantom row this receipt holds open stayed for the life of the
-            tab, counted as zero by the button above it. */}
-        <button type="button" className={css.cancelButton} data-shop-uninstall-dismiss onClick={reset}>
-          {t('dismiss')}
-        </button>
+            next restart on its own — so it offers nothing but the way out. A
+            `reload` uninstall stopped too, but this page still shows the
+            plugin as installed until reloaded.
+
+            The Dismiss rides with the offer, in its row: the way out of
+            `done`. Without it the registry could enter this state and never
+            leave: the receipt outlives the ROW it describes by design (I-1),
+            but it also outlived the IDENTITY — a reinstall rendered "removed"
+            over a freshly installed plugin, with no Uninstall button under
+            it, and under the Installed filter the phantom row this receipt
+            holds open stayed for the life of the tab, counted as zero by the
+            button above it. */}
+        <ActivationOffer
+          activation={view.activation} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} where="uninstall"
+          trailing={(
+            <button type="button" className={css.cancelButton} data-shop-uninstall-dismiss onClick={reset}>
+              {t('dismiss')}
+            </button>
+          )}
+        />
       </div>
     )
   }
@@ -895,9 +950,13 @@ function UninstallPanel({ name, t, restart, restartBlocked, reload, flow }: {
     return (
       <div className={css.installPanel}>
         <p className={css.failedHeading}>{t('uninstallFailed')}</p>
-        <div className={css.log}>
-          {view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
-        </div>
+        {/* No box for a failure that logged nothing, for the reason the
+            install panel's failed view gives. */}
+        {view.log.length > 0 && (
+          <div className={css.log} data-shop-log>
+            {view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
+          </div>
+        )}
         {/* Same transport rule as the install panel: an empty detail is a
             TRANSPORT failure and falls back to the localized line; a
             non-empty detail is the host's published copy and renders
@@ -912,13 +971,16 @@ function UninstallPanel({ name, t, restart, restartBlocked, reload, flow }: {
             it. A failure may also be a refusal no retry gets past: the host
             answering that the package is not installed, or the desktop
             profile refusing every uninstall. Dismiss asks nothing and returns
-            the card to whatever the installed list says. */}
-        <button type="button" className={css.uninstallButton} data-shop-uninstall-retry onClick={() => void start({ name })}>
-          {t('retry')}
-        </button>
-        <button type="button" className={css.cancelButton} data-shop-uninstall-dismiss onClick={reset}>
-          {t('dismiss')}
-        </button>
+            the card to whatever the installed list says. The two share a row;
+            they stood one above the other. */}
+        <div className={css.offerActions} data-shop-offer>
+          <button type="button" className={css.uninstallButton} data-shop-uninstall-retry onClick={() => void start({ name })}>
+            {t('retry')}
+          </button>
+          <button type="button" className={css.cancelButton} data-shop-uninstall-dismiss onClick={reset}>
+            {t('dismiss')}
+          </button>
+        </div>
       </div>
     )
   }
@@ -953,12 +1015,16 @@ function useRestartMonitor(): RestartMonitorState | null {
  * period, refreshing the page once the NEW server keeps answering. A refused
  * restart renders the host's published detail above the offer, which stays;
  * a server that never comes back names the manual command. */
-function RestartPanel({ t, restart, reload, gate }: {
+function RestartPanel({ t, restart, reload, gate, trailing }: {
   t: ShopTabProps['t']
   restart: ShopTabInjected['restart']
   /** The tab's reload trigger: a real page reload in production, a spy in
    * tests — the same one the §4 offer uses. */
   reload: () => void
+  /** What the surface adds beside the Restart button, in its row — a
+   * receipt's Dismiss. In every other state of the restart it gets a row of
+   * its own under what the panel says, as it had beside the panel before. */
+  trailing?: ReactNode
   /** When given, the TRIGGER lives elsewhere — the version row — and this
    * panel renders only the confirmation and the outcome. Restarting drops
    * every live conversation, so moving the button must not move it past the
@@ -989,26 +1055,33 @@ function RestartPanel({ t, restart, reload, gate }: {
     else if (outcome.kind === 'unreachable') setRefusal(t('restartTransportFailed'))
   }
 
+  // The surface's own addition, alone in a row: every state below but the
+  // idle offer, which takes it beside its button.
+  const tail = trailing === undefined ? null : <div className={css.offerActions} data-shop-offer>{trailing}</div>
   // Asked for and not yet answered reads as under way too: re-offering the
   // button meanwhile invited a second press into a process that may already
   // be exiting.
   if (monitor?.kind === 'requesting' || monitor?.kind === 'restarting') {
-    return <p className={css.notice} data-shop-restarting>{t('restarting')}</p>
+    return <><p className={css.notice} data-shop-restarting>{t('restarting')}</p>{tail}</>
   }
   if (monitor?.kind === 'failed') {
     return (
-      <p className={css.failedDetail} data-shop-restart-error>
-        {monitor.logFile === undefined ? t('restartFailedNotice') : t('restartFailedLogNotice', { log: monitor.logFile })}
-      </p>
+      <>
+        <p className={css.failedDetail} data-shop-restart-error>
+          {monitor.logFile === undefined ? t('restartFailedNotice') : t('restartFailedLogNotice', { log: monitor.logFile })}
+        </p>
+        {tail}
+      </>
     )
   }
   // The page reloaded into the process it asked to restart. The tab says so
   // once, above everything (NotRestartedNotice); an offer here would only ask
   // that process again, and it answers with the restart it already committed
   // and stays.
-  if (monitor?.kind === 'not-restarted') return null
+  if (monitor?.kind === 'not-restarted') return tail
   if (gateOpen) {
     return (
+      <>
       <div className={css.gate} data-shop-restart-gate>
         <p className={css.gateTitle}>{t('restartTitle')}</p>
         <p className={css.gateBody}>{t('restartBody')}</p>
@@ -1026,6 +1099,8 @@ function RestartPanel({ t, restart, reload, gate }: {
           </button>
         </div>
       </div>
+      {tail}
+      </>
     )
   }
   // A refusal answers one press, not every press — the likeliest, an install
@@ -1035,18 +1110,21 @@ function RestartPanel({ t, restart, reload, gate }: {
   const refused = refusal === null ? null : <p className={css.failedDetail} data-shop-restart-error>{refusal}</p>
   // An external trigger owns the button; this panel is then only the gate and
   // the outcome, and renders nothing more while idle.
-  if (gate !== undefined) return refused
+  if (gate !== undefined) return <>{refused}{tail}</>
   return (
     <>
       {refused}
-      <button
-        type="button"
-        className={css.restartButton}
-        data-shop-restart
-        onClick={() => setGateOpen(true)}
-      >
-        {t('restart')}
-      </button>
+      <div className={css.offerActions} data-shop-offer>
+        <button
+          type="button"
+          className={css.restartButton}
+          data-shop-restart
+          onClick={() => setGateOpen(true)}
+        >
+          {t('restart')}
+        </button>
+        {trailing}
+      </div>
     </>
   )
 }
@@ -1085,26 +1163,41 @@ function NotRestartedNotice({ t, pid, logFile }: { t: ShopTabProps['t']; pid: nu
  * the `restartBlocked` gate changes, with nothing to make the second one
  * fail if it were missed.
  */
-function ActivationOffer({ activation, t, restart, restartBlocked, reload, where }: {
+function ActivationOffer({ activation, t, restart, restartBlocked, reload, where, trailing }: {
   activation: Activation
   t: ShopTabProps['t']
   restart: ShopTabInjected['restart']
   restartBlocked: RestartBlockedReason | null
   reload: () => void
   where: 'install' | 'uninstall' | 'toggle'
+  /** What the surface adds beside the offer's button, in its row — a
+   * receipt's Dismiss. With no button to stand beside, it takes a row of its
+   * own. */
+  trailing?: ReactNode
 }): ReactNode {
-  if (activation === 'reload') return <ReloadPanel t={t} reload={reload} where={where} />
-  if (activation !== 'restart') return null
-  return restartBlocked === null
-    ? <RestartPanel t={t} restart={restart} reload={reload} />
-    : <p className={css.notice} data-shop-restart-disabled>{t(restartBlockedNoticeKey(restartBlocked))}</p>
+  if (activation === 'reload') return <ReloadPanel t={t} reload={reload} where={where} trailing={trailing} />
+  const tail = trailing === undefined ? null : <div className={css.offerActions} data-shop-offer>{trailing}</div>
+  if (activation !== 'restart') return tail
+  if (restartBlocked === null) return <RestartPanel t={t} restart={restart} reload={reload} trailing={trailing} />
+  return (
+    <>
+      <p className={css.notice} data-shop-restart-disabled>{t(restartBlockedNoticeKey(restartBlocked))}</p>
+      {tail}
+    </>
+  )
 }
 
 /** The §4 reload offer: the server already holds the new state and this tab
  * does not. Never automatic — a reload discards whatever the reader had in
  * flight (a conversation, a form, an upload), and the shop knows a reload
  * would help without knowing that now is a good time. */
-function ReloadPanel({ t, reload, where }: { t: ShopTabProps['t']; reload: () => void; where: 'install' | 'uninstall' | 'toggle' }): ReactNode {
+function ReloadPanel({ t, reload, where, trailing }: {
+  t: ShopTabProps['t']
+  reload: () => void
+  where: 'install' | 'uninstall' | 'toggle'
+  /** What the surface adds beside the Reload button, in its row. */
+  trailing?: ReactNode
+}): ReactNode {
   return (
     // `where` names the change that made this page stale. A card can carry
     // more than one at once — an update that landed, a toggle that applied —
@@ -1112,7 +1205,10 @@ function ReloadPanel({ t, reload, where }: { t: ShopTabProps['t']; reload: () =>
     // what a strict Playwright `waitFor` on it needs it to be.
     <div className={css.reloadPanel} data-shop-reload={where}>
       <p className={css.notice}>{t('reloadNote')}</p>
-      <button type="button" className={css.reloadButton} onClick={reload}>{t('reload')}</button>
+      <div className={css.offerActions} data-shop-offer>
+        <button type="button" className={css.reloadButton} onClick={reload}>{t('reload')}</button>
+        {trailing}
+      </div>
     </div>
   )
 }
@@ -1124,8 +1220,11 @@ function ReloadPanel({ t, reload, where }: { t: ShopTabProps['t']; reload: () =>
  * transport throw renders the localized failure line — its private detail
  * (which can name hosts and ports) never reaches the UI.
  */
-function EnabledSwitch({ row, surface, page, t, setEnabled, restart, restartBlocked, reload }: {
+function EnabledSwitch({ row, surface, page, t, setEnabled, restart, restartBlocked, reload, locked = false }: {
   row: ShopInstalledEntry
+  /** An uninstall of this installation is running: a toggle now would write
+   * a row for a package on its way out of the profile. */
+  locked?: boolean
   /** Which surface draws this switch. An outdated plugin has two, its card's
    * and its Updatable row's, and each owes only what was done to it. */
   surface: SwitchSurface
@@ -1203,7 +1302,7 @@ function EnabledSwitch({ row, surface, page, t, setEnabled, restart, restartBloc
         data-shop-toggle
         className={`${css.switch} ${enabled ? css.switchOn : ''}`}
         onClick={() => void onToggle()}
-        disabled={toggle.kind === 'saving'}
+        disabled={toggle.kind === 'saving' || locked}
       >
         <span className={css.switchKnob} />
       </button>
@@ -1226,7 +1325,7 @@ function EnabledSwitch({ row, surface, page, t, setEnabled, restart, restartBloc
  * carry a `latest` string — a catalog truth to compare against; §C10's
  * shadowed rows hold `latest: null` and never reach this control, so the
  * field is narrowed at the parameter. */
-function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, restart, restartBlocked, reload, page }: {
+function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, locked, restart, restartBlocked, reload, page }: {
   row: ShopInstalledEntry & { latest: string }
   tier: CatalogEntry['tier']
   missing: string[]
@@ -1234,6 +1333,10 @@ function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, rest
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   flowFor: (key: string) => InstallFlow
+  /** An uninstall of this installation, pressed on its card, is running or
+   * has landed: the row is the same installation's second surface, so its
+   * Update and its switch wait as the card's do. */
+  locked: boolean
   restart: ShopTabInjected['restart']
   restartBlocked: RestartBlockedReason | null
   reload: () => void
@@ -1249,10 +1352,10 @@ function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, rest
         </span>
       </div>
       <div className={css.outdatedActions}>
-        <EnabledSwitch row={row} surface="row" page={page} t={t} setEnabled={setEnabled} restart={restart} restartBlocked={restartBlocked} reload={reload} />
+        <EnabledSwitch row={row} surface="row" page={page} t={t} setEnabled={setEnabled} restart={restart} restartBlocked={restartBlocked} reload={reload} locked={locked} />
         <InstallPanel
           target={{ name: row.name, version: row.latest, source: row.source, repo: row.repo, subdir: row.subdir }}
-          tier={tier} variant="update" blockers={stateBlockers(blockersOf(missing, harness, undefined), t)}
+          tier={tier} variant="update" locked={locked} blockers={stateBlockers(blockersOf(missing, harness, undefined), t)}
           flow={flowFor(identityKey(row))} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload}
         />
       </div>
@@ -1280,7 +1383,7 @@ const UPDATABLE_HEADING_ID = 'dsh-shop-updatable-heading'
  * community entry's does); an entry absent from the catalog is read as
  * community, so its request acknowledges, which the host accepts for any
  * tier. */
-function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t, setEnabled, flowFor, restart, restartBlocked, reload, page }: {
+function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t, setEnabled, flowFor, uninstallFor, restart, restartBlocked, reload, page }: {
   state: InstalledState
   entriesByKey: ReadonlyMap<string, CatalogEntry>
   missingByKey: ReadonlyMap<string, string[]>
@@ -1290,6 +1393,8 @@ function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   flowFor: (key: string) => InstallFlow
+  /** Each installation's uninstall flow, the one its card drives. */
+  uninstallFor: (key: string) => UninstallFlow
   restart: ShopTabInjected['restart']
   restartBlocked: RestartBlockedReason | null
   reload: () => void
@@ -1327,6 +1432,7 @@ function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t
               t={t}
               setEnabled={setEnabled}
               flowFor={flowFor}
+              locked={uninstallFor(identityKey(row)).view.kind === 'running' || uninstallFor(identityKey(row)).view.kind === 'done'}
               restart={restart}
               restartBlocked={restartBlocked}
               reload={reload}
@@ -2220,7 +2326,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
         <div className={css.selfUpdatePanel} data-shop-self-updating>
           <p className={css.installing}>{t(installPhaseKey(selfUpdate.view.phase))}</p>
           {selfUpdate.view.log.length > 0 && (
-            <div className={css.log}>
+            <div className={css.log} data-shop-log>
               {selfUpdate.view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
             </div>
           )}
@@ -2250,7 +2356,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
         <div className={css.selfUpdatePanel} data-shop-self-update-failed>
           <p className={css.failedHeading}>{t('updateFailed')}</p>
           {selfUpdate.view.log.length > 0 && (
-            <div className={css.log}>
+            <div className={css.log} data-shop-log>
               {selfUpdate.view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
             </div>
           )}
@@ -2472,6 +2578,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
         t={t}
         setEnabled={setEnabled}
         flowFor={flows.flowFor}
+        uninstallFor={uninstallFlows.flowFor}
         restart={restart}
         restartBlocked={restartBlocked}
         reload={reload}

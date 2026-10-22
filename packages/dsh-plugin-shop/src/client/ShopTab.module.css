@@ -832,7 +832,8 @@
 
 .cardActions > .gate,
 .cardActions > .installPanel,
-.cardActions > .installedActions {
+.cardActions > .installedActions,
+.cardActions > .receipt {
   flex-basis: 100%;
 }
 
@@ -1414,6 +1415,28 @@
 .reloadButton:focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 1px;
+}
+
+/* A settled install's or uninstall's receipt: its log, what happened, and
+ * what to do next, stacked. A column, so the log box spans the card as the
+ * running and failed views' logs do, rather than being as wide as its longest
+ * line (852, 409 and 260px on three cards of one page, 2026-10-22), and the
+ * sentence never shares a line with a button it would sit misaligned beside. */
+.receipt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* The buttons under a receipt, a failure, or a reload or restart note, in one
+ * row: the offer first (Reload, Restart dsh, Retry) and the way out (Dismiss)
+ * beside it. They stood a line apart: Dismiss beside the reload note and
+ * Reload under it, or Retry above Dismiss. */
+.offerActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 /* The §4 reload offer: a notice plus its button, one item of
