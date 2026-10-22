@@ -27,7 +27,7 @@ import { classifyPackages } from './llm-client.ts'
 import { judgeMarkets, type MarketItem } from './market-judge.ts'
 import { selectMarketPending } from './market-select.ts'
 import { mergeMarketRows, serializeMarketRows } from './markets.ts'
-import { accountForDepartures, fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
+import { accountForDepartures, CoverageCheckError, fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
 import { confirmCarriers, harvestFeed } from './npm-feed.ts'
 import { repoPeersEmitted, withholdRepoPeers } from './pipeline.ts'
 import { parsePublisherState } from './publisher-state.ts'
@@ -156,7 +156,7 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
       return reads
     },
   }
-  const names = await searchByKeywords(
+  const search = searchByKeywords(
     fetch, undefined, npmToken, undefined, undefined,
     // Written AS THEY FIRE, not collected and printed after the call returns.
     // `searchByKeywords` throws on a residual past MAX_UNREACHABLE_RESIDUAL,
@@ -174,6 +174,27 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
     report => { axis.push(report); process.stderr.write(`classify: ${describePublisherAxis(report)}\n`) },
     feedInput,
   )
+  // A run that fails a coverage check hands its publisher axis to the commit
+  // step, which writes registry/publisher-state.json alone through `build.ts
+  // --axis-from` (design 2026-10-22-publisher-axis-on-a-red-run, section
+  // 3.2), so a red run moves its cursor and keeps the pins it earned. This
+  // module still writes no state file: the handoff is the same two fields
+  // dist/harvest.json carries, in the same shapes.
+  //
+  // The count is a guard, not a branch a real run takes. `searchByKeywords`
+  // throws CoverageCheckError only once every keyword has finished, and each
+  // reports its axis before its checks run; so a short count says this
+  // module and that one disagree about when a record is due, and an axis
+  // missing a keyword is not one to commit.
+  const names = await search.catch((error: unknown) => {
+    if (error instanceof CoverageCheckError && axis.length === HARVEST_KEYWORDS.length) {
+      mkdirSync(DIST_DIR, { recursive: true })
+      writeFileSync(join(DIST_DIR, 'publisher-axis.json'),
+        `${JSON.stringify({ publishers: [...sawPublishers].sort(compareStrings), publisherAxis: axis })}\n`)
+      process.stderr.write('classify: handed the publisher axis to dist/publisher-axis.json for the commit step\n')
+    }
+    throw error
+  })
   // What the confirmations learned -- today's owner, or that a name stopped
   // carrying its keyword -- is in the state the next run starts from.
   const feedNext = applyConfirmations(feedRun.next, feedConfirmations)
