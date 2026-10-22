@@ -2567,6 +2567,76 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   )
 
   it(
+    'keeps every card inside the column after the window narrows',
+    async () => {
+      // The page's column follows the window, 960px wide on a wide one and
+      // 662px at 1024, and a card the browser skips (`content-visibility:
+      // auto` on `.card`) keeps the width it last rendered at. Browsing at
+      // 1440 and narrowing to 1024 left every card 960px wide in the 662px
+      // column, its right side clipped — badges, version, chevron, size and
+      // author (measured on dsh 0.2.1-rc.2, 0.2.0-rc.2 and 0.1.7-rc.2 on
+      // 2026-10-22). Only a real layout shows it: jsdom lays nothing out.
+      expect(page).toBeDefined()
+      const app = page!
+      const shop = await openShopPage(app)
+      await shop.locator('input[type="search"]').fill('')
+      await shop.locator('[data-shop-category-all]').click()
+      await shop.locator('[data-shop-entry]').first().waitFor({ state: 'visible', timeout: 15_000 })
+      // Wide first, short enough that the shelf scrolls, so every card is
+      // rendered once at the 960px column on the way through.
+      await app.setViewportSize({ width: 1680, height: 480 })
+      try {
+        // Every card renders once at the wide column: through the shelf a
+        // frame at a time, then back to the top.
+        await shop.evaluate(async el => {
+          const frame = (): Promise<void> => new Promise(resolve => { requestAnimationFrame(() => { resolve() }) })
+          for (let top = 0; top <= el.scrollHeight; top += 120) {
+            el.scrollTop = top
+            await frame()
+            await frame()
+          }
+          el.scrollTop = 0
+          await frame()
+        })
+        // Then short, still wide. The browser renders the cards within about
+        // half a viewport of the visible area and skips the rest, and a card
+        // skipped while wide keeps its wide width when the window narrows,
+        // as the cards down a real shelf are. The first version of this case
+        // narrowed while the six fixture cards were still rendered, and they
+        // laid out again at the narrow width: it passed on the build it was
+        // written against (2026-10-22). At 160px high the shelf below the
+        // toolbar is past that half viewport.
+        await app.setViewportSize({ width: 1680, height: 160 })
+        // The case is about skipped cards, so it first finds some: a card
+        // skipping its contents reports its header as not visible.
+        const skipped = (): Promise<number> => shop.evaluate(el => [...el.querySelectorAll('[data-shop-entry] > button[aria-expanded]')]
+          .filter(header => !header.checkVisibility({ contentVisibilityAuto: true })).length)
+        await expect.poll(skipped, { timeout: 5_000, message: 'no card is skipped, so the kept width is not exercised' }).toBeGreaterThan(0)
+        await app.setViewportSize({ width: 1024, height: 160 })
+        // Settled: two reads two frames apart agree on every card's width.
+        const overhang = (): Promise<string> => shop.evaluate(el => new Promise<string>(resolve => {
+          const read = (): string => {
+            const column = el.querySelector('[data-shop-tab]')?.getBoundingClientRect()
+            if (column === undefined) return 'no column'
+            return [...el.querySelectorAll('li[data-shop-identity]')]
+              .map(item => ({ id: item.getAttribute('data-shop-identity'), over: Math.round(item.getBoundingClientRect().right - column.right) }))
+              .filter(card => card.over > 0)
+              .map(card => `${String(card.id)} +${String(card.over)}px`)
+              .join(', ')
+          }
+          const first = read()
+          requestAnimationFrame(() => requestAnimationFrame(() => { resolve(read() === first ? first : 'unsettled') }))
+        }))
+        await expect.poll(overhang, { timeout: 5_000 }).not.toBe('unsettled')
+        expect(await overhang(), 'cards wider than the column').toBe('')
+      } finally {
+        await app.setViewportSize({ width: 1680, height: 1000 })
+      }
+    },
+    60_000,
+  )
+
+  it(
     'a hot swap of the shop with its page showing leaves the page showing and offers the restart',
     async () => {
       // Last in the file: it rewrites the installed shop, and nothing after
