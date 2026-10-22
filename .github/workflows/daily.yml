@@ -121,7 +121,7 @@ jobs:
     permissions:
       # read, not write. This job installs dependencies, calls a plaintext LLM
       # gateway and fetches thousands of third-party manifests; the ambient
-      # grant is what every one of those steps runs under. The two steps that
+      # grant is what every one of those steps runs under. The three steps that
       # push carry their own credential in their own `env:` instead.
       contents: read
     # Job-level `env:` holds exactly one entry, and it is not a secret. A
@@ -202,6 +202,10 @@ jobs:
       - run: pnpm test
       - run: pnpm typecheck
       - name: Classify new listings
+        # The id two steps at the end of this job read: a run that fails its
+        # coverage check commits its publisher axis (design
+        # 2026-10-22-publisher-axis-on-a-red-run).
+        id: classify
         run: node --experimental-strip-types registry/scripts/src/classify.ts
         env:
           # Optional read-only npm token; lifts the search API's per-IP rate
@@ -411,7 +415,7 @@ jobs:
               # that no retry is spent here: a second fetch-and-rebase cannot
               # reapply a stash that already conflicts.
               if [ -n "$(git stash list)" ] || [ -n "$(git ls-files --unmerged)" ]; then
-                echo "::error::the rebase reported success but its autostash did not reapply; $1 was not pushed and the tree holds conflict markers with the stash still unapplied. Someone landed on main inside this run's window; nothing on main needs undoing, so re-run the workflow."
+                echo "::error::the rebase reported success but its autostash did not reapply; $1 was not pushed and the tree holds conflict markers with the stash still unapplied. Someone landed on main inside this run's window; nothing on main needs undoing, so start a new run (Run workflow): a re-run checks out this run's own commit and meets the same conflict."
                 return 1
               fi
               # The credential reaches git through the ENVIRONMENT and nothing
@@ -468,8 +472,8 @@ jobs:
         #
         # This step runs after the classifier commit, not before it, and the
         # order is load-bearing in one direction: whichever of the two runs
-        # first meets the other's uncommitted files, which is why both copies
-        # of push_with_rebase carry --autostash. Swapping them would work
+        # first meets the other's uncommitted files, which is why every copy
+        # of push_with_rebase carries --autostash. Swapping them would work
         # equally well; putting either back in front of `build:catalog` would
         # not, and workflow.test.ts fails on that.
         #
@@ -526,7 +530,7 @@ jobs:
               # that no retry is spent here: a second fetch-and-rebase cannot
               # reapply a stash that already conflicts.
               if [ -n "$(git stash list)" ] || [ -n "$(git ls-files --unmerged)" ]; then
-                echo "::error::the rebase reported success but its autostash did not reapply; $1 was not pushed and the tree holds conflict markers with the stash still unapplied. Someone landed on main inside this run's window; nothing on main needs undoing, so re-run the workflow."
+                echo "::error::the rebase reported success but its autostash did not reapply; $1 was not pushed and the tree holds conflict markers with the stash still unapplied. Someone landed on main inside this run's window; nothing on main needs undoing, so start a new run (Run workflow): a re-run checks out this run's own commit and meets the same conflict."
                 return 1
               fi
               # The credential reaches git through the ENVIRONMENT and nothing
@@ -553,6 +557,111 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m "chore(registry): daily catalog snapshot [skip ci]"
           push_with_rebase "the daily snapshot"
+
+      - name: Write the publisher axis a failed coverage check left
+        # A run that fails its coverage check stops in Classify, and used to
+        # commit nothing: the next run probed the same slice of the publisher
+        # vocabulary and every pin this one earned was lost (design
+        # 2026-10-22-publisher-axis-on-a-red-run). When every keyword reported
+        # its axis before a coverage check failed, Classify hands the records
+        # over in dist/publisher-axis.json, and this step applies them to
+        # registry/publisher-state.json, the one file it writes, exactly as a
+        # passing run's build would from the same records.
+        #
+        # A step of its own, holding no secret: the push credential may only be
+        # held by a git-only step (repo-guards.test.ts), and this one runs
+        # build.ts, which loads third-party packages and parses usernames that
+        # came from npm. No file means Classify failed on something other than
+        # a coverage check, and there is nothing to commit.
+        id: axis
+        if: failure() && steps.classify.outcome == 'failure' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push') && github.ref == 'refs/heads/main'
+        run: |
+          [ -f dist/publisher-axis.json ] || { echo "no publisher axis was handed over: Classify failed on something other than a coverage check, so nothing is committed"; exit 0; }
+          node --experimental-strip-types registry/scripts/src/build.ts --axis-from dist/publisher-axis.json
+      - name: Commit the publisher axis a failed coverage check left
+        # Commits the one file the step above wrote, through the same
+        # push_with_rebase as the two commit steps above, byte for byte
+        # (workflow.test.ts holds the copies equal). Only after that step
+        # succeeded, so a handoff build.ts refused commits nothing, and under
+        # the trigger and branch guard every push step carries.
+        #
+        # A re-run of this run, or a run queued behind it whose commit predates
+        # this one, starts from the state before it and meets this commit when
+        # it pushes: start a new run instead (design section 3.5).
+        if: failure() && steps.classify.outcome == 'failure' && steps.axis.outcome == 'success' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push') && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        env:
+          # The write credential, scoped to this git-only step; see the
+          # snapshot step above for how it reaches git.
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+        run: |
+          git config user.name 'dsh-plugin-shop bot'
+          git config user.email 'bot@users.noreply.github.com'
+          push_with_rebase() {
+            for attempt in 1 2; do
+              git fetch origin main || true
+              # --autostash: both commit steps now run after the harvest, so
+              # each meets the OTHER's freshly written, uncommitted files.
+              # A plain rebase refuses that outright ("cannot rebase: You have
+              # unstaged changes"), the abort then answers "No rebase in
+              # progress?", and the un-rebased push is rejected — the very
+              # `(fetch first)` failure this function exists to end.
+              git rebase --autostash origin/main || { git rebase --abort || true; }
+              # A rebase that reports success says nothing about the REAPPLY.
+              # Measured on git 2.34.1: when the rebase itself is clean and
+              # only the autostash conflicts, git exits 0 with "Successfully
+              # rebased and updated refs/heads/main", writes conflict markers
+              # into the working tree and KEEPS the stash. This step's own
+              # commit is clean, so the push below would go through; the OTHER
+              # commit step then `git add`s the marked file and pushes THAT,
+              # and the corruption surfaces a build later as a
+              # malformed-registry throw with nothing naming the run that
+              # wrote it.
+              #
+              # Both signals, and deliberately redundant rather than two
+              # distinct cases: on git 2.34.1 they fired together in both
+              # failure shapes measured — a conflicting reapply, and a reapply
+              # onto a file the upstream commit had deleted (`DU`) — so
+              # neither is load-bearing alone today. The kept stash is what
+              # git leaves behind; an unmerged index entry is the corruption
+              # itself; either still fires if a later git stops producing the
+              # other. Not a grep for the markers: it would read every tracked
+              # file and cannot tell corruption from a line that legitimately
+              # starts `<<<<<<<`. Neither fires on a healthy run (a clean
+              # reapply drops the stash) nor after `git rebase --abort` (which
+              # restores the autostash to the tree it was taken from) — both
+              # measured, and both pinned by workflow.test.ts, which also pins
+              # that no retry is spent here: a second fetch-and-rebase cannot
+              # reapply a stash that already conflicts.
+              if [ -n "$(git stash list)" ] || [ -n "$(git ls-files --unmerged)" ]; then
+                echo "::error::the rebase reported success but its autostash did not reapply; $1 was not pushed and the tree holds conflict markers with the stash still unapplied. Someone landed on main inside this run's window; nothing on main needs undoing, so start a new run (Run workflow): a re-run checks out this run's own commit and meets the same conflict."
+                return 1
+              fi
+              # The credential reaches git through the ENVIRONMENT and nothing
+              # else: not .git/config (checkout no longer writes one) and not a
+              # command line. GIT_CONFIG_COUNT/KEY/VALUE is the env spelling of
+              # `-c`, used instead of `-c` for two reasons — the helper script
+              # stays out of argv, and `git push` stays adjacent so
+              # workflow.test.ts's push-step detector keeps working. KEY_0 is an
+              # EMPTY credential.helper, which resets any inherited helper list
+              # so KEY_1 is the only one consulted; that helper prints the
+              # token, which the shell git spawns for it expands from this
+              # step's env.
+              if GIT_CONFIG_COUNT=2 \
+                 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
+                 GIT_CONFIG_KEY_1=credential.helper \
+                 GIT_CONFIG_VALUE_1='!f() { echo username=x-access-token; echo "password=$REGISTRY_PUSH_TOKEN"; }; f' \
+                 git push origin HEAD:main; then return 0; fi
+              echo "::warning::push attempt $attempt was rejected; refetching"
+            done
+            echo "::error::could not push $1 after two attempts; this run's changes were not recorded"
+            return 1
+          }
+          git add registry/publisher-state.json
+          git diff --cached --quiet && exit 0
+          git commit -m "chore(registry): publisher axis of a run that failed its coverage check [skip ci]"
+          push_with_rebase "the publisher axis"
+          echo "::notice::this run's publisher axis is on main; to retry, start a new run (Run workflow): a re-run checks out this run's commit and probes the same slice again"
 
   publish:
     needs: build
