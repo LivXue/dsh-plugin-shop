@@ -2725,7 +2725,8 @@ export async function searchByKeywords(
      */
     let publisherCells: { pinned: Cell[]; rotated: Cell[] } | undefined
     /** How many cells `selectPublisherCells` probed from each half of
-     * `probeOrder`'s result. Set once — selection is memoized below. */
+     * `probeOrder`'s result, counted as each probe answers. Counted once —
+     * selection is memoized below. */
     let pinnedProbed = 0
     let rotatedProbed = 0
     /** Vocabulary positions the rotation walked, which is what the cursor
@@ -2827,8 +2828,6 @@ export async function searchByKeywords(
       const pinnedCells: Cell[] = []
       const rotatedCells: Cell[] = []
       const order = probeOrder(publisherState, keyword, probeBudgets[keyword] ?? 0)
-      pinnedProbed = order.pinned.length
-      rotatedProbed = order.rotated.length
       stepped = order.stepped
       /** Record a PIN's cell; a rotated cell is no pin, and nothing judges it. */
       const record = (source: 'pinned' | 'rotated', maintainer: string, seen: PinSeen): void => {
@@ -2838,6 +2837,13 @@ export async function searchByKeywords(
         for (const maintainer of users) {
           const cell: Cell = { keywords: [keyword], maintainer }
           const cellTotal = await probe(cell)
+          // Counted as each probe answers, not taken from the plan: the
+          // handoff parser holds `judged` to `pinnedProbed`, because a pin is
+          // judged only by its own probe, and that check is only as good as
+          // the count being one of probes made. A probe that throws ends the
+          // run, so in any run that reports, this equals the plan.
+          if (source === 'pinned') pinnedProbed += 1
+          else rotatedProbed += 1
           if (cellTotal === 0) {
             // Recorded whether or not the second probe confirms it. A zero is
             // never evidence for judging, so an unconfirmed one leaves the pin
