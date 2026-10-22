@@ -127,6 +127,95 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
       }
       expect(handoff.publishers).toEqual(['alice', 'bob'])
       expect(existsSync(join(cwd, 'registry', 'publisher-state.json'))).toBe(false)
+      // A passing run hands its axis over in the harvest; the axis file is
+      // a red run's alone (design 2026-10-22).
+      expect(existsSync(join(cwd, 'dist', 'publisher-axis.json'))).toBe(false)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('classify.ts hands the publisher axis over when a coverage check fails, and writes no harvest', () => {
+    // dsh-plugin answers 10 and serves 2, short past every allowance, while
+    // deepseek-harness is whole: a coverage check fails after both keywords
+    // reported their axis, so the run is red and its axis rides to the
+    // commit step (design 2026-10-22, section 3.2).
+    const cwd = newWorkspace()
+    try {
+      const run = runEntry(cwd, 'classify.ts', [], [
+        { contains: 'keywords%3Adsh-plugin&size=1', body: { total: 10, objects: [] } },
+        { contains: 'keywords%3Adsh-plugin&', body: searchPage(10, ['dsh-a1', 'dsh-a2'], ['carol', 'alice']) },
+        { contains: 'keywords%3Adeepseek-harness&size=1', body: { total: 1, objects: [] } },
+        { contains: 'keywords%3Adeepseek-harness&', body: searchPage(1, ['dsh-b'], ['bob']) },
+      ])
+      expect(run.status).not.toBe(0)
+      expect(run.stderr).toContain('keywords:dsh-plugin')
+      const handoff = JSON.parse(readFileSync(join(cwd, 'dist', 'publisher-axis.json'), 'utf8')) as {
+        publishers?: unknown; publisherAxis?: { keyword?: unknown }[]
+      }
+      expect(handoff.publisherAxis?.map(record => record.keyword)).toEqual(['dsh-plugin', 'deepseek-harness'])
+      expect(handoff.publishers).toEqual(['alice', 'bob', 'carol'])
+      expect(existsSync(join(cwd, 'dist', 'harvest.json'))).toBe(false)
+      expect(existsSync(join(cwd, 'registry', 'publisher-state.json'))).toBe(false)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('classify.ts writes no axis file when it fails before every keyword reported', () => {
+    // A page with no total ends the run while the search is still paging:
+    // no keyword finished, so there is no axis to commit.
+    const cwd = newWorkspace()
+    try {
+      const run = runEntry(cwd, 'classify.ts', [], [
+        { contains: 'keywords%3Adsh-plugin&size=1', body: { total: 10, objects: [] } },
+        { contains: 'keywords%3Adsh-plugin&', body: searchPage(10, ['dsh-a1', 'dsh-a2'], ['alice']) },
+        { contains: 'keywords%3Adeepseek-harness&size=1', body: { total: 1, objects: [] } },
+        { contains: 'keywords%3Adeepseek-harness&', body: { objects: [] } },
+      ])
+      expect(run.status).not.toBe(0)
+      expect(run.stderr).toContain('answered no total')
+      expect(existsSync(join(cwd, 'dist', 'publisher-axis.json'))).toBe(false)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('classify.ts hands no axis over when the change feed\'s disagreement bound ends the run', () => {
+    // The one failure that comes with an axis record for every keyword yet
+    // is no coverage check: the bound is checked after deepseek-harness
+    // reports its axis. Past it, the carriers seeding read no longer describe
+    // npm search, so the axis they fed is not committed (design 2026-10-22,
+    // section 2). Four carriers alice's own cell omits, each confirmed by
+    // its packument, is one past FEED_MAX_DISAGREEMENTS.
+    const phantoms = ['dsh-phantom0', 'dsh-phantom1', 'dsh-phantom2', 'dsh-phantom3']
+    const cwd = newWorkspace()
+    try {
+      writeFileSync(join(cwd, 'registry', 'feed-state.json'), `${JSON.stringify({
+        seq: 117350001,
+        carriers: Object.fromEntries(phantoms.map(name => [name, { owner: 'alice', keywords: ['deepseek-harness'] }])),
+        pending: [],
+      }, null, 2)}\n`)
+      const packumentOf = (name: string): unknown => ({
+        name,
+        'dist-tags': { latest: '1.0.0' },
+        versions: { '1.0.0': { name, version: '1.0.0', keywords: ['deepseek-harness'], maintainers: [{ name: 'alice' }] } },
+        maintainers: [{ name: 'alice' }],
+      })
+      const run = runEntry(cwd, 'classify.ts', [], [
+        { contains: 'replicate.npmjs.com/registry/_changes', body: { results: [], last_seq: 117350001 } },
+        { contains: 'replicate.npmjs.com/registry/', body: { db_name: 'registry', update_seq: 117350001 } },
+        { contains: 'maintainer%3Aalice', body: { total: 0, objects: [] } },
+        { contains: 'keywords%3Adsh-plugin&size=1', body: { total: 1, objects: [] } },
+        { contains: 'keywords%3Adsh-plugin&', body: searchPage(1, ['dsh-a'], ['bob']) },
+        { contains: 'keywords%3Adeepseek-harness&size=1', body: { total: 1, objects: [] } },
+        { contains: 'keywords%3Adeepseek-harness&', body: searchPage(1, ['dsh-b'], ['bob']) },
+        ...phantoms.map(name => ({ contains: `/${name}`, body: packumentOf(name) })),
+      ])
+      expect(run.status).not.toBe(0)
+      expect(run.stderr).toContain('membership rule no longer describes npm search')
+      expect(run.stderr).toContain('classify: keywords:deepseek-harness publisher axis')
+      expect(existsSync(join(cwd, 'dist', 'publisher-axis.json'))).toBe(false)
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
