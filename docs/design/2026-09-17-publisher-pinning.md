@@ -638,7 +638,10 @@ keyword entirely. The live catalog stayed at the build of 2026-09-29.
 commits nothing, so every run from 2026-09-30 on started that rotation at the
 same cursor and probed the same slice: a red build re-runs its losing draw, as
 #38's 2026-09-16 comment records. Of `dsh-plugin`'s 400 pins, 14 supplied
-anything.
+anything. (Amended 2026-10-22: a run that fails its coverage check after every
+keyword has reported now commits its publisher axis, cursor and pins together,
+so a red build moves on to its next draw and keeps what the last one earned;
+`2026-10-22-publisher-axis-on-a-red-run.md`.)
 
 **Measured.** `searchByKeywords` ran once locally on the committed state with
 every search page recorded, and `MAX_UNREACHABLE_RESIDUAL` raised in a copy of

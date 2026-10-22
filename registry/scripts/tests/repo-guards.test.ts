@@ -583,15 +583,18 @@ describe('secrets are scoped to the steps that consume them', () => {
     const holders = job.steps
       .filter(step => Object.values(step.env ?? {}).some(v => /secrets\./.test(String(v))))
       .map(step => step.name ?? step.run ?? step.uses ?? '?')
-    expect(holders).toHaveLength(4)
+    // Five since 2026-10-22: a run that fails its coverage check commits its
+    // publisher axis in a third Commit step. The step that writes that axis
+    // runs build.ts and holds no secret, which this count is what shows.
+    expect(holders).toHaveLength(5)
     expect(holders.filter(h => h.includes('Classify'))).toHaveLength(1)
     expect(holders.filter(h => h.includes('build:catalog'))).toHaveLength(1)
-    expect(holders.filter(h => h.startsWith('Commit'))).toHaveLength(2)
+    expect(holders.filter(h => h.startsWith('Commit'))).toHaveLength(3)
   })
 
   it('runs the whole job under contents: read', () => {
     // The ambient grant is what `pnpm install`, the plaintext LLM call and the
-    // harvest of thousands of third-party manifests all run under. Only the two
+    // harvest of thousands of third-party manifests all run under. Only the three
     // git-only push steps need write, and they carry it themselves.
     expect(buildJob().permissions?.contents).toBe('read')
   })
@@ -607,13 +610,13 @@ describe('secrets are scoped to the steps that consume them', () => {
     expect(checkout?.with?.['persist-credentials']).toBe(false)
   })
 
-  it('gives the write credential to the two push steps and to nothing else', () => {
+  it('gives the write credential to the three push steps and to nothing else', () => {
     // The whole point: after this, the only steps that ever hold a credential
-    // that can write to the repository are two git-only steps that touch no
+    // that can write to the repository are three git-only steps that touch no
     // third-party data.
     const job = buildJob()
     const writers = job.steps.filter(step => 'REGISTRY_PUSH_TOKEN' in (step.env ?? {}))
-    expect(writers).toHaveLength(2)
+    expect(writers).toHaveLength(3)
     expect(writers.every(w => (w.name ?? '').startsWith('Commit'))).toBe(true)
     for (const step of writers) {
       // It reaches git from the environment, never from a command line or a

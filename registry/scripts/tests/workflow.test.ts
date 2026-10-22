@@ -257,6 +257,10 @@ interface WorkflowStep {
    * guard is part of what makes the push safe, and only the whole expression
    * can show that. */
   readonly if: string | undefined
+  /** The step's `id:`, which a later guard's `steps.<id>.outcome` reads. A
+   * guard naming an id no step carries is never true, so the step it guards
+   * silently never runs. */
+  readonly id: string | undefined
 }
 
 function parseBuildSteps(source: string): WorkflowStep[] {
@@ -269,11 +273,12 @@ function parseBuildSteps(source: string): WorkflowStep[] {
     if (typeof step !== 'object' || step === null) {
       throw new Error(`daily.yml: jobs.build.steps[${index}] is not an object`)
     }
-    const { name, run, if: ifExpr } = step as Record<string, unknown>
+    const { name, run, if: ifExpr, id } = step as Record<string, unknown>
     return {
       name: typeof name === 'string' ? name : undefined,
       run: typeof run === 'string' ? run : undefined,
       if: typeof ifExpr === 'string' ? ifExpr : undefined,
+      id: typeof id === 'string' ? id : undefined,
     }
   })
 }
@@ -454,9 +459,9 @@ const pushSteps = buildSteps.filter(step => /\bgit push\b/.test(step.run ?? ''))
 // first draft matched `git push` only at the start of a line, which its own
 // Step 3 then moved behind `if `, emptying the list and taking the whole
 // behavioural core with it while one assertion noticed.
-if (pushSteps.length !== 2) {
+if (pushSteps.length !== 3) {
   throw new Error(
-    `daily.yml: expected exactly 2 steps whose run pushes, found ${pushSteps.length}`
+    `daily.yml: expected exactly 3 steps whose run pushes, found ${pushSteps.length}`
     + ` (${pushSteps.map(step => step.name ?? '(unnamed)').join(', ') || 'none'})`,
   )
 }
@@ -482,6 +487,17 @@ if (pushSteps.length !== 2) {
 const PUSH_STEP_IF =
   "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"
   + " || github.event_name == 'push') && github.ref == 'refs/heads/main'"
+
+/** The two steps that commit a red run's publisher axis (design
+ * 2026-10-22-publisher-axis-on-a-red-run, section 3.4): the push steps' own
+ * guard, behind the condition that Classify failed. Pinned whole for the
+ * reason PUSH_STEP_IF is: the guard decides which triggers a write can happen
+ * on. The commit step also waits for the write step, so a refused handoff
+ * commits nothing. */
+const RED_RUN_WRITE_STEP = 'Write the publisher axis a failed coverage check left'
+const RED_RUN_COMMIT_STEP = 'Commit the publisher axis a failed coverage check left'
+const RED_RUN_STEP_IF = `failure() && steps.classify.outcome == 'failure' && ${PUSH_STEP_IF}`
+const RED_RUN_COMMIT_IF = `failure() && steps.classify.outcome == 'failure' && steps.axis.outcome == 'success' && ${PUSH_STEP_IF}`
 
 /** `push_with_rebase`'s definition exactly as the YAML writes it: from its
  * opening line to the first following line that is a lone `}` at the same
@@ -528,6 +544,50 @@ function pushFunction(step: WorkflowStep): string {
 const TREE_MUTATING_GIT =
   /\bgit\s+(?:-\S+\s+)*(?:am|apply|checkout|cherry-pick|clean|merge|pull|rebase|reset|restore|revert|stash|switch)\b/
 
+describe('a run that fails its coverage check commits its publisher axis, and nothing else', () => {
+  // Design 2026-10-22-publisher-axis-on-a-red-run, section 3.4: one step holding
+  // no secret runs build.ts --axis-from, and a git-only step commits the one
+  // file it writes. Both run only after Classify failed, on main.
+  const writeStep = findStep(buildSteps, s => s.name === RED_RUN_WRITE_STEP, RED_RUN_WRITE_STEP)
+  const commitStep = findStep(buildSteps, s => s.name === RED_RUN_COMMIT_STEP, RED_RUN_COMMIT_STEP)
+
+  it('reads the outcomes by ids the steps really carry', () => {
+    expect(classifyStep.step.id).toBe('classify')
+    expect(writeStep.step.id).toBe('axis')
+  })
+
+  it("writes the axis only after Classify failed, under the push steps' guard", () => {
+    expect(writeStep.step.if).toBe(RED_RUN_STEP_IF)
+    expect(writeStep.index).toBeGreaterThan(classifyStep.index)
+  })
+
+  it('writes it with build.ts --axis-from, and does nothing when Classify handed nothing over', () => {
+    const run = writeStep.step.run ?? ''
+    expect(run).toContain('[ -f dist/publisher-axis.json ]')
+    expect(run).toContain('node --experimental-strip-types registry/scripts/src/build.ts --axis-from dist/publisher-axis.json')
+    expect(run).not.toMatch(/\bgit push\b/)
+  })
+
+  it('commits after the step that writes, and only when that step succeeded', () => {
+    expect(commitStep.index).toBeGreaterThan(writeStep.index)
+    expect(commitStep.step.if).toBe(RED_RUN_COMMIT_IF)
+  })
+
+  it('stages registry/publisher-state.json and nothing else', () => {
+    expect([...gitAddPaths(commitStep.step.run, RED_RUN_COMMIT_STEP)]).toEqual(['registry/publisher-state.json'])
+  })
+
+  it('tells whoever retries the run to start a new one, once the axis is on main', () => {
+    // A re-run checks out this run's own commit, from before the axis commit,
+    // and probes the same slice again; the push guard's advice fires only in
+    // a later run, after that cost is paid (final review). So the step says
+    // it here, after the push and outside push_with_rebase, which every copy
+    // must keep byte-identical.
+    const outside = (commitStep.step.run ?? '').replace(pushFunction(commitStep.step), '')
+    expect(outside).toMatch(/push_with_rebase "the publisher axis"\n[^\n]*::notice::[^\n]*start a new run \(Run workflow\)/)
+  })
+})
+
 describe('nothing rewrites the working tree before build:catalog reads it', () => {
   it('recognises the workflow\'s own rebase, so the scan is not vacuously clean', () => {
     // The same reflex as "finds the writers, so the extraction itself is not
@@ -537,7 +597,7 @@ describe('nothing rewrites the working tree before build:catalog reads it', () =
     // over a job full of rebases.
     expect(workflow).toMatch(TREE_MUTATING_GIT)
     expect(buildSteps.filter(step => TREE_MUTATING_GIT.test(step.run ?? '')).map(step => step.name))
-      .toEqual(["Commit the classifier's output", 'Commit the snapshot'])
+      .toEqual(["Commit the classifier's output", 'Commit the snapshot', RED_RUN_COMMIT_STEP])
   })
 
   it('runs no tree-mutating git command in any step before build:catalog', () => {
@@ -690,18 +750,31 @@ describe('the daily workflow pushes safely', () => {
     ].join('\n'), { mode: 0o755 })
   }
 
-  it('has exactly the two committing steps that push, and no third', () => {
+  it('has exactly the three committing steps that push, and no fourth', () => {
+    // The third commits a red run's publisher axis (design 2026-10-22).
     expect(pushSteps.map(step => step.name)).toEqual([
       "Commit the classifier's output",
       'Commit the snapshot',
+      RED_RUN_COMMIT_STEP,
     ])
   })
 
-  it('keeps the two copies of push_with_rebase byte-identical', () => {
+  it('keeps every copy of push_with_rebase byte-identical', () => {
     // Each `run:` block is its own shell, so the function is necessarily
     // duplicated. Nothing else would notice one copy drifting.
-    const [first, second] = pushSteps.map(pushFunction)
-    expect(first).toBe(second)
+    const [first, ...rest] = pushSteps.map(pushFunction)
+    expect(rest.length).toBe(2)
+    for (const copy of rest) expect(copy).toBe(first)
+  })
+
+  it('advises a new run, not a re-run, when the autostash cannot reapply', () => {
+    // A re-run checks out the run's own commit, which lacks whatever landed on
+    // main in its window, so it meets the same conflict again; a new run
+    // checks out main as it is (design 2026-10-22, section 3.5).
+    for (const copy of pushSteps.map(pushFunction)) {
+      expect(copy).toContain("start a new run (Run workflow): a re-run checks out this run's own commit and meets the same conflict")
+      expect(copy).not.toContain('so re-run the workflow')
+    }
   })
 
   it('clones the runner shallowly, so the cases below meet a real graft', () => {
@@ -744,7 +817,7 @@ describe('the daily workflow pushes safely', () => {
       // `||`, so WHERE the guard sits decides which triggers it covers, and
       // that is a question about how the expression parses — see PUSH_STEP_IF
       // for why no pattern over the text can answer it.
-      expect(step.if).toBe(PUSH_STEP_IF)
+      expect(step.if).toBe(label === RED_RUN_COMMIT_STEP ? RED_RUN_COMMIT_IF : PUSH_STEP_IF)
     })
 
     it(`routes every push in "${label}" through push_with_rebase`, () => {

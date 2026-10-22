@@ -105,6 +105,23 @@ These block a real launch, not the code.
      since unpublished goes on being credited, and removing those credits
      raises the reported shortfall by as many names, which is why it
      follows this fix.
+
+   -> Amended 2026-10-22: the first wait is over. The fix merged as PR
+   #108, and its first passing run (2026-10-21) released the pinned sets
+   to 47 and 49.
+   - **A red run no longer commits nothing.** One that fails its coverage
+     check after every keyword has reported now commits
+     `registry/publisher-state.json` alone, cursor and pins together, so
+     red runs accumulate pins instead of re-running one slice:
+     [2026-10-22-publisher-axis-on-a-red-run.md](../design/2026-10-22-publisher-axis-on-a-red-run.md).
+   - **The stale-carrier change still waits, now on a measurement.** On
+     2026-10-22, 16 of the 11,270 `deepseek-harness` carriers were gone
+     or unpublished, and npm's search counted none of them. 14 of them
+     were already gone when the 2026-10-21 run credited them, and 2 were
+     unpublished after it, so that run's "3 short" was about 17 real
+     misses, and removing the stale credits today would turn the build
+     red. Re-measure once the rotation
+     and the red-run commit have had their runs.
 6. **dsh 0.1.7 — two open questions, raised 2026-09-26.** The shop is ready
    for it ([2026-09-26-dsh-017-readiness.md](../design/2026-09-26-dsh-017-readiness.md))
    and runs on 0.1.5-rc.3 and 0.1.7-rc.2 alike, but two things are not code

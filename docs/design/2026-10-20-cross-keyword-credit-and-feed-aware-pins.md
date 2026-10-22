@@ -155,7 +155,11 @@ Five consequences, all accepted:
   page with no total, a partition cell needing a `from` past the cap) ends
   the run before the earlier keyword is judged. That keyword's axis,
   coverage and shortfall lines, which used to print first, never print. A
-  throw while judging logs as before.
+  throw while judging logs as before. (Amended 2026-10-22: a coverage
+  check's throw now waits until every keyword has finished, so a later
+  keyword's lines print on a run an earlier keyword fails, and the run can
+  commit its publisher axis; `2026-10-22-publisher-axis-on-a-red-run.md`,
+  §3.1. A paging failure still loses them.)
 - **The first keyword's credit can outrun its total.** Its `required` is
   the smallest of its partition-time total and its re-probes, while its
   cross credit draws on pages fetched up to one paging phase after its
@@ -365,7 +369,8 @@ record probed, and `supplied` plus `acrossKeywords` cannot exceed
 - **Stale carriers.** Next PR, for the order given in §2.
 - **Advancing the cursor on a failed run.** The authority spec recorded
   this latent defect on 2026-09-14. This PR makes runs pass, which moves
-  the cursor; a red run still freezes it.
+  the cursor; a red run still freezes it. (Built 2026-10-22:
+  `2026-10-22-publisher-axis-on-a-red-run.md`.)
 - **A larger pin bound or probe budget.** The measurement says the pins
   went to the wrong owners, not that there were too few.
 - **Counting names carried by the authority spec's 2026-10-07
