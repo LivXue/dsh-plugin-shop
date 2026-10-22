@@ -266,7 +266,11 @@ because seeding pins the owner again from any of its names still inside
 about 380 pins. A bound of eight would keep the set FULL for weeks.
 - The zero-total exit keeps its bound: it guards a registry answering zero
   for real cells, which this exit cannot be triggered by.
-- The report names the count: `released N pin(s) seeding no longer names`.
+- The report names the count and the exit:
+  `released N judged pin(s) seeding no longer names`. (Amended 2026-10-22,
+  PR #108 review: one sentence used to cover this exit and the
+  complete-seeding one, which now reads `released N pin(s) seeding no
+  longer names, the keyword counted whole inside its window`.)
 
 **But a report the bound refused releases nothing.** When
 `MAX_EVICTIONS_PER_RUN` refuses a report's evictions, the report releases no

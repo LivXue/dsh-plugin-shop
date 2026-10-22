@@ -324,6 +324,41 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
     }
   })
 
+  it('says which exit released a keyword\'s pins: the keyword counted whole, or a judged probe', () => {
+    // Both exits used to print one sentence, so a reader could not tell a
+    // keyword inside its window shedding the pins its complete seeding no
+    // longer names from a keyword past it releasing pins its own probes judged
+    // (PR #108 review). One record of each, one pin released by each.
+    const cwd = newWorkspace()
+    try {
+      writeFileSync(join(cwd, 'registry', 'publisher-state.json'), `${JSON.stringify({
+        publishers: ['alice', 'bob'], cursor: 0, pinned: { 'dsh-plugin': ['alice'], 'deepseek-harness': ['bob'] },
+      }, null, 2)}\n`)
+      mkdirSync(join(cwd, 'dist'), { recursive: true })
+      const common = {
+        vocabulary: 2, pinnedSet: 1, pinnedSupplied: 0, cursor: 0, rotatedProbed: 0, rotatedSupplied: 0, stepped: 0,
+        seeded: [], evicted: [], atRiskNames: 0,
+      }
+      writeFileSync(join(cwd, 'dist', 'harvest.json'), `${JSON.stringify({
+        candidates: [], rejections: [], shortfalls: [],
+        publisherAxis: [
+          { ...common, keyword: 'dsh-plugin', partitioned: false, seedingComplete: true, pinnedProbed: 0, judged: [] },
+          { ...common, keyword: 'deepseek-harness', partitioned: true, seedingComplete: false, pinnedProbed: 1, judged: ['bob'] },
+        ],
+      })}\n`)
+      const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      const axisLine = (keyword: string) =>
+        run.stderr.split('\n').find(line => line.startsWith(`npm: keywords:${keyword} publisher axis`)) ?? ''
+      expect(axisLine('dsh-plugin')).toContain('released 1 pin(s) seeding no longer names, the keyword counted whole inside its window')
+      expect(axisLine('deepseek-harness')).toContain('released 1 judged pin(s) seeding no longer names')
+      expect(axisLine('deepseek-harness')).not.toContain('counted whole')
+      expect((vocabulary(cwd) as { pinned?: unknown }).pinned).toEqual({})
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
   it('says so in the report when a handoff carries no publisher axis at all', () => {
     // A handoff written before the field existed pins nothing, evicts nothing
     // and advances no cursor, so every subsequent run re-probes the same band
