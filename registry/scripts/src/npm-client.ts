@@ -177,8 +177,11 @@ export const MIN_UNREACHABLE_RECOVERY = 0.9
  * rotation — {@link PUBLISHER_PROBE_BUDGET_DEFAULT} probes 500 of a
  * 3,735-name vocabulary per snapshot, 13.4%, so whether a residue owner is
  * probed at all is a draw. The 09-12/09-13 pair is that draw held fixed: a
- * failing run never reaches its commit step, so the cursor does not advance
- * and the next run re-probes the identical slice.
+ * failing run never reached its commit step, so the cursor did not advance
+ * and the next run re-probed the identical slice. Since 2026-10-22 a run
+ * failing a coverage check commits its publisher axis, cursor and pins
+ * together (design 2026-10-22-publisher-axis-on-a-red-run), so the draw
+ * moves on.
  *
  * 14 IS THE CEILING OF THE BRACKET, NOT A COMFORTABLE CHOICE, and it was
  * taken to publish a catalog that was otherwise a day stale. It buys days,
@@ -1797,6 +1800,22 @@ const REQUEST_TIMEOUT_MS = 30_000
 export class FetchTimeoutError extends Error {}
 
 /**
+ * A keyword's count judged short by one of the coverage checks that close
+ * {@link searchByKeywords}' judgement of it: the window bound, unpartitioned
+ * or partitioned; the recovery-rate floor; the residual cap.
+ *
+ * A failure, not a measurement gap. The keyword was paged, credited, fed and
+ * re-probed, and it reported its publisher axis, before the check ran. So
+ * the search holds this error until every keyword has done the same, and a
+ * run that fails on it has an axis record for every keyword, which
+ * `classify.ts` hands over to be committed (design
+ * `docs/design/2026-10-22-publisher-axis-on-a-red-run.md`, section 2). Every
+ * other throw, the change feed's disagreement bound included, is a plain
+ * `Error` and leaves the search at once.
+ */
+export class CoverageCheckError extends Error {}
+
+/**
  * The primary registry answered with a 5xx. Carries the status so that once
  * a configured backup has ALSO failed and this becomes the thrown
  * `primaryError`, {@link fetchPackument} can hand that status back and
@@ -2515,7 +2534,10 @@ type PinSeen =
  *   exceeds {@link MAX_SEARCH_SHORTFALL} and coverage is inadequate: the
  *   window deficit exceeds that bound, tail recovery is under {@link
  *   MIN_UNREACHABLE_RECOVERY}, or the tail deficit exceeds {@link
- *   MAX_UNREACHABLE_RESIDUAL}.
+ *   MAX_UNREACHABLE_RESIDUAL}. Those last are a {@link CoverageCheckError},
+ *   held until every keyword has finished and reported its publisher axis,
+ *   then thrown, one message for each keyword that failed; any other failure
+ *   is thrown at once, naming any coverage failure held before it.
  */
 export async function searchByKeywords(
   fetchImpl: typeof fetch = fetch,
@@ -3454,13 +3476,13 @@ export async function searchByKeywords(
       // fail a build. Gating on the sweep threw on a complete harvest.
       if (windowShortfall > MAX_SEARCH_SHORTFALL) {
         if (!partitioned) {
-          throw new Error(`npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names, and a second full pass found no more; the search ended before reaching the answered total, so the harvest would be silently short`)
+          throw new CoverageCheckError(`npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names, and a second full pass found no more; the search ended before reaching the answered total, so the harvest would be silently short`)
         }
         // Branching on `partitioned` and not on `unreachable`: a keyword that
         // partitioned on its first probe and then re-probed back to or below
         // the window still HAS a window sweep and cells, and blaming neither
         // is how the message stopped naming the failing half.
-        throw new Error(`npm search for ${keywordQuery([keyword])} reached only ${Math.min(required, SEARCH_WINDOW) - windowShortfall} of the ${Math.min(required, SEARCH_WINDOW)} names its own window can address (its window sweep served ${windowNames.size}, beside ${pagedCells} refinement cell(s)), and a second full pass found no more; that is inside the reachable range, so no partition can explain it`)
+        throw new CoverageCheckError(`npm search for ${keywordQuery([keyword])} reached only ${Math.min(required, SEARCH_WINDOW) - windowShortfall} of the ${Math.min(required, SEARCH_WINDOW)} names its own window can address (its window sweep served ${windowNames.size}, beside ${pagedCells} refinement cell(s)), and a second full pass found no more; that is inside the reachable range, so no partition can explain it`)
       }
       // One noise allowance covers the WHOLE keyword. An overstated total of
       // 5251 can still pass with 5250 names, but three window misses plus three
@@ -3471,14 +3493,14 @@ export async function searchByKeywords(
       if (shortfall > MAX_SEARCH_SHORTFALL) {
         const rate = recovered / unreachable
         if (rate < MIN_UNREACHABLE_RECOVERY) {
-          throw new Error(`npm search for ${keywordQuery([keyword])} reaches ${Math.min(required, SEARCH_WINDOW)} of ${required} names in one query and the combined searches recovered ${recovered} of ${unreachable} beyond it across ${pagedCells} cell(s) — under the ${MIN_UNREACHABLE_RECOVERY} floor, so the refinement coverage needs to improve`)
+          throw new CoverageCheckError(`npm search for ${keywordQuery([keyword])} reaches ${Math.min(required, SEARCH_WINDOW)} of ${required} names in one query and the combined searches recovered ${recovered} of ${unreachable} beyond it across ${pagedCells} cell(s) — under the ${MIN_UNREACHABLE_RECOVERY} floor, so the refinement coverage needs to improve`)
         }
         // A healthy rate can still leave too many names missing. At this point
         // the union exceeds one window, so windowShortfall is zero and the tail
         // deficit equals the aggregate. Crossing the cap requires better
         // coverage, not a larger allowance.
         if (tailShortfall > MAX_UNREACHABLE_RESIDUAL) {
-          throw new Error(`npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names, recovering ${recovered} of ${unreachable} reported beyond one window — a tail shortfall of ${tailShortfall}, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`)
+          throw new CoverageCheckError(`npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names, recovering ${recovered} of ${unreachable} reported beyond one window — a tail shortfall of ${tailShortfall}, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`)
         }
       }
       onShortfall({ keyword, enumerated: forKeyword.size, required, unreachable, recovered, windowShortfall, tailShortfall })
@@ -3490,9 +3512,35 @@ export async function searchByKeywords(
   // judged, so the keyword judged first can be credited from the pages of
   // the one paged after it. The price is a red run's: the later keyword is
   // paged even when the earlier one then fails its checks.
+  //
+  // And finished, too, since 2026-10-22: a coverage check's failure is held
+  // until every keyword has finished, so each has reported its publisher
+  // axis and a red run can commit it (design 2026-10-22, section 3.1). The
+  // later keyword's lines now print on such a run, where before an earlier
+  // keyword's throw hid them. Any other failure still leaves at once: a run
+  // that could not finish measuring a keyword has no axis to commit.
   const runs = partitions.map(keywordRun)
   for (const r of runs) await r.search()
-  for (const r of runs) await r.finish()
+  const failed: CoverageCheckError[] = []
+  for (const r of runs) {
+    try {
+      await r.finish()
+    } catch (error) {
+      if (error instanceof CoverageCheckError) {
+        failed.push(error)
+        continue
+      }
+      // Thrown at once, but a coverage failure already held still says what
+      // it found: before the hold, the run stopped on it and the log named it.
+      if (failed.length === 0) throw error
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`${message}; and before it, ${failed.map(held => held.message).join('; and ')}`, { cause: error })
+    }
+  }
+  const [first] = failed
+  if (first !== undefined) {
+    throw failed.length === 1 ? first : new CoverageCheckError(failed.map(error => error.message).join('; and '))
+  }
   return [...seen].sort()
 }
 
