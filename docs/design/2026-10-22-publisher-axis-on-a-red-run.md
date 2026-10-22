@@ -139,7 +139,8 @@ usernames that came from npm.
 - **The first step holds no secret.** It exits quietly when
   `dist/publisher-axis.json` does not exist, and otherwise runs
   `node --experimental-strip-types registry/scripts/src/build.ts --axis-from dist/publisher-axis.json`.
-- **The second step is git-only and holds the credential.** It stages
+- **The second step is git-only and holds the credential.** It runs only when
+  the first succeeded, so a refused handoff commits nothing. It stages
   `registry/publisher-state.json` alone and exits quietly when that file has
   not changed. Otherwise it commits it as
   `chore(registry): publisher axis of a run that failed its coverage check [skip ci]`
