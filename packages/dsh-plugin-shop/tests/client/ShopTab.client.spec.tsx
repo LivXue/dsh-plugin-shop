@@ -4125,8 +4125,12 @@ describe('ShopTab uninstall flow recovery', () => {
     expect(installed).toHaveBeenCalledTimes(1)
 
     answers.set('i1', { found: true, state: 'done', log: [], activation: 'restart' })
-    await waitFor(() => expect(card()?.querySelector('[data-shop-restart-notice]')).toBeTruthy(), { timeout: 3000 })
-    await waitFor(() => expect(installed).toHaveBeenCalledTimes(2))
+    // The update's settle is read off the installed list it re-reads, not off
+    // its receipt: an uninstall under way speaks for the card, so the receipt
+    // of the update it is undoing stays hidden until the uninstall settles
+    // (2026-10-22), and a wait on that receipt would never end.
+    await waitFor(() => expect(installed).toHaveBeenCalledTimes(2), { timeout: 3000 })
+    expect(card()?.querySelector('[data-shop-restart-notice]')).toBeNull()
     // The uninstall still runs on the host, and its card still says so.
     expect(card()?.textContent).toContain(en.uninstalling)
 
@@ -4135,6 +4139,240 @@ describe('ShopTab uninstall flow recovery', () => {
     await waitFor(() => expect(installed).toHaveBeenCalledTimes(3))
     await waitFor(() => expect(card()?.querySelector('[data-shop-uninstall-done]')).toBeTruthy())
     expect(noteUninstalled).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('ShopTab card through an uninstall (2026-10-22)', () => {
+  // What a card says while an uninstall of its plugin runs and once it lands,
+  // and how its receipts and failures are laid out — each read off a real
+  // dsh 0.2.1-rc.2 page on 2026-10-22. An uninstall speaks for the card from
+  // the press: the receipt of an install it is undoing stays hidden until it
+  // settles, and the controls that act on the installation wait. A failed
+  // uninstall removed nothing, so all of that comes back.
+  const current: InstalledFixture = {
+    name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true,
+  }
+  const cardOf = (container: HTMLElement) => (): Element | null => container.querySelector('[data-shop-entry="dsh-hello-plugin"]')
+
+  it('hides the install receipt while an uninstall runs, and brings it back when the uninstall fails', async () => {
+    const { injected, installStatus, installed } = bench(snapshot({ tier: 'verified' }))
+    installed.mockResolvedValueOnce([]).mockResolvedValue([{ ...current, source: 'npm' }])
+    // Each record runs until the case gives it an answer; the install's lands at once.
+    const answers = new Map<string, ShopInstallStatusResult>([
+      ['i1', { found: true, state: 'done', log: ['+ dsh-hello-plugin 1.2.0'], activation: 'live' }],
+    ])
+    installStatus.mockImplementation(async ({ installId }) => answers.get(installId) ?? { found: true, state: 'running', log: [] })
+    const { container } = renderTab(injected)
+    const card = cardOf(container)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-install]')).toBeTruthy())
+    fireEvent.click(card()!.querySelector('[data-shop-install]')!)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-uninstall]')).toBeTruthy(), { timeout: 3000 })
+    // The receipt is up, so what the uninstall hides below was there.
+    expect(card()?.querySelector('[data-shop-restart-notice]')).toBeTruthy()
+    expect(card()?.textContent).toContain('+ dsh-hello-plugin 1.2.0')
+
+    fireEvent.click(card()!.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(card()?.textContent).toContain(en.uninstalling))
+    // "running now, no restart needed", its log and its Dismiss, above an
+    // uninstall taking the plugin away.
+    expect(card()?.querySelector('[data-shop-restart-notice]')).toBeNull()
+    expect(card()?.querySelector('[data-shop-install-dismiss]')).toBeNull()
+    expect(card()?.textContent).not.toContain('+ dsh-hello-plugin 1.2.0')
+
+    answers.set('u1', { found: true, state: 'failed', log: [], detail: 'the bundle is still present' })
+    await waitFor(() => expect(card()?.textContent).toContain('the bundle is still present'), { timeout: 3000 })
+    // Nothing was removed, so what the install said is true again.
+    expect(card()?.querySelector('[data-shop-restart-notice]')).toBeTruthy()
+  })
+
+  it('holds the Update button and the switch while an uninstall runs, on the card and on its Updatable row', async () => {
+    const { injected, installStatus } = bench(snapshot({ tier: 'verified' }), [{ ...current, installed: '1.0.0', outdated: true }])
+    installStatus.mockResolvedValue({ found: true, state: 'running', log: [] })
+    const { container } = renderTab(injected)
+    const card = cardOf(container)
+    const row = (): Element | null => container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')
+    await waitFor(() => expect(row()?.querySelector('[data-shop-update]')).toBeTruthy())
+    const held = (scope: Element | null): Array<boolean | undefined> =>
+      ['[data-shop-update]', '[data-shop-toggle]'].map(selector => (scope?.querySelector(selector) as HTMLButtonElement | null)?.disabled)
+    // Live before the press, so what the press holds is the press's doing.
+    expect(held(card())).toEqual([false, false])
+    expect(held(row())).toEqual([false, false])
+
+    fireEvent.click(card()!.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(card()?.textContent).toContain(en.uninstalling))
+    // An Update pressed now would queue behind the removal and install the
+    // plugin again, and a toggle would write a row for a package on its way
+    // out of the profile.
+    expect(held(card())).toEqual([true, true])
+    expect(held(row())).toEqual([true, true])
+  })
+
+  it('shows only the receipt once the uninstall lands, for as long as the installed list still lists the plugin', async () => {
+    const { injected, installStatus, installed } = bench(snapshot({ tier: 'verified' }), [current])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    // A list that has not caught up: it still holds the plugin after the
+    // uninstall lands, as it does for a moment on a real page.
+    installed.mockResolvedValue([{ ...current, source: 'npm' }])
+    const { container } = renderTab(injected)
+    const card = cardOf(container)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-installed]')).toBeTruthy())
+    expect(card()?.querySelector('[data-shop-toggle]')).toBeTruthy()
+
+    fireEvent.click(card()!.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-uninstall-done]')).toBeTruthy(), { timeout: 3000 })
+    await waitFor(() => expect(installed).toHaveBeenCalledTimes(2), { timeout: 3000 })
+    // "Installed" and its switch beside "Removed and stopped immediately":
+    // one card said both for as long as the list lagged.
+    expect(card()?.querySelector('[data-shop-installed]')).toBeNull()
+    expect(card()?.querySelector('[data-shop-toggle]')).toBeNull()
+    // Only the list says a package is gone, so no Install is offered early:
+    // a plugin reinstalled from the CLI in that moment must not read as removed.
+    expect(card()?.querySelector('[data-shop-install]')).toBeNull()
+
+    // Dismissing the receipt returns the card to what the list says.
+    fireEvent.click(card()!.querySelector('[data-shop-uninstall-dismiss]')!)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-installed]')).toBeTruthy())
+    expect(card()?.querySelector('[data-shop-toggle]')).toBeTruthy()
+  })
+
+  it('draws no log box for a failed uninstall that logged nothing, and keeps it for one that did', async () => {
+    const { injected, uninstall, installStatus } = bench(snapshot({ tier: 'verified' }), [current])
+    uninstall
+      .mockResolvedValueOnce({ ok: false, detail: 'the bundle is still present' })
+      .mockResolvedValue({ ok: true, installId: 'u2' })
+    installStatus.mockResolvedValue({ found: true, state: 'failed', log: ['ERR_PNPM_REMOVE boom'], detail: 'pnpm remove failed' })
+    const { container } = renderTab(injected)
+    const card = cardOf(container)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-uninstall]')).toBeTruthy())
+    fireEvent.click(card()!.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(card()?.textContent).toContain('the bundle is still present'))
+    // Refused at the start, it logged nothing: no empty box over its sentence.
+    expect(card()?.querySelector('[data-shop-log]')).toBeNull()
+
+    fireEvent.click(card()!.querySelector('[data-shop-uninstall-retry]')!)
+    await waitFor(() => expect(card()?.textContent).toContain('pnpm remove failed'), { timeout: 3000 })
+    // A failure that did log keeps its box, the lines in it.
+    expect(card()?.querySelector('[data-shop-log]')?.textContent).toContain('ERR_PNPM_REMOVE boom')
+  })
+
+  it('draws no log box for a failed install that logged nothing, and keeps it for one that did', async () => {
+    const { injected, installStatus } = bench(snapshot({ tier: 'verified' }))
+    installStatus
+      .mockResolvedValueOnce({ found: true, state: 'failed', log: [], detail: 'ERR_PNPM_FETCH_404' })
+      .mockResolvedValue({ found: true, state: 'failed', log: ['GET 404 dsh-hello-plugin'], detail: 'ERR_PNPM_FETCH_404 again' })
+    const { container } = renderTab(injected)
+    const card = cardOf(container)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-install]')).toBeTruthy())
+    fireEvent.click(card()!.querySelector('[data-shop-install]')!)
+    await waitFor(() => expect(card()?.textContent).toContain(en.installFailed), { timeout: 3000 })
+    expect(card()?.querySelector('[data-shop-log]')).toBeNull()
+
+    fireEvent.click(card()!.querySelector('[data-shop-install-retry]')!)
+    await waitFor(() => expect(card()?.textContent).toContain('ERR_PNPM_FETCH_404 again'), { timeout: 3000 })
+    expect(card()?.querySelector('[data-shop-log]')?.textContent).toContain('GET 404 dsh-hello-plugin')
+  })
+
+  it('lines Retry and Dismiss up in one row on a failed uninstall', async () => {
+    const { injected, uninstall } = bench(snapshot(), [current])
+    uninstall.mockResolvedValue({ ok: false, detail: 'the bundle is still present' })
+    const { container } = renderTab(injected)
+    const card = cardOf(container)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-uninstall]')).toBeTruthy())
+    fireEvent.click(card()!.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-uninstall-retry]')).toBeTruthy())
+    // They stood one above the other, each on a line of its own.
+    const row = card()!.querySelector('[data-shop-uninstall-retry]')!.closest('[data-shop-offer]')
+    expect(row, 'Retry sits in no button row').not.toBeNull()
+    expect(card()!.querySelector('[data-shop-uninstall-dismiss]')!.closest('[data-shop-offer]')).toBe(row)
+  })
+
+  it.each([
+    ['reload', '[data-shop-reload="uninstall"] button'],
+    ['restart', '[data-shop-restart]'],
+  ] as const)('puts Dismiss in one row with the %s a landed uninstall offers', async (activation, offer) => {
+    const { injected, installStatus, installed } = bench(snapshot(), [current])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: ['- dsh-hello-plugin 1.2.0'], activation })
+    installed.mockResolvedValueOnce([{ ...current, source: 'npm' }]).mockResolvedValue([])
+    const { container } = renderTab(injected)
+    const card = cardOf(container)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-uninstall]')).toBeTruthy())
+    fireEvent.click(card()!.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(card()?.querySelector(offer)).toBeTruthy(), { timeout: 3000 })
+    // Dismiss stood beside the reload note, a line above the Reload button.
+    const row = card()!.querySelector(offer)!.closest('[data-shop-offer]')
+    expect(row, `the ${activation} offer sits in no button row`).not.toBeNull()
+    expect(card()!.querySelector('[data-shop-uninstall-dismiss]')!.closest('[data-shop-offer]')).toBe(row)
+  })
+
+  it('keeps the install receipt it shows when the installed list catches up', async () => {
+    // The card changes branch, not installed to installed, when the list the
+    // install's settle re-reads arrives. A receipt drawn again in that moment
+    // is a new node: a reader's focus on its Dismiss is lost, and a probe
+    // holding the old one reads a detached element — which is how the e2e's
+    // contrast check failed once on 0.2.0-rc.2 (2026-10-22), after the
+    // uninstall receipt moved above the Install button.
+    const { injected, installStatus, installed } = bench(snapshot({ tier: 'verified' }))
+    let catchUp: (rows: ShopInstalledEntry[]) => void = () => {}
+    installed
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(() => new Promise(resolve => { catchUp = resolve }))
+      .mockResolvedValue([{ ...current, source: 'npm' }])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    const { container } = renderTab(injected)
+    const card = cardOf(container)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-install]')).toBeTruthy())
+    fireEvent.click(card()!.querySelector('[data-shop-install]')!)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-restart-notice]')).toBeTruthy(), { timeout: 3000 })
+    await waitFor(() => expect(installed).toHaveBeenCalledTimes(2))
+    const notice = card()!.querySelector('[data-shop-restart-notice]')
+    const dismiss = card()!.querySelector<HTMLButtonElement>('[data-shop-install-dismiss]')!
+    dismiss.focus()
+
+    await act(async () => { catchUp([{ ...current, source: 'npm' }]) })
+    await waitFor(() => expect(card()?.querySelector('[data-shop-toggle]')).toBeTruthy())
+    expect(card()?.querySelector('[data-shop-restart-notice]')).toBe(notice)
+    expect(document.activeElement).toBe(dismiss)
+  })
+
+  it('keeps the uninstall receipt it shows when the installed list stops listing the plugin', async () => {
+    const { injected, installStatus, installed } = bench(snapshot(), [current])
+    let catchUp: (rows: ShopInstalledEntry[]) => void = () => {}
+    installed
+      .mockResolvedValueOnce([{ ...current, source: 'npm' }])
+      .mockImplementationOnce(() => new Promise(resolve => { catchUp = resolve }))
+      .mockResolvedValue([])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    const { container } = renderTab(injected)
+    const card = cardOf(container)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-uninstall]')).toBeTruthy())
+    fireEvent.click(card()!.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-uninstall-done]')).toBeTruthy(), { timeout: 3000 })
+    await waitFor(() => expect(installed).toHaveBeenCalledTimes(2))
+    const notice = card()!.querySelector('[data-shop-uninstall-done]')
+    const dismiss = card()!.querySelector<HTMLButtonElement>('[data-shop-uninstall-dismiss]')!
+    dismiss.focus()
+
+    await act(async () => { catchUp([]) })
+    await waitFor(() => expect(card()?.querySelector('[data-shop-install]')).toBeTruthy())
+    expect(card()?.querySelector('[data-shop-uninstall-done]')).toBe(notice)
+    expect(document.activeElement).toBe(dismiss)
+  })
+
+  it('stands the receipt above the Install button the card offers again', async () => {
+    const { injected, installStatus, installed } = bench(snapshot(), [current])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    installed.mockResolvedValueOnce([{ ...current, source: 'npm' }]).mockResolvedValue([])
+    const { container } = renderTab(injected)
+    const card = cardOf(container)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-uninstall]')).toBeTruthy())
+    fireEvent.click(card()!.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(card()?.querySelector('[data-shop-install]')).toBeTruthy(), { timeout: 3000 })
+    // As on the install's receipt, what happened reads first and the card's
+    // last line is its action with its size and author; the receipt stood
+    // between the two, which left the size alone on a third line.
+    const receipt = card()!.querySelector('[data-shop-uninstall-done]')!
+    const install = card()!.querySelector('[data-shop-install]')!
+    expect(receipt.compareDocumentPosition(install) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })
 

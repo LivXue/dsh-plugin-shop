@@ -224,6 +224,26 @@ describe('class references', () => {
     expect(declarationsOf(body)).toContainEqual({ prop: 'align-self', value: 'flex-start' })
   })
 
+  it('stacks a receipt and lines its buttons up in one row', () => {
+    // A settled install's or uninstall's receipt is a column, so its log box
+    // spans the card as the running and failed views' logs do, rather than
+    // being as wide as its longest line, and its sentence never shares a line
+    // with a button it sits misaligned beside. The buttons under it, a
+    // failure, or a reload or restart note sit in one row: the offer first,
+    // the way out beside it.
+    const receipt = declarationsOf(rules.get('.receipt') ?? '')
+    expect(receipt).toContainEqual({ prop: 'display', value: 'flex' })
+    expect(receipt).toContainEqual({ prop: 'flex-direction', value: 'column' })
+    const actions = declarationsOf(rules.get('.offerActions') ?? '')
+    expect(actions).toContainEqual({ prop: 'display', value: 'flex' })
+    expect(actions).toContainEqual({ prop: 'flex-wrap', value: 'wrap' })
+    expect(actions).toContainEqual({ prop: 'align-items', value: 'center' })
+    // On a card the receipt takes the action row's whole width, as the
+    // running and failed views do.
+    const fullRow = [...rules].find(([head]) => head.split(',').some(part => part.trim() === '.cardActions > .receipt'))
+    expect(fullRow, 'no rule sizes a receipt on the card\'s action row').toBeDefined()
+    expect(declarationsOf(fullRow?.[1] ?? '')).toContainEqual({ prop: 'flex-basis', value: '100%' })
+  })
 })
 
 describe('summary clamp', () => {

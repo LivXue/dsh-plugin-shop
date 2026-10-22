@@ -320,6 +320,24 @@ running for the identity, such as an uninstall pressed while an update ran, is
 left to settle by its own poll: resetting it would drop every later answer for
 it, its settle included.
 
+**Amendment (2026-10-22): an uninstall speaks for its card from the press.**
+While an uninstall of an identity runs, the card shows none of that identity's
+settled install outcome: a receipt saying the plugin is running, above an
+uninstall taking it away, was the card a reader saw. Its Update button and its
+switch wait, on the card and on the Updatable row. Once the uninstall lands,
+the card shows only the uninstall's receipt until the installed list stops
+listing the package: no label, no Update, no switch, and no Install button,
+because only the list says a package is gone. The store still resets nothing
+before the settle: a failed uninstall removed nothing, so the install outcome
+and the controls come back with it, and an update's owed restart with them.
+
+A receipt is laid out as a column: the log box spans the card, the sentence
+stands on its own line, and the buttons share one row, with the offer (Reload,
+Restart dsh) first and Dismiss beside it. A failed install's or uninstall's
+Retry and Dismiss share a row too, and a failure that logged nothing has no log
+box. After an uninstall its receipt stands above the Install button, as an
+install's receipt stands above the controls it leaves.
+
 A switch's notices also go when the installed list a page reads no longer
 holds its identity, on every surface. A plugin removed outside the shop,
 through dsh's Plugins page or `dsh plugin remove`, has no uninstall of this
@@ -671,6 +689,11 @@ selection itself rather than watching its own mount, so the mount-based witness
   once, and an earlier wheel, touch or key cancels it.
 - **The existing `ShopTab` suite stays as it is.** It is the regression net
   for moving the state.
+- **The card through an uninstall** (2026-10-22): the install receipt hidden
+  while it runs and back after a failure; Update and the switch held on the
+  card and the Updatable row; only the receipt once it lands while the list
+  still lists the plugin; no log box for a failure that logged none; Retry and
+  Dismiss, and an offer and Dismiss, in one row; the receipt above Install.
 
 ### 9.3 Browser e2e
 
