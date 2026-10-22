@@ -1551,6 +1551,15 @@ export function keywordsOf(pkg: unknown): string[] {
 }
 
 /**
+ * A 200 whose body is not JSON: an edge answering in npm's place, not npm's
+ * answer. Page 13 of `keywords:dsh-plugin` once came back as
+ * `<!doctype html>`, and the change feed's reads ask again for the same
+ * thing from the same registry (`getJson` in npm-feed.ts), so
+ * {@link fetchSearchBody} asks again too.
+ */
+class EdgeAnswerError extends Error {}
+
+/**
  * Parse one search response, naming the query on a body that is not JSON.
  * Observed live: page 13 of `keywords:dsh-plugin` answered 200 with
  * `<!doctype html>`, and the bare `SyntaxError` named no keyword.
@@ -1564,9 +1573,10 @@ async function readSearchBody(response: Response, query: string, from: number): 
     // Over-cap THROWS on this path. An unusable search page is the whole
     // candidate set, and reading it as empty is indistinguishable from an
     // empty ecosystem; an unusable packument is one package, and gets a row.
-    throw new Error(read.reason === 'too-large'
-      ? `npm search for ${query} at from=${from} answered a body larger than ${MAX_SEARCH_BODY_BYTES} bytes, which no search page can legitimately produce`
-      : `npm search for ${query} at from=${from} answered 200 with a body that is not JSON`)
+    if (read.reason === 'too-large') {
+      throw new Error(`npm search for ${query} at from=${from} answered a body larger than ${MAX_SEARCH_BODY_BYTES} bytes, which no search page can legitimately produce`)
+    }
+    throw new EdgeAnswerError(`npm search for ${query} at from=${from} answered 200 with a body that is not JSON`)
   }
   const parsed = read.value
   // `null` parses without throwing and satisfies the `SearchBody` cast
@@ -1609,6 +1619,92 @@ function readTotal(body: SearchBody, query: string, from: number, stake: string)
 }
 
 /**
+ * Attempts at one search request that gets no usable answer: our deadline,
+ * before the headers or mid-body; a connection the network dropped (undici's
+ * `TypeError`); or a 200 whose body is not JSON, an edge answering in npm's
+ * place ({@link EdgeAnswerError}). Three, waiting {@link RETRY_BASE_DELAY_MS}
+ * and then twice that between them, and then the request throws, naming its
+ * query and page.
+ *
+ * The search is the one npm read with nothing to fall back on. A packument
+ * fails over to the backup registry, and one that still fails is a
+ * `fetch-failed` row the next build retries. The search never receives a
+ * backup, because registry.npmmirror.com answers `keywords:` with
+ * `{"objects":[],"total":0}` (the authority spec's 2026-09-03 amendment to
+ * the failover borrowing), and each page of it is part of the whole
+ * candidate set. So one stalled request ended the run: on 2026-10-21 a single
+ * 30-second stall stopped Classify in PR #107's dry run, and the whole
+ * message was `registry request exceeded 30000ms`, which names no query.
+ *
+ * Bounded, and loud at the bound. On every path that stops the run, a request
+ * that keeps failing costs two more deadlines and the two waits before it
+ * stops as it did before, and a page read on a later attempt is checked
+ * exactly like one read on the first, so nothing downstream can tell a
+ * retried page from any other.
+ *
+ * ONE attempt for a verification cell (`pageOwnerCell` in
+ * {@link searchByKeywords}). Its failure is swallowed: the cell's names are
+ * credited unverified and the run goes on. Asking again would add two more
+ * deadlines for every owner the change feed's step verifies, up to
+ * `FEED_VERIFY_OWNERS` a keyword, to change nothing but that verdict, and a
+ * stall that held across those owners would carry the run past its job
+ * timeout where it used to publish (PR-1 review, measured: 32 minutes of
+ * feed step at 64 stalled owners became 102).
+ *
+ * This retry does not ask again for an ANSWER: a non-ok status (a 429 or a
+ * 5xx has already been through {@link fetchWithRetry}'s own ladder), a body
+ * over its cap, a body that is JSON but no search response, a page with no
+ * total. Those are the registry's reply, and the run stops on them by name as
+ * before. The change feed's reads draw the same line (`getJson` in
+ * npm-feed.ts): a throw or a not-JSON 200 is asked again, a status or an
+ * over-cap body is not.
+ */
+const SEARCH_TRANSPORT_ATTEMPTS = 3
+
+/**
+ * Fetch and parse one search request, trying again when it fails in transport
+ * (see {@link SEARCH_TRANSPORT_ATTEMPTS}). The body read is inside the attempt
+ * because a deadline can land mid-body: `fetch` resolves on the headers, and
+ * {@link withTimeout} errors the stream that follows with the same
+ * {@link FetchTimeoutError}.
+ * @param attempts - {@link SEARCH_TRANSPORT_ATTEMPTS}, or one for a request
+ *   whose failure the caller swallows.
+ * @throws an answer the request got, unchanged; and a request with no usable
+ *   answer on its last attempt as an Error naming the query and the page, with
+ *   the failure as its `cause`.
+ */
+async function fetchSearchBody(
+  path: string,
+  query: string,
+  from: number,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+  backupRegistry: string | undefined,
+  timeoutMs: number,
+  attempts: number,
+): Promise<SearchBody> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const response = await fetchWithFailover(path, fetchImpl, sleep, token, backupRegistry, timeoutMs)
+      if (!response.ok) throw new Error(`npm search for ${query} failed: ${response.status}`)
+      return await readSearchBody(response, query, from)
+    } catch (error) {
+      // The refusals above, and readSearchBody's own but the edge answer, are
+      // plain Errors: an answer, which leaves here as it came.
+      if (!(error instanceof FetchTimeoutError || error instanceof TypeError || error instanceof EdgeAnswerError)) throw error
+      if (attempt >= attempts) {
+        throw new Error(
+          `npm search for ${query} at from=${from} got no usable answer in ${attempt} ${attempt === 1 ? 'attempt' : 'attempts'}: ${error.message}`,
+          { cause: error },
+        )
+      }
+      await sleep(RETRY_BASE_DELAY_MS * 2 ** (attempt - 1))
+    }
+  }
+}
+
+/**
  * Read one query's `total` with a single-object request.
  * @throws when the request fails, or {@link readTotal} refuses the answer — a
  *   malformed probe must not read as an empty keyword: {@link
@@ -1625,9 +1721,7 @@ async function searchTotal(
 ): Promise<number> {
   const query = cellQuery(cell)
   const path = `-/v1/search?text=${encodeURIComponent(query)}&size=1&from=0`
-  const response = await fetchWithFailover(path, fetchImpl, sleep, token, backupRegistry, timeoutMs)
-  if (!response.ok) throw new Error(`npm search for ${query} failed: ${response.status}`)
-  const body = await readSearchBody(response, query, 0)
+  const body = await fetchSearchBody(path, query, 0, fetchImpl, sleep, token, backupRegistry, timeoutMs, SEARCH_TRANSPORT_ATTEMPTS)
   return readTotal(body, query, 0, "a keyword's size cannot be measured without it")
 }
 
@@ -2336,7 +2430,9 @@ type PinSeen =
  *   scans both call sites for this.
  * @returns every matching package name, sorted and deduplicated.
  * @throws when the registry answers with a non-OK status after the 429
- *   retries are exhausted; when a search page or a total probe answers no
+ *   retries are exhausted; when a search request gets no usable answer in
+ *   {@link SEARCH_TRANSPORT_ATTEMPTS} (a deadline, a dropped connection, a 200
+ *   that is not JSON), naming its query and page; when a search page or a total probe answers no
  *   total, or one that is not a whole count of packages; when a keyword's
  *   total is past {@link SEARCH_WINDOW} and no refinement keyword splits it;
  *   when a PARTITION CELL would need a `from` past {@link MAX_SEARCH_FROM}
@@ -2450,6 +2546,9 @@ export async function searchByKeywords(
      * does, outside `keywordRun` below — pays nothing extra.
      */
     harvested?: Map<string, HarvestedName>,
+    /** Per request; see {@link SEARCH_TRANSPORT_ATTEMPTS} for why a
+     * verification cell gets one. */
+    attempts: number = SEARCH_TRANSPORT_ATTEMPTS,
   ): Promise<number> => {
     const query = cellQuery(cell)
     // The last total this cell answered, so a `from` past the cap can tell a
@@ -2474,9 +2573,7 @@ export async function searchByKeywords(
         )
       }
       const path = `-/v1/search?text=${encodeURIComponent(query)}&size=${PAGE_SIZE}&from=${from}`
-      const response = await fetchWithFailover(path, fetchImpl, sleep, token, backupRegistry, timeoutMs)
-      if (!response.ok) throw new Error(`npm search for ${query} failed: ${response.status}`)
-      const body = await readSearchBody(response, query, from)
+      const body = await fetchSearchBody(path, query, from, fetchImpl, sleep, token, backupRegistry, timeoutMs, attempts)
       // Array-checked, not `?? []`: a non-array `objects` is not iterable
       // and `for…of` would throw on it. An unusable `objects` reads as an
       // empty page, which the coverage check below refuses BY NAME rather
@@ -2875,7 +2972,9 @@ export async function searchByKeywords(
       const served = new Set<string>()
       let complete: boolean
       try {
-        const answered = await pageCell({ keywords: [keyword], maintainer: owner }, served, 'stop')
+        // One attempt a request: this failure is swallowed, and asking again
+        // only adds deadlines (SEARCH_TRANSPORT_ATTEMPTS).
+        const answered = await pageCell({ keywords: [keyword], maintainer: owner }, served, 'stop', undefined, undefined, 1)
         complete = served.size >= answered
       } catch {
         // A 5xx after retries, a deadline or a malformed page from ONE
