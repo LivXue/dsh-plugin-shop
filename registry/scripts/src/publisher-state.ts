@@ -1014,7 +1014,24 @@ export interface AxisOutcome {
  */
 export function applyAxisReport(
   state: PublisherState, outcome: AxisOutcome,
-): { state: PublisherState; refused: string[]; evictionsRefused: number; released: string[] } {
+): {
+  state: PublisherState
+  refused: string[]
+  evictionsRefused: number
+  released: string[]
+  /**
+   * The exit `released` left through. One report releases through one exit
+   * only: complete seeding is claimed only by a keyword inside its window,
+   * where nothing is probed and so nothing is judged, and past the window only
+   * a judged pin can leave. For a handed-off record the handoff parser holds
+   * this with three checks together: it refuses complete seeding beside a
+   * partition, probes without a partition, and more judged pins than probed
+   * ones, so a record claiming complete seeding judged nothing. The two exits
+   * rest on different evidence, so the report says which one a count came
+   * through.
+   */
+  releaseExit: 'complete-seeding' | 'judged'
+} {
   // All or nothing, and nothing past the cap: half a suspect eviction list is
   // no safer than all of it, and applying the first 8 of 200 would turn a
   // registry fault into a silent partial one. Enforced here rather than where
@@ -1065,7 +1082,13 @@ export function applyAxisReport(
   // candidate, and reporting it as refused would send a reader looking for a
   // full set that is not there.
   const refused = outcome.seeded.filter(user => isMaintainerName(user) && !pinnedNow.has(user))
-  return { state: advanceCursor(next, outcome.keyword, outcome.stepped), refused, evictionsRefused, released }
+  return {
+    state: advanceCursor(next, outcome.keyword, outcome.stepped),
+    refused,
+    evictionsRefused,
+    released,
+    releaseExit: outcome.seedingComplete ? 'complete-seeding' : 'judged',
+  }
 }
 
 /**
