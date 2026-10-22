@@ -27,12 +27,158 @@ import { parseIconState, serializeIconState, type IconKey, type IconOutcome } fr
 import { serializeIcons } from './icons-assemble.ts'
 import { accountForDepartures, fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
 import { confirmCarriers, harvestFeed } from './npm-feed.ts'
-import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, mergePublishers, parsePublisherState, retainPinned, serializePublisherState } from './publisher-state.ts'
+import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, mergePublishers, parsePublisherState, retainPinned, serializePublisherState, type PublisherState } from './publisher-state.ts'
 import { pagesArtifactNames, pagesPointerOf } from './pages-artifacts.ts'
 import { assertIconsInFile, budgetBeforeDeadline, describeLostIconsFile, describeRereadStopped, parseBudgetVariable, parseDeadlineVariable, repoPeersEmitted, runPipeline, selectEntries, withholdRepoPeers } from './pipeline.ts'
 import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
 import { assembleStarsForEntries, serializeStars } from './stars-assemble.ts'
 import type { Candidate, Rejection, RepoCandidate } from './types.ts'
+
+/**
+ * The maintainer usernames a handoff's `publishers` names, held to the rule
+ * the committed file is read by. Reusing `parsePublisherState` rather than a
+ * second validator is the point: the handoff is where a username enters this
+ * process, and the rule that rejects one has to be the rule that would reject
+ * it on read, or a build can persist a vocabulary the next build refuses to
+ * parse.
+ */
+function parsePublishersField(raw: unknown): string[] {
+  return [...parsePublisherState(JSON.stringify({ publishers: raw })).publishers]
+}
+
+/**
+ * A handoff's `publisherAxis`, every record through the strict parser. A
+ * malformed record read as "no axis this run" would pin or evict nothing
+ * while looking exactly like a run that had nothing to do.
+ */
+function parsePublisherAxisField(raw: unknown, where: string): PublisherAxisReport[] {
+  if (!Array.isArray(raw)) {
+    throw new Error(`${where}: expected an array of publisher axis records for \`publisherAxis\``)
+  }
+  return raw.map(record => parsePublisherAxisReport(record, where))
+}
+
+/**
+ * The committed publisher state after one run's axis records, and the report
+ * lines that say what they did. The one transition both modes below write:
+ * the full build after its artifacts, and `--axis-from` for a run that failed
+ * its coverage check, so a red run commits exactly what a passing run would
+ * have from the same records (design
+ * `docs/design/2026-10-22-publisher-axis-on-a-red-run.md`, section 3.3).
+ * Pure; the callers read and write the file.
+ *
+ * Pruned to the keywords this build actually harvests. Both keyed maps copy
+ * every existing key forward, so a key written once by a since-renamed
+ * HARVEST_KEYWORDS entry, or by a handoff naming a keyword this build does
+ * not harvest, would otherwise round-trip into the committed file forever
+ * with nothing able to probe, evict or report it.
+ *
+ * One `applyAxisReport` per report, and every decision inside it — eviction
+ * before seeding, how complete `seeded` is, how far this keyword's own cursor
+ * moves. All of that is policy, so it lives in the pure module where a
+ * fixture can drive it; what is left here is the loop and the reporting.
+ */
+function spendPublisherAxis(
+  prior: PublisherState,
+  saw: Iterable<string>,
+  axis: readonly PublisherAxisReport[],
+): { state: PublisherState; parts: string[] } {
+  let state = retainPinned(mergePublishers(prior, [...saw]), HARVEST_KEYWORDS)
+  const parts: string[] = []
+  for (const report of axis) {
+    const applied = applyAxisReport(state, report)
+    state = applied.state
+    const notes: string[] = []
+    // Reported from the call that actually refused, with a count. Derived
+    // from the PRIOR pinned set instead, this said nothing at all on the one
+    // run where refusal began -- the set is still under the bound when the
+    // run starts -- and never said how many owners it cost.
+    if (applied.refused.length > 0) {
+      notes.push(`refused ${applied.refused.length} new residue owner(s): the pinned set is FULL at ${MAX_PINNED_PER_KEYWORD}`)
+    }
+    // Named with its count because the exit is unbounded by design: the first
+    // run to pass releases most of a full set (design
+    // 2026-10-20-cross-keyword-credit-and-feed-aware-pins, section 4.2), and a
+    // set that shrinks by hundreds in silence reads as a fault. And with its
+    // exit, which rests on different evidence inside the window and past it.
+    if (applied.released.length > 0) {
+      // A switch rather than a ternary: a third exit added to the union would
+      // have been published as "judged" with no compile error, and the `never`
+      // arm is what makes that a compile error (PR-1 review).
+      switch (applied.releaseExit) {
+        case 'complete-seeding':
+          notes.push(`released ${applied.released.length} pin(s) seeding no longer names, the keyword counted whole inside its window`)
+          break
+        case 'judged':
+          notes.push(`released ${applied.released.length} judged pin(s) seeding no longer names`)
+          break
+        case null:
+          // Unreachable by construction: `released.length > 0` gives an exit.
+          throw new Error('publisher axis: a report that released pins named no release exit')
+        default: {
+          const unreached: never = applied.releaseExit
+          throw new Error(`publisher axis: unknown release exit ${String(unreached)}`)
+        }
+      }
+    }
+    // Loud, because the alternative reading of a large eviction list is a
+    // registry fault and the run just declined to act on it. Left silent this
+    // would look like a healthy run that evicted nothing.
+    if (applied.evictionsRefused > 0) {
+      notes.push(`REMOVED NO PINS: ${applied.evictionsRefused} pinned cells answered zero, more than the ${MAX_EVICTIONS_PER_RUN} one run may remove, which describes the registry rather than the ecosystem`)
+    }
+    parts.push([describePublisherAxis(report), ...notes].join(', '))
+  }
+  // An axis that reported nothing is reported AS nothing, rather than by an
+  // absent heading. On the `--harvest-from` path a handoff carrying no
+  // `publisherAxis` -- one written before the field existed -- pins nothing,
+  // evicts nothing and advances no cursor, so every subsequent run re-probes
+  // the same band while the vocabulary grows. That is the failure this
+  // module's cursor exists to prevent, and it looked exactly like a healthy
+  // run with nothing to do.
+  if (axis.length === 0) {
+    parts.push('no publisher axis record this run: nothing was pinned, evicted or rotated, and every keyword cursor stayed where it was')
+  }
+  return { state, parts }
+}
+
+// A red run's publisher axis, applied alone (design
+// `docs/design/2026-10-22-publisher-axis-on-a-red-run.md`, section 3.3).
+// Classify failed a coverage check after every keyword had reported its
+// axis, and handed the records over in dist/publisher-axis.json. This writes
+// registry/publisher-state.json exactly as the full build below would from
+// the same records, and nothing else: no search, no fetch, no pipeline, no
+// other file. A sibling of the full build's guard rather than a branch inside
+// it, so that body keeps its shape; both guards are positive and exact, for
+// the reasons the comment above the full build's gives.
+if (basename(process.argv[1] ?? '') === 'build.ts' && process.argv.includes('--axis-from')) {
+  const axisFrom = process.argv[process.argv.indexOf('--axis-from') + 1]
+  if (axisFrom === undefined) {
+    throw new Error('--axis-from requires a path')
+  }
+  if (process.argv.includes('--harvest-from')) {
+    throw new Error('--axis-from applies a red run\'s publisher axis alone and cannot be combined with --harvest-from')
+  }
+  const where = `--axis-from ${axisFrom}`
+  const handoff = JSON.parse(readFileSync(axisFrom, 'utf8')) as { publishers?: unknown; publisherAxis?: unknown } | null
+  // Both fields required, where --harvest-from takes either as optional: an
+  // older classifier wrote neither into its harvest, but every axis handoff
+  // is written with both, and without them there is nothing to apply.
+  if (handoff === null || typeof handoff !== 'object' || handoff.publishers === undefined || handoff.publisherAxis === undefined) {
+    throw new Error(`${where}: expected { publishers, publisherAxis }, which every red run's handoff carries`)
+  }
+  const saw = parsePublishersField(handoff.publishers)
+  const axis = parsePublisherAxisField(handoff.publisherAxis, where)
+  const REGISTRY_DIR = 'registry'
+  const publisherStatePath = join(REGISTRY_DIR, 'publisher-state.json')
+  const prior = existsSync(publisherStatePath)
+    ? parsePublisherState(readFileSync(publisherStatePath, 'utf8'))
+    : { publishers: [] }
+  const spent = spendPublisherAxis(prior, saw, axis)
+  for (const part of spent.parts) process.stderr.write(`npm: ${part}\n`)
+  writeFileSync(publisherStatePath, serializePublisherState(spent.state))
+  process.stderr.write(`npm: publisher vocabulary ${prior.publishers.length} -> ${spent.state.publishers.length}\n`)
+}
 
 // Real work — network fetches, and filesystem writes that overwrite
 // registry/snapshots/manifest.lock and registry/first-seen.yml — belongs to
@@ -49,7 +195,7 @@ import type { Candidate, Rejection, RepoCandidate } from './types.ts'
 // and a bare import runs nothing.
 // registry/scripts/tests/strip-types.test.ts derives the entry-point list and
 // holds every member of it to both halves of this.
-if (basename(process.argv[1] ?? '') === 'build.ts') {
+if (basename(process.argv[1] ?? '') === 'build.ts' && !process.argv.includes('--axis-from')) {
   // The clock, read exactly once, here at the start, and never again: every
   // time the build needs is this reading plus what the monotonic clock has
   // counted since, which no step of the system clock can move. `builtAt` is
@@ -292,13 +438,9 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // Optional as a whole for the same reason `shortfalls` is — an older
     // classifier wrote no such field and its handoff must still build — but a
     // field that IS present goes through the same parser the committed file
-    // does. Reusing `parsePublisherState` rather than a second validator is
-    // the point: the handoff is where a username enters this process, and the
-    // rule that rejects one has to be the rule that would reject it on read,
-    // or a build can persist a vocabulary the next build refuses to parse.
+    // does (`parsePublishersField`).
     if (parsed.publishers !== undefined) {
-      const observed = parsePublisherState(JSON.stringify({ publishers: parsed.publishers }))
-      for (const username of observed.publishers) sawPublishers.add(username)
+      for (const username of parsePublishersField(parsed.publishers)) sawPublishers.add(username)
     }
     // STRICT where `shortfalls`/`publishers` above are lenient, and
     // deliberately so: those two only widen a report or a vocabulary, but this
@@ -310,12 +452,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // stayed green. Optional as a WHOLE, like its siblings: a handoff written
     // before this field existed must still build.
     if (parsed.publisherAxis !== undefined) {
-      if (!Array.isArray(parsed.publisherAxis)) {
-        throw new Error(`--harvest-from ${harvestFrom}: expected an array of publisher axis records for \`publisherAxis\``)
-      }
-      for (const raw of parsed.publisherAxis) {
-        axis.push(parsePublisherAxisReport(raw, `--harvest-from ${harvestFrom}`))
-      }
+      axis.push(...parsePublisherAxisField(parsed.publisherAxis, `--harvest-from ${harvestFrom}`))
     }
     if (parsed.feed === undefined) {
       feedParts.push('no change-feed record in this handoff: registry/feed-state.json was left as it was')
@@ -712,80 +849,15 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // every test that drives the direct branch passed.
   //
   // After the pipeline, so a build that throws on its own artifacts does not
-  // leave a vocabulary recording work it did not publish; and the cursor
-  // advances only on a run that got this far, so a failing run does not skip
-  // its slice of the vocabulary.
-  // Pruned to the keywords this build actually harvests. Both keyed maps copy
-  // every existing key forward, so a key written once by a since-renamed
-  // HARVEST_KEYWORDS entry, or by a handoff naming a keyword this build does
-  // not harvest, would otherwise round-trip into the committed file forever
-  // with nothing able to probe, evict or report it.
-  let nextPublishers = retainPinned(mergePublishers(priorPublishers, [...sawPublishers]), HARVEST_KEYWORDS)
-  // Spent here, after the merge above establishes the vocabulary both cells
-  // and pins are named against, and after the pipeline has run: a build that
-  // throws on its own artifacts should not leave a pin or an evicted name
-  // behind for work it never published.
-  // One call per report, and every decision inside it — eviction before
-  // seeding, how complete `seeded` is, how far this keyword's own cursor
-  // moves. All of that is policy, so it lives in the pure module where a
-  // fixture can drive it; what is left here is the loop and the reporting.
-  for (const report of axis) {
-    const applied = applyAxisReport(nextPublishers, report)
-    nextPublishers = applied.state
-    const notes: string[] = []
-    // Reported from the call that actually refused, with a count. Derived
-    // from the PRIOR pinned set instead, this said nothing at all on the one
-    // run where refusal began -- the set is still under the bound when the
-    // run starts -- and never said how many owners it cost.
-    if (applied.refused.length > 0) {
-      notes.push(`refused ${applied.refused.length} new residue owner(s): the pinned set is FULL at ${MAX_PINNED_PER_KEYWORD}`)
-    }
-    // Named with its count because the exit is unbounded by design: the first
-    // run to pass releases most of a full set (design
-    // 2026-10-20-cross-keyword-credit-and-feed-aware-pins, section 4.2), and a
-    // set that shrinks by hundreds in silence reads as a fault. And with its
-    // exit, which rests on different evidence inside the window and past it.
-    if (applied.released.length > 0) {
-      // A switch rather than a ternary on `!'complete-seeding'`: a third exit
-      // added to the union would have been published as "judged" with no
-      // compile error, on the page readers see (PR-1 review).
-      switch (applied.releaseExit) {
-        case 'complete-seeding':
-          notes.push(`released ${applied.released.length} pin(s) seeding no longer names, the keyword counted whole inside its window`)
-          break
-        case 'judged':
-          notes.push(`released ${applied.released.length} judged pin(s) seeding no longer names`)
-          break
-        case null:
-          // Unreachable by construction: `released.length > 0` gives an exit.
-          throw new Error('publisher axis: a report that released pins named no release exit')
-        default: {
-          // A `switch` over a union compiles fine when the union grows; this
-          // arm is what turns a third exit into a compile error instead of a
-          // release published with no sentence (PR-1 review).
-          const unreached: never = applied.releaseExit
-          throw new Error(`publisher axis: unknown release exit ${String(unreached)}`)
-        }
-      }
-    }
-    // Loud, because the alternative reading of a large eviction list is a
-    // registry fault and the run just declined to act on it. Left silent this
-    // would look like a healthy run that evicted nothing.
-    if (applied.evictionsRefused > 0) {
-      notes.push(`REMOVED NO PINS: ${applied.evictionsRefused} pinned cells answered zero, more than the ${MAX_EVICTIONS_PER_RUN} one run may remove, which describes the registry rather than the ecosystem`)
-    }
-    axisParts.push([describePublisherAxis(report), ...notes].join(', '))
-  }
-  // An axis that reported nothing is reported AS nothing, rather than by an
-  // absent heading. On the `--harvest-from` path a handoff carrying no
-  // `publisherAxis` -- one written before the field existed -- pins nothing,
-  // evicts nothing and advances no cursor, so every subsequent run re-probes
-  // the same band while the vocabulary grows. That is the failure this
-  // module's cursor exists to prevent, and it looked exactly like a healthy
-  // run with nothing to do.
-  if (axis.length === 0) {
-    axisParts.push('no publisher axis record this run: nothing was pinned, evicted or rotated, and every keyword cursor stayed where it was')
-  }
+  // leave a vocabulary, a pin or an evicted name recording work it did not
+  // publish. A run that fails its coverage check never gets here: Classify
+  // throws first. Its records reach this same transition through
+  // `--axis-from` instead (design 2026-10-22-publisher-axis-on-a-red-run), so
+  // a red run moves its cursor and keeps the pins it earned, where it used to
+  // re-probe its slice on the next run.
+  const spent = spendPublisherAxis(priorPublishers, sawPublishers, axis)
+  const nextPublishers = spent.state
+  axisParts.push(...spent.parts)
   for (const part of axisParts) process.stderr.write(`npm: ${part}\n`)
   writeFileSync(publisherStatePath, serializePublisherState(nextPublishers))
   if (nextFeed !== undefined) writeFileSync(feedStatePath, serializeFeedState(nextFeed))
