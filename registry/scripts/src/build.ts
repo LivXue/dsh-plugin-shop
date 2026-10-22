@@ -743,9 +743,12 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // Named with its count because the exit is unbounded by design: the first
     // run to pass releases most of a full set (design
     // 2026-10-20-cross-keyword-credit-and-feed-aware-pins, section 4.2), and a
-    // set that shrinks by hundreds in silence reads as a fault.
+    // set that shrinks by hundreds in silence reads as a fault. And with its
+    // exit, which rests on different evidence inside the window and past it.
     if (applied.released.length > 0) {
-      notes.push(`released ${applied.released.length} pin(s) seeding no longer names`)
+      notes.push(applied.releaseExit === 'complete-seeding'
+        ? `released ${applied.released.length} pin(s) seeding no longer names, the keyword counted whole inside its window`
+        : `released ${applied.released.length} judged pin(s) seeding no longer names`)
     }
     // Loud, because the alternative reading of a large eviction list is a
     // registry fault and the run just declined to act on it. Left silent this
