@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, type PublisherState } from '../src/publisher-state.ts'
-import { accountForDepartures, type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPATIBILITY_RANGE_MAX_LENGTH, DSH_PEER_RANGE_MAX_LENGTH, dshPeersOf, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, PROFILE_NAME_MAX_LENGTH, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, readDeparture, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { accountForDepartures, type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPATIBILITY_RANGE_MAX_LENGTH, CoverageCheckError, DSH_PEER_RANGE_MAX_LENGTH, dshPeersOf, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, PROFILE_NAME_MAX_LENGTH, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, readDeparture, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { iconDetail, shownPath } from '../src/icon-declaration.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
@@ -2138,7 +2138,11 @@ describe('searchByKeywords', () => {
     // window, because a cell name that cannot be proved to lie past the
     // window must not be credited as tail recovery. The sweep's own figure is
     // in the parenthetical, which is where the two halves are told apart.
-    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
+    // A coverage check, so a red run with this failure commits its axis
+    // (design 2026-10-22, section 2).
+    const run = searchByKeywords(fetchImpl)
+    await expect(run).rejects.toBeInstanceOf(CoverageCheckError)
+    await expect(run).rejects.toThrow(
       /reached only 10 of the 5250 names its own window can address \(its window sweep served 0, beside 1 refinement cell\(s\)\).*inside the reachable range, so no partition can explain it/,
     )
   })
@@ -2555,7 +2559,9 @@ describe('searchByKeywords', () => {
       // floor leaves 15 missing, which MAX_UNREACHABLE_RESIDUAL now refuses
       // on its own. Both residuals here (5 and 6) are inside that cap.
       await expect(searchByKeywords(pastWindow(5300, 45))).resolves.toHaveLength(5295)
-      await expect(searchByKeywords(pastWindow(5300, 44))).rejects.toThrow(/under the 0\.9 floor/)
+      const run = searchByKeywords(pastWindow(5300, 44))
+      await expect(run).rejects.toThrow(/under the 0\.9 floor/)
+      await expect(run).rejects.toBeInstanceOf(CoverageCheckError)
     })
 
     it('accepts the residual cap exactly', async () => {
@@ -2590,8 +2596,10 @@ describe('searchByKeywords', () => {
       // The cap is interpolated, not spelled: the sibling bound test admits
       // any value in [9, 15), and at 12 this gap is still correctly refused,
       // so a literal would redden this test for a reason it does not assert.
-      await expect(searchByKeywords(pastWindow(5407, 142)))
+      const run = searchByKeywords(pastWindow(5407, 142))
+      await expect(run)
         .rejects.toThrow(new RegExp(`a tail shortfall of 15, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`))
+      await expect(run).rejects.toBeInstanceOf(CoverageCheckError)
       // The family event it must still absorb is `publishes when the
       // partition recovers nearly all of what is out of reach`, which runs
       // the same tail and additionally asserts the shortfall record.
@@ -4170,8 +4178,13 @@ describe('searchByKeywords', () => {
     it('throws when more names disagree than one run may absorb, after reporting them', async () => {
       const phantoms = Array.from({ length: FEED_MAX_DISAGREEMENTS + 1 }, (_, i) => `dsh-phantom${i}`)
       const coverage: FeedCoverage[] = []
-      await expect(run(feedFixture(SEARCH_WINDOW, 0).fetchImpl, feedOf(phantoms, 'alice', coverage)))
-        .rejects.toThrow(/membership rule no longer describes npm search/)
+      const error = await run(feedFixture(SEARCH_WINDOW, 0).fetchImpl, feedOf(phantoms, 'alice', coverage))
+        .then(() => undefined, (thrown: unknown) => thrown)
+      expect((error as Error).message).toMatch(/membership rule no longer describes npm search/)
+      // Not a coverage check: past this bound the carriers seeding read no
+      // longer describe npm search, so the axis they fed is not committed
+      // (design 2026-10-22, section 2).
+      expect(error).not.toBeInstanceOf(CoverageCheckError)
       // The line waits for the keyword's count and the throw waits for the
       // line, so the run that throws still logs both: nothing disagreeing
       // was credited, so the count is the window's 5,250 of 5,250.
@@ -5663,6 +5676,97 @@ describe('a search request that fails in transport is tried again, then named', 
     const { fetchImpl, urls } = failing(page('dsh-plugin'), 1, overCap)
     await expect(searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50)).rejects.toThrow('larger than')
     expect(requestsFor(urls, page('dsh-plugin'))).toBe(1)
+  })
+})
+
+describe('a coverage check waits for every keyword to report', () => {
+  // A run that fails a coverage check commits its publisher axis (design
+  // 2026-10-22), which needs every keyword's axis record. A keyword reports
+  // its axis in `finish`, before its own checks, so a coverage failure in
+  // the first keyword must not stop the second from finishing.
+  const noSleep = async (_ms: number) => {}
+  /** Each harvest keyword answers its `total` and serves `served` on its
+   * first page. `noTotal`, when given, makes one keyword's size=1 probes
+   * answer with no total from its `fromProbe`-th probe on: the first is the
+   * partition's, the second the re-probe `finish` makes. */
+  const registry = (
+    keywords: Record<string, { total: number; served: readonly string[] }>,
+    noTotal?: { keyword: string; fromProbe: number },
+  ): typeof fetch => {
+    const probes = new Map<string, number>()
+    return (async (input: string | URL) => {
+      const params = new URL(String(input)).searchParams
+      const text = params.get('text') ?? ''
+      const keyword = text.replace(/^keywords:/, '')
+      const entry = keywords[keyword]
+      if (params.get('size') === '1') {
+        const n = (probes.get(text) ?? 0) + 1
+        probes.set(text, n)
+        if (noTotal !== undefined && keyword === noTotal.keyword && n >= noTotal.fromProbe) {
+          return new Response(JSON.stringify({ objects: [] }), { status: 200 })
+        }
+        return new Response(JSON.stringify({ total: entry?.total ?? 0, objects: [] }), { status: 200 })
+      }
+      const names = Number(params.get('from') ?? '0') === 0 ? entry?.served ?? [] : []
+      return new Response(JSON.stringify({
+        total: entry?.total ?? 0,
+        objects: names.map(name => ({ package: { name, keywords: [keyword], maintainers: [{ username: 'someone' }] } })),
+      }), { status: 200 })
+    }) as unknown as typeof fetch
+  }
+  /** The run's error, and every keyword that reported its publisher axis. */
+  const harvest = async (fetchImpl: typeof fetch): Promise<{ error: unknown; reported: string[] }> => {
+    const reported: string[] = []
+    const error = await searchByKeywords(
+      fetchImpl, noSleep, undefined, undefined, 50, () => {}, () => {}, { publishers: [] },
+      PUBLISHER_PROBE_BUDGET_DEFAULT, report => { reported.push(report.keyword) },
+    ).then(() => undefined, (thrown: unknown) => thrown)
+    return { error, reported }
+  }
+  const short = { total: 10, served: ['dsh-a1', 'dsh-a2'] }
+  const whole = { total: 1, served: ['dsh-b'] }
+
+  it('lets the second keyword report its axis when the first fails its coverage check', async () => {
+    const { error, reported } = await harvest(registry({ 'dsh-plugin': short, 'deepseek-harness': whole }))
+    expect(error).toBeInstanceOf(CoverageCheckError)
+    expect((error as Error).message).toContain('keywords:dsh-plugin')
+    expect(reported).toEqual(['dsh-plugin', 'deepseek-harness'])
+  })
+
+  it('names every keyword that failed, in harvest order', async () => {
+    const { error, reported } = await harvest(registry({ 'dsh-plugin': short, 'deepseek-harness': { total: 10, served: ['dsh-b'] } }))
+    expect(error).toBeInstanceOf(CoverageCheckError)
+    const message = (error as Error).message
+    expect(message.indexOf('keywords:dsh-plugin')).toBeGreaterThanOrEqual(0)
+    expect(message.indexOf('keywords:deepseek-harness')).toBeGreaterThan(message.indexOf('keywords:dsh-plugin'))
+    expect(reported).toEqual(['dsh-plugin', 'deepseek-harness'])
+  })
+
+  it('throws at once on a failure that is no coverage check, and the later keyword does not report', async () => {
+    const { error, reported } = await harvest(registry(
+      { 'dsh-plugin': { total: 2, served: ['dsh-a1', 'dsh-a2'] }, 'deepseek-harness': whole },
+      { keyword: 'dsh-plugin', fromProbe: 2 },
+    ))
+    expect((error as Error).message).toContain('answered no total')
+    expect(error).not.toBeInstanceOf(CoverageCheckError)
+    expect(reported).not.toContain('deepseek-harness')
+  })
+
+  it('throws a later keyword\'s failure that is no coverage check, not the coverage failure it held', async () => {
+    // The held coverage failure would hand the axis over for a commit, and
+    // this run never finished measuring deepseek-harness: what reaches the
+    // caller must be the failure that says so.
+    const { error, reported } = await harvest(registry(
+      { 'dsh-plugin': short, 'deepseek-harness': whole },
+      { keyword: 'deepseek-harness', fromProbe: 2 },
+    ))
+    expect((error as Error).message).toContain('keywords:deepseek-harness')
+    expect((error as Error).message).toContain('answered no total')
+    expect(error).not.toBeInstanceOf(CoverageCheckError)
+    expect(reported).toEqual(['dsh-plugin'])
+    // And the coverage failure it held is still said: before the hold, this
+    // run stopped on dsh-plugin's check and the log named it (final review).
+    expect((error as Error).message).toContain('keywords:dsh-plugin enumerated 2 of 10')
   })
 })
 
