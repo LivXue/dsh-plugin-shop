@@ -219,6 +219,21 @@ hold the whole client back on a harness that lacks the service.
   intro uses `--dsw-alias-label-secondary`, as dsh's intro does, and the e2e
   measures its contrast on the page's real background.
 - **`ShopTab` keeps its name**, its `data-shop-tab` root and its content.
+- **Amendment (2026-10-22): the column follows the window.** Inside Settings
+  the shop was as wide as the dialog made it, and a window resize barely moved
+  it. On the page the column is 960px from a window of about 1336px up, 904px
+  at 1280 and 662px at 1024; below 1024 dsh folds its sidebar to a 56px rail.
+  The shelf's grid item is the `<li>` that carries a card's identity (§5.7),
+  and it takes `min-width: 0`. Without that, the `1fr` track could never be
+  narrower than the widest item's min-content, and a card the browser skips
+  under `content-visibility: auto` keeps the width it last rendered at.
+  Browsing a wide window and then narrowing it left every card 960px wide in
+  the 662px column, its right side clipped (measured on 0.2.1-rc.2,
+  0.2.0-rc.2 and 0.1.7-rc.2). `.card` carried that guard, which stopped
+  reaching the track when the cards were wrapped in `<li>` (2026-09-07).
+  Within the card, a red block's fold toggle keeps the Refresh pill's width
+  (main design, 2026-10-14 amendment) instead of stretching across the card
+  body.
 
 ### 4.3 Glyph
 
@@ -676,6 +691,12 @@ Run on 0.1.5-rc.3, 0.1.7-rc.2 and 0.2.0-rc.2, on Linux and on Windows.
   afterwards, and it offers the restart. The case replaces the installed
   files, never edits them in place, because they can be hard links into
   pnpm's store.
+- **The window narrows** (2026-10-22). Every card renders once at 1680, the
+  window turns short while still wide so the browser skips the shelf, and then
+  narrows to 1024: no card may be wider than the column. The short step is
+  what makes the case bite. At 480px high the six fixture cards were still
+  rendered when the window narrowed, laid out again at the new width, and the
+  case passed on the build it was written against.
 
 ### 9.4 By hand, before the pull request
 

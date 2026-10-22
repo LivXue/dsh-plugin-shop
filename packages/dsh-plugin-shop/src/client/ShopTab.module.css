@@ -683,13 +683,24 @@
   .cards { animation: none; }
 }
 
+/* The shelf's grid item is the <li> carrying a card's identity (ShopPage
+ * reads it), not the card, and a grid item's min-width is auto: the 1fr track
+ * could then never be narrower than the widest item's min-content, and every
+ * card widens to it. Two things reach that width. Content that cannot wrap,
+ * on a narrow window. And a card the browser skips (`content-visibility:
+ * auto` below), which keeps the width it last rendered at: browsing a wide
+ * window and narrowing it left every card 960px wide in a 662px column, its
+ * right side clipped by the panel (measured on dsh 0.2.1-rc.2, 0.2.0-rc.2 and
+ * 0.1.7-rc.2, 2026-10-22). Until the page took the main column the panel was
+ * as wide as Settings made it, and a window resize did not move it. */
+.cards > li {
+  min-width: 0;
+}
+
 .card {
   position: relative;
   display: flex;
   flex-direction: column;
-  /* A grid item's min-width is auto by default: its content would widen the
-   * 1fr track past the panel and overflow horizontally. */
-  min-width: 0;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 10px;
   background: var(--dsw-alias-bg-layer-1);
@@ -1016,6 +1027,10 @@
  * 11px text, secondary label, no fill. It is the only one of its kind here,
  * so a class of its own means one function of its own. */
 .foldToggle {
+  /* The pill's own width. Under a card's red block it is an item of the card
+   * body, a column, which stretches every child it is not told otherwise:
+   * 934px against the Refresh pill's 59px at a 1440 window (2026-10-22). */
+  align-self: flex-start;
   padding: 1px 9px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;

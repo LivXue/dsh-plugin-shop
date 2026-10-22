@@ -200,6 +200,30 @@ describe('class references', () => {
     expect(rule).toMatch(/text-overflow:\s*ellipsis/)
     expect(rule).toMatch(/white-space:\s*nowrap/)
   })
+
+  it('lets the shelf\'s grid item shrink, so no card is wider than the column', () => {
+    // The grid item is the <li> that carries a card's identity, not the card,
+    // and a grid item's min-width is auto: the 1fr track can then never be
+    // narrower than the widest item's min-content, and every card widens to
+    // it. A card the browser skips (`content-visibility: auto`) keeps the
+    // width it last rendered at, so browsing a wide window and narrowing it
+    // left every card 960px wide in a 662px column, its right side clipped
+    // (measured on dsh 0.2.1-rc.2, 0.2.0-rc.2 and 0.1.7-rc.2, 2026-10-22).
+    // The e2e measures the clipping itself; this pins where the fix lives.
+    expect(declarationsOf(rules.get('.cards > li') ?? '')).toContainEqual({ prop: 'min-width', value: '0' })
+  })
+
+  it('keeps the fold toggle in the Refresh pill\'s shape rather than stretched across the card', () => {
+    // The shop design's 2026-10-14 amendment: "the toggle sits under the block
+    // in the Refresh pill's shape". It is a flex item of the card body, a
+    // column, which stretches every child it does not tell otherwise: 934px
+    // against the pill's 59px at a 1440 window (measured 2026-10-22). The
+    // rule says why in a comment inside its body, which `declarationsOf`
+    // would read as part of the first declaration.
+    const body = (rules.get('.foldToggle') ?? '').replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(declarationsOf(body)).toContainEqual({ prop: 'align-self', value: 'flex-start' })
+  })
+
 })
 
 describe('summary clamp', () => {
