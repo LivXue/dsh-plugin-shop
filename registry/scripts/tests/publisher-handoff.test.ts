@@ -401,6 +401,102 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
   })
 })
 
+describe('build.ts --axis-from', () => {
+  // A run that fails its coverage check hands its publisher axis over in
+  // dist/publisher-axis.json, and this mode commits it alone (design
+  // 2026-10-22). The state must be the one a passing run's full build would
+  // have written from the same records, through the same function.
+  const publishers = Array.from({ length: 600 }, (_, i) => `u${String(i).padStart(3, '0')}`)
+  const committed = `${JSON.stringify({
+    publishers, cursor: 0, pinned: { 'dsh-plugin': ['u000', 'u001'], 'deepseek-harness': ['u002'] },
+  }, null, 2)}\n`
+  const record = (keyword: string, over: Record<string, unknown>) => ({
+    keyword, partitioned: true, seedingComplete: false, vocabulary: 600, pinnedSet: 0, pinnedProbed: 0,
+    pinnedSupplied: 0, cursor: 0, rotatedProbed: 0, rotatedSupplied: 0, stepped: 0,
+    seeded: [], evicted: [], judged: [], atRiskNames: 0, ...over,
+  })
+  // dsh-plugin judged u001 and seeding no longer names it, so it is
+  // released; deepseek-harness seeds u100. Both keywords step their cursor.
+  const axis = [
+    record('dsh-plugin', { pinnedSet: 2, pinnedProbed: 2, rotatedProbed: 40, stepped: 42, seeded: ['u000'], judged: ['u001'], atRiskNames: 1 }),
+    record('deepseek-harness', { pinnedSet: 1, pinnedProbed: 1, rotatedProbed: 17, stepped: 17, seeded: ['u002', 'u100'], atRiskNames: 2 }),
+  ]
+  const seen = ['u600', 'u601']
+  /** A workspace holding the committed state above and `files` under dist/. */
+  const workspace = (files: Record<string, unknown>): string => {
+    const cwd = newWorkspace()
+    writeFileSync(join(cwd, 'registry', 'publisher-state.json'), committed)
+    mkdirSync(join(cwd, 'dist'), { recursive: true })
+    for (const [name, body] of Object.entries(files)) writeFileSync(join(cwd, 'dist', name), `${JSON.stringify(body)}\n`)
+    return cwd
+  }
+  const stateOf = (cwd: string): string => readFileSync(join(cwd, 'registry', 'publisher-state.json'), 'utf8')
+
+  it('writes the publisher state a full build writes from the same records, and nothing else', () => {
+    const full = workspace({ 'harvest.json': { candidates: [], rejections: [], shortfalls: [], publishers: seen, publisherAxis: axis } })
+    const alone = workspace({ 'publisher-axis.json': { publishers: seen, publisherAxis: axis } })
+    try {
+      const fullRun = runEntry(full, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+      expect(fullRun.status, `stderr:\n${fullRun.stderr}`).toBe(0)
+      const run = runEntry(alone, 'build.ts', ['--axis-from', 'dist/publisher-axis.json'], [])
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      expect(stateOf(alone)).toBe(stateOf(full))
+      // The records did something, so the equality above is not two
+      // untouched copies of the committed file.
+      expect(stateOf(alone)).not.toBe(committed)
+      expect(existsSync(join(alone, 'dist', 'v1'))).toBe(false)
+      expect(existsSync(join(alone, 'registry', 'snapshots', 'manifest.lock'))).toBe(false)
+      expect(existsSync(join(alone, 'registry', 'feed-state.json'))).toBe(false)
+      expect(existsSync(join(alone, 'registry', 'first-seen.yml'))).toBe(false)
+      expect(run.urls).toEqual([])
+      expect(run.stderr).toContain('released 1 judged pin(s) seeding no longer names')
+      expect(run.stderr).toContain('publisher vocabulary 600 -> 602')
+    } finally {
+      rmSync(full, { recursive: true, force: true })
+      rmSync(alone, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a file without publisherAxis, and leaves the committed state as it was', () => {
+    const cwd = workspace({ 'publisher-axis.json': { publishers: seen } })
+    try {
+      const run = runEntry(cwd, 'build.ts', ['--axis-from', 'dist/publisher-axis.json'], [])
+      expect(run.status).not.toBe(0)
+      expect(run.stderr).toContain('publisherAxis')
+      expect(stateOf(cwd)).toBe(committed)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a handoff naming a username the vocabulary grammar refuses', () => {
+    const cwd = workspace({ 'publisher-axis.json': { publishers: ['bad user'], publisherAxis: axis } })
+    try {
+      const run = runEntry(cwd, 'build.ts', ['--axis-from', 'dist/publisher-axis.json'], [])
+      expect(run.status).not.toBe(0)
+      expect(run.stderr).toContain('is not a maintainer username')
+      expect(stateOf(cwd)).toBe(committed)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses --harvest-from beside it', () => {
+    const cwd = workspace({
+      'publisher-axis.json': { publishers: seen, publisherAxis: axis },
+      'harvest.json': { candidates: [], rejections: [], shortfalls: [] },
+    })
+    try {
+      const run = runEntry(cwd, 'build.ts', ['--axis-from', 'dist/publisher-axis.json', '--harvest-from', 'dist/harvest.json'], [])
+      expect(run.status).not.toBe(0)
+      expect(run.stderr).toContain('cannot be combined with --harvest-from')
+      expect(stateOf(cwd)).toBe(committed)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('the change feed rides the handoff into the committed file', () => {
   const feedState = (seq: number): string =>
     `{\n  "seq": ${seq},\n  "carriers": {\n    "dsh-feedonly": {"owner":"alice","keywords":["dsh-plugin"]}\n  },\n  "pending": []\n}\n`
