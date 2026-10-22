@@ -3252,7 +3252,14 @@ export async function searchByKeywords(
           case 'skipped':
             // `servedAtEnd` is what the window and refinement cells have
             // served the owner now that this keyword's last pass, a retry
-            // included, has run.
+            // included, has run. Publisher cells do not write `servedFor`, so
+            // a name of hers that only another owner's cell served is not
+            // counted: where her `maintainer:` count and that name's
+            // `maintainers` array disagree, the pin can be judged without it
+            // (PR #108 review). That costs no pin that matters. Seeding names
+            // every maintainer of an at-risk name, from `harvested`, which
+            // every publisher cell fills, so she is seeded again and kept; a
+            // name not at risk has a refinement cell to reach it.
             return {
               maintainer,
               cell: 'skipped',
