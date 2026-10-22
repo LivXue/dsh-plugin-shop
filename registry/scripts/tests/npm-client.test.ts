@@ -4059,6 +4059,31 @@ describe('searchByKeywords', () => {
       })
     })
 
+    it('asks a stalled verification cell once, and credits its names unverified', async () => {
+      // A verification cell's failure is swallowed: its names are credited
+      // unverified and the run goes on. Asking it again would add two more
+      // deadlines for every owner the step verifies, up to
+      // FEED_VERIFY_OWNERS a keyword, to change nothing but that verdict, so
+      // it keeps the one attempt it always had (PR-1 review).
+      const inner = feedFixture(total, recovered, missing).fetchImpl
+      let ownerRequests = 0
+      const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+        if (new URL(String(url)).searchParams.get('text') === ownerQuery) {
+          ownerRequests += 1
+          return await new Promise<Response>(() => {})
+        }
+        return inner(url, init)
+      }) as unknown as typeof fetch
+      const coverage: FeedCoverage[] = []
+      const names = await searchByKeywords(
+        fetchImpl, async () => {}, undefined, undefined, 50, undefined, undefined, undefined, undefined, undefined,
+        feedOf(missing, 'alice', coverage),
+      )
+      expect(ownerRequests).toBe(1)
+      expect(forHarness(coverage)).toMatchObject({ verified: 0, unverified: overCap })
+      expect(names).toHaveLength(total)
+    })
+
     it('says when credits take the count past the total npm promised', async () => {
       // PR #74 review: a keyword reads whole when credits close it, so the
       // line says what it was enumerated against on every run. Two ownerless
@@ -5405,6 +5430,145 @@ describe('a deadline is never relabelled as a malformed body', () => {
       .rejects.toThrow('exceeded 30000ms')
     await expect(searchByKeywords(fetchImpl, async (_ms: number) => {}, undefined, undefined, 50))
       .rejects.not.toThrow('not JSON')
+  })
+})
+
+describe('a search request that fails in transport is tried again, then named', () => {
+  // The search has no backup registry to fail over to (registry.npmmirror.com
+  // answers `keywords:` with zero), so before this a single stalled request
+  // ended the run, as one did in Classify on 2026-10-21 with an error that
+  // named no query. Each keyword here holds one name inside the window, so it
+  // costs a total probe, one page and a re-probe.
+  const holdings: Record<string, string> = { 'keywords:dsh-plugin': 'dsh-a', 'keywords:deepseek-harness': 'dsh-b' }
+  const answer = (url: string): Response => {
+    const params = new URL(url).searchParams
+    const name = holdings[params.get('text') ?? '']
+    const objects = name === undefined || params.get('size') === '1'
+      ? []
+      : [{ package: { name, keywords: ['dsh-plugin', 'deepseek-harness'], maintainers: [{ username: 'someone' }] } }]
+    return new Response(JSON.stringify({ total: name === undefined ? 0 : 1, objects }), { status: 200 })
+  }
+  type Failure = (url: string, init?: RequestInit) => Promise<Response>
+  /** The registry above, except that the first `times` requests `when`
+   * selects meet `fail` instead of an answer. */
+  const failing = (when: (params: URLSearchParams) => boolean, times: number, fail: Failure) => {
+    const urls: string[] = []
+    let failed = 0
+    const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+      const url = String(input)
+      urls.push(url)
+      if (failed < times && when(new URL(url).searchParams)) {
+        failed += 1
+        return await fail(url, init)
+      }
+      return answer(url)
+    }) as unknown as typeof fetch
+    return { fetchImpl, urls }
+  }
+  const page = (keyword: string) => (params: URLSearchParams) =>
+    params.get('text') === `keywords:${keyword}` && params.get('size') !== '1'
+  const probe = (keyword: string) => (params: URLSearchParams) =>
+    params.get('text') === `keywords:${keyword}` && params.get('size') === '1'
+  const requestsFor = (urls: readonly string[], when: (params: URLSearchParams) => boolean) =>
+    urls.filter(url => when(new URL(url).searchParams)).length
+  /** Never answers: the deadline fires before the headers arrive. */
+  const stall: Failure = () => new Promise<Response>(() => {})
+  /** Answers the headers, then never sends the body. */
+  const stallBody: Failure = (url, init) => headersThenStalledBody()(url, init)
+  /** What undici throws for a connection the network dropped. */
+  const reset: Failure = () => Promise.reject(new TypeError('fetch failed'))
+  const noSleep = async (_ms: number) => {}
+
+  it('pages on when a page request stalls once before its headers', async () => {
+    const { fetchImpl, urls } = failing(page('dsh-plugin'), 1, stall)
+    const names = await searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50)
+    expect([...names].sort()).toEqual(['dsh-a', 'dsh-b'])
+    expect(requestsFor(urls, page('dsh-plugin'))).toBe(2)
+  })
+
+  it('reads a total when a size=1 probe stalls once', async () => {
+    const { fetchImpl } = failing(probe('deepseek-harness'), 1, stall)
+    const names = await searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50)
+    expect([...names].sort()).toEqual(['dsh-a', 'dsh-b'])
+  })
+
+  it('asks again when a page stalls after its headers, mid-body', async () => {
+    const { fetchImpl, urls } = failing(page('deepseek-harness'), 1, stallBody)
+    const names = await searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50)
+    expect([...names].sort()).toEqual(['dsh-a', 'dsh-b'])
+    expect(requestsFor(urls, page('deepseek-harness'))).toBe(2)
+  })
+
+  it('asks again when the network drops the connection', async () => {
+    const { fetchImpl, urls } = failing(page('dsh-plugin'), 1, reset)
+    const names = await searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50)
+    expect([...names].sort()).toEqual(['dsh-a', 'dsh-b'])
+    expect(requestsFor(urls, page('dsh-plugin'))).toBe(2)
+  })
+
+  it('asks again when a page answers 200 with a body that is not JSON', async () => {
+    // An edge answering in npm's place: page 13 of keywords:dsh-plugin once
+    // came back as `<!doctype html>` with a 200. The change feed asks again
+    // for the same answer from the same registry (npm-feed.ts, getJson).
+    const { fetchImpl, urls } = failing(page('dsh-plugin'), 1, async () => new Response('<!doctype html>', { status: 200 }))
+    const names = await searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50)
+    expect([...names].sort()).toEqual(['dsh-a', 'dsh-b'])
+    expect(requestsFor(urls, page('dsh-plugin'))).toBe(2)
+  })
+
+  it('names the page that failed, not the first one', async () => {
+    // keywords:dsh-plugin holds 300 names: the first page answers, and the
+    // second, at from=250, never does.
+    const urls: string[] = []
+    const fetchImpl = (async (input: string | URL) => {
+      const url = String(input)
+      urls.push(url)
+      const params = new URL(url).searchParams
+      if (params.get('text') !== 'keywords:dsh-plugin') return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
+      if (params.get('size') === '1') return new Response(JSON.stringify({ total: 300, objects: [] }), { status: 200 })
+      if (params.get('from') === '250') return await new Promise<Response>(() => {})
+      return new Response(JSON.stringify({
+        total: 300, objects: Array.from({ length: 250 }, (_, i) => ({ package: { name: `dsh-p${i}` } })),
+      }), { status: 200 })
+    }) as unknown as typeof fetch
+    await expect(searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50))
+      .rejects.toThrow('npm search for keywords:dsh-plugin at from=250 got no usable answer in 3 attempts')
+    expect(urls.filter(url => url.includes('from=250'))).toHaveLength(3)
+  })
+
+  it('stops after three attempts, waiting longer before each, and names the query and the page', async () => {
+    const { fetchImpl, urls } = failing(page('dsh-plugin'), Number.POSITIVE_INFINITY, stall)
+    const delays: number[] = []
+    const error = await searchByKeywords(fetchImpl, async (ms: number) => { delays.push(ms) }, undefined, undefined, 50)
+      .then(() => undefined, (thrown: unknown) => thrown)
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toContain('npm search for keywords:dsh-plugin at from=0 got no usable answer in 3 attempts')
+    expect((error as Error).message).toContain('exceeded 50ms')
+    expect((error as Error).cause).toBeInstanceOf(FetchTimeoutError)
+    expect(requestsFor(urls, page('dsh-plugin'))).toBe(3)
+    expect(delays).toHaveLength(2)
+    expect(delays[0]).toBeGreaterThan(0)
+    expect(delays[1]).toBeGreaterThan(delays[0] ?? 0)
+  })
+
+  it('never asks again for an answer: a page that is JSON but no search response throws on its first reading', async () => {
+    // A guard on the retry's reach: an answer is not a transport failure,
+    // and asking again for one only spends time to hear it twice. `null` is
+    // valid JSON that no search page is.
+    const { fetchImpl, urls } = failing(page('dsh-plugin'), 1, async () => new Response('null', { status: 200 }))
+    await expect(searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50)).rejects.toThrow('not a search response')
+    expect(requestsFor(urls, page('dsh-plugin'))).toBe(1)
+  })
+
+  it('never asks again for a page over its byte cap', async () => {
+    // The body itself is the answer, and asking again would download it
+    // again: the change feed's reads draw the same line.
+    const overCap = async () => new Response('{}', {
+      status: 200, headers: { 'content-length': String(MAX_SEARCH_BODY_BYTES + 1) },
+    })
+    const { fetchImpl, urls } = failing(page('dsh-plugin'), 1, overCap)
+    await expect(searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50)).rejects.toThrow('larger than')
+    expect(requestsFor(urls, page('dsh-plugin'))).toBe(1)
   })
 })
 
