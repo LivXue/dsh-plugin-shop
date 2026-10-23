@@ -159,8 +159,14 @@ request.
   today). The declaration joins what it keeps, and the rule goes to 3, so
   carried records re-read it under the existing re-read budgets
   (`DECLARATIONS_REREAD_BUDGET_DEFAULT`, `DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT`).
-  A subpackage's declaration is read from its own package.json, and its
-  path is relative to that directory.
+  A repository the fetch budget defers is, for that run, a carried record,
+  and is re-read like any other at the commit it recorded; one the run
+  fetched is not. A subpackage's declaration is read from its own
+  package.json, and its path is relative to that directory. A
+  release-rescued root reads its declaration from its archive's own
+  package.json, and no `files` rule applies there: a packed archive has
+  already applied its `files` list, so a member it lacks is reported at
+  fetch time instead (`notInRelease`, §10).
 
 One pure function turns a manifest into either a declaration (the source it
 came from, a normalised POSIX path, a media type) or a refusal with its

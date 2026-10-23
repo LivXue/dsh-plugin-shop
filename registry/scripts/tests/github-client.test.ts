@@ -3556,7 +3556,8 @@ describe('harvestRepos', () => {
       // full fetch read this path at the default branch and resolved the
       // recorded commit in a separate request, and the two name the same file
       // unless a push landed between them — which moves `pushedAt` and sends
-      // the repository to the full fetch rather than here. So a 404 at the
+      // the repository to the full fetch, and here as well, at the commit it
+      // recorded, when the fetch budget defers that fetch. So a 404 at the
       // recorded commit says the read went wrong, not that the manifest is
       // gone. The candidate is byte-identical and unstamped, so the next run
       // asks again; nothing is written as a failure, no row is published, and
@@ -3961,6 +3962,231 @@ describe('harvestRepos', () => {
       const next = diffRepoState(result.nextState, seen)
       expect(next.toFetch).toEqual([])
       expect(next.toReread).toEqual([])
+    })
+
+    describe('a repository the fetch budget defers (design 2026-10-23-shop-plugin-icons §4)', () => {
+      // The fetch budget cuts the full-fetch queue, and a repository it cuts is
+      // not fetched: for this run it is a carried record, published at the
+      // commit it recorded like any other. So its stale declarations are
+      // re-read like any carried record's, at that recorded commit, whether the
+      // diff queued it as changed or for the backfill. The diff used to hand it
+      // to the fetch queue and to nothing else, so when the day's changed
+      // repositories filled the whole budget a backfill repository was never
+      // fetched and never re-read either (the measured case is in harvestOnce,
+      // above the re-read queue). A repository fetched this run is still never
+      // read again.
+      const behind = DECLARATIONS_RULE - 1
+      const pushedBefore = '2026-07-01T00:00:00Z'
+      const pushedNow = '2026-08-02T00:00:00Z'
+      const first = 'a/first'
+      const second = 'b/second'
+      const declaredSvg = { kind: 'declared', declaration: { source: 'icon', path: 'icon.svg', mediaType: 'image/svg+xml' } } as const
+      const rawAt = (repo: string, atCommit: string) => `https://raw.githubusercontent.com/${repo}/${atCommit}/package.json`
+
+      /** A candidate one rule behind that has never had its entry check, so
+       * that while its head is unchanged the backfill is the only queue for it. */
+      function backfilling(repo: string, atCommit: string, extra: Partial<RepoCandidate> = {}): RepoCandidate {
+        const { entriesChecked: _unchecked, ...candidate } = unstamped(repo, atCommit, { peers: [], declarationsRule: behind, ...extra })
+        return candidate
+      }
+
+      /** A candidate one rule behind that is otherwise current, so that only
+       * a push queues its repository. */
+      function checked(repo: string, atCommit: string, extra: Partial<RepoCandidate> = {}): RepoCandidate {
+        return unstamped(repo, atCommit, { peers: [], declarationsRule: behind, ...extra })
+      }
+
+      const recorded = (pushedAt: string, atCommit: string, candidate: RepoCandidate): RepoState[string] =>
+        ({ pushedAt, commit: atCommit, candidates: [candidate] })
+
+      /** What the manifest at a deferred repository's recorded commit declares. */
+      const manifestOf = (name: string): Response => new Response(JSON.stringify({
+        name,
+        dsh: { bundle: {}, compatibility: { dsh: '>=0.2.1' } },
+        peerDependencies: { '@deepseek-ai/cordis': '*' },
+        icon: './icon.svg',
+      }), { status: 200 })
+      /** What reading that manifest writes onto the candidate. */
+      const declared = {
+        peers: ['@deepseek-ai/cordis'],
+        compatibility: { dsh: '>=0.2.1' },
+        icon: declaredSvg,
+        declarationsRule: DECLARATIONS_RULE,
+      }
+
+      /** Answers by URL prefix. A response is read once, so a route is asked at most once. */
+      const answerFrom = (routes: Record<string, Response>) => (url: string): Response | undefined =>
+        Object.entries(routes).find(([prefix]) => url.startsWith(prefix))?.[1]
+
+      it('re-reads a backfill repository the budget defers, at its recorded commit, and leaves it queued for the backfill', async () => {
+        // Both are queued for the backfill alone (their heads are unchanged and
+        // neither has had its entry check) and both are one rule behind. Budget
+        // 1 fetches the first by name; the second waits for a later run's full
+        // fetch, and is meanwhile the carried record the build publishes.
+        const secondCandidate = backfilling(second, commitB)
+        const state: RepoState = {
+          [first]: recorded(quietAt, commitA, backfilling(first, commitA)),
+          [second]: recorded(quietAt, commitB, secondCandidate),
+        }
+        const seen = [{ repo: first, pushedAt: quietAt }, { repo: second, pushedAt: quietAt }]
+        const { fetchImpl, requested } = rereadFetch(seen, answerFrom({
+          ...repoRoutes(first),
+          [rawAt(second, commitB)]: manifestOf('second'),
+        }))
+        const result = await harvestRepos({ state, budget: 1, fetchImpl, sleep, token: 't' })
+        expect([result.fetched, result.deferred]).toEqual([1, 1])
+        expect(requested).toContain(rawAt(second, commitB))
+        expect(result.nextState[second]).toEqual({
+          pushedAt: quietAt,
+          commit: commitB,
+          candidates: [{ ...secondCandidate, ...declared }],
+        })
+        expect([result.rereadAttempted, result.rereadUpdated, result.rereadFailed, result.rereadDeferred]).toEqual([1, 1, 0, 0])
+        // The read answers the stamp's question and no other: the entry check
+        // is still unanswered, so the backfill queue holds the repository next
+        // run, and nothing else.
+        expect(result.nextState[second]?.candidates[0]).not.toHaveProperty('entriesChecked')
+        const next = diffRepoState(result.nextState, seen)
+        expect(next.toFetch).toEqual([{ repo: second, pushedAt: quietAt, backfillOnly: true }])
+        expect(next.toReread).toEqual([])
+      })
+
+      it('re-reads a changed repository the budget defers, at its recorded commit, and keeps the pushedAt that queues its fetch', async () => {
+        // Budget 1 fetches the first changed repository by name, at the head
+        // its push moved to. The second is deferred, and is read at the commit
+        // it recorded: its new head is never asked for, so the declarations
+        // describe what the entry still installs. And its recorded pushedAt
+        // stays, or the next run would meet a repository it believes unchanged.
+        const secondCandidate = checked(second, commitB)
+        const state: RepoState = {
+          [first]: recorded(pushedBefore, commitA, checked(first, commitA)),
+          [second]: recorded(pushedBefore, commitB, secondCandidate),
+        }
+        const seen = [{ repo: first, pushedAt: pushedNow }, { repo: second, pushedAt: pushedNow }]
+        const { fetchImpl, requested } = rereadFetch(seen, answerFrom({
+          ...repoRoutes(first),
+          [rawAt(second, commitB)]: manifestOf('second'),
+        }))
+        const result = await harvestRepos({ state, budget: 1, fetchImpl, sleep, token: 't' })
+        expect(result.nextState[first]?.commit).toBe(commit)
+        expect(requested.filter(url => url.includes(`/${second}/`))).toEqual([rawAt(second, commitB)])
+        expect(result.nextState[second]).toEqual({
+          pushedAt: pushedBefore,
+          commit: commitB,
+          candidates: [{ ...secondCandidate, ...declared }],
+        })
+        expect([result.fetched, result.deferred, result.rereadAttempted, result.rereadUpdated]).toEqual([1, 1, 1, 1])
+        // Still changed: next run's diff fetches it as a push, not as backfill.
+        const next = diffRepoState(result.nextState, seen)
+        expect(next.toFetch).toEqual([{ repo: second, pushedAt: pushedNow, backfillOnly: false }])
+        expect(next.toReread).toEqual([])
+      })
+
+      it('never re-reads a repository it fetched this run, which its full fetch stamped', async () => {
+        // The same two repositories as the first case, both one rule behind.
+        // The first by name is fetched in full and the second alone is read, so
+        // no repository is read twice: the fetched one's only raw manifest
+        // request is the full fetch's own, at the default branch.
+        const state: RepoState = {
+          [first]: recorded(quietAt, commitA, backfilling(first, commitA)),
+          [second]: recorded(quietAt, commitB, backfilling(second, commitB)),
+        }
+        const seen = [{ repo: first, pushedAt: quietAt }, { repo: second, pushedAt: quietAt }]
+        const { fetchImpl, requested } = rereadFetch(seen, answerFrom({
+          ...repoRoutes(first),
+          [rawAt(second, commitB)]: manifestOf('second'),
+        }))
+        const result = await harvestRepos({ state, budget: 1, fetchImpl, sleep, token: 't' })
+        const rawFor = (repo: string) => requested.filter(url => url.startsWith(`https://raw.githubusercontent.com/${repo}/`))
+        expect(rawFor(first)).toEqual([`https://raw.githubusercontent.com/${first}/main/package.json`])
+        expect(rawFor(second)).toEqual([rawAt(second, commitB)])
+        expect(result.nextState[first]?.candidates[0]?.declarationsRule).toBe(DECLARATIONS_RULE)
+        expect([result.rereadAttempted, result.rereadUpdated, result.rereadFailed]).toEqual([1, 1, 0])
+      })
+
+      it('does not re-read a repository whose fetch it attempted and failed, which the next run fetches again', async () => {
+        // "Fetched this run" is "the fetch queue held it", whatever the fetch
+        // came to. The first repository's head commit answers 404, which leaves
+        // a fetch-failed row and its recorded entry exactly as it was, still
+        // one rule behind: one run does not read the same repository a second
+        // time, and the next run's fetch asks again.
+        const state: RepoState = {
+          [first]: recorded(quietAt, commitA, backfilling(first, commitA)),
+          [second]: recorded(quietAt, commitB, backfilling(second, commitB)),
+        }
+        const seen = [{ repo: first, pushedAt: quietAt }, { repo: second, pushedAt: quietAt }]
+        const { fetchImpl, requested } = rereadFetch(seen, answerFrom({
+          [`https://raw.githubusercontent.com/${first}/main/package.json`]: new Response(JSON.stringify({ name: 'first', dsh: { bundle: {} } }), { status: 200 }),
+          [`https://api.github.com/repos/${first}/commits/main`]: new Response('404: Not Found', { status: 404 }),
+          [rawAt(second, commitB)]: manifestOf('second'),
+        }))
+        const result = await harvestRepos({ state, budget: 1, fetchImpl, sleep, token: 't' })
+        expect(result.failures).toEqual([{ repo: first, code: 'fetch-failed', detail: expect.stringContaining('head commit') }])
+        expect(requested).not.toContain(rawAt(first, commitA))
+        expect(result.nextState[first]).toEqual(state[first])
+        expect([result.fetched, result.rereadAttempted, result.rereadUpdated]).toEqual([1, 1, 1])
+        expect(diffRepoState(result.nextState, seen).toFetch.map(entry => entry.repo)).toEqual([first, second])
+      })
+
+      it('does not re-read a deferred repository whose recorded candidates are current or could never list, or one nothing records', async () => {
+        // Budget 0 defers all four. Only `a/stale` has a candidate that needs
+        // its declarations read. `b/current` is queued for the backfill alone
+        // and carries the stamp. `c/unlistable` is a changed repository whose
+        // stale candidate has no bundle, so no read could make it list: the
+        // same predicate the diff and the re-read itself ask. `d/new` has no
+        // record at all, so it has no candidate to read and waits for its
+        // fetch.
+        const stale = 'a/stale'
+        const current = 'b/current'
+        const unlistable = 'c/unlistable'
+        const unrecorded = 'd/new'
+        const state: RepoState = {
+          [stale]: recorded(quietAt, commitA, backfilling(stale, commitA)),
+          [current]: recorded(quietAt, commitA, backfilling(current, commitA, { declarationsRule: DECLARATIONS_RULE })),
+          [unlistable]: recorded(pushedBefore, commitA, checked(unlistable, commitA, { hasBundle: false })),
+        }
+        const seen = [
+          { repo: stale, pushedAt: quietAt },
+          { repo: current, pushedAt: quietAt },
+          { repo: unlistable, pushedAt: pushedNow },
+          { repo: unrecorded, pushedAt: pushedNow },
+        ]
+        const { fetchImpl, requested } = rereadFetch(seen, answerFrom({ [rawAt(stale, commitA)]: manifestOf('stale') }))
+        const result = await harvestRepos({ state, budget: 0, fetchImpl, sleep, token: 't' })
+        expect([result.fetched, result.deferred]).toEqual([0, 4])
+        expect(requested).toEqual([rawAt(stale, commitA)])
+        expect([result.rereadAttempted, result.rereadUpdated, result.rereadDeferred]).toEqual([1, 1, 0])
+        expect(result.nextState[current]).toEqual(state[current])
+        expect(result.nextState[unlistable]).toEqual(state[unlistable])
+        // Never recorded, and a deferral does not record it.
+        expect(Object.keys(result.nextState).sort()).toEqual([stale, current, unlistable])
+      })
+
+      it.each([
+        // The deferred repository, the unchanged stale one, and the one a
+        // budget of one reaches: the first of the two by name.
+        ['after', 'z/deferred', 'a/unchanged', 'a/unchanged'],
+        ['before', 'a/deferred', 'z/unchanged', 'a/deferred'],
+      ])('counts what its budget did not reach in rereadDeferred when the deferred repository sorts %s the unchanged one', async (_label, deferred, unchanged, reached) => {
+        // One queue, cut once: the deferred repositories and the unchanged
+        // stale ones are taken together in name order, so a budget smaller
+        // than the two reads the first by name whichever kind it is, and the
+        // other is counted as deferred and left exactly as recorded.
+        const state: RepoState = {
+          [deferred]: recorded(quietAt, commitB, backfilling(deferred, commitB)),
+          [unchanged]: recorded(quietAt, commitA, checked(unchanged, commitA)),
+        }
+        const seen = [{ repo: deferred, pushedAt: quietAt }, { repo: unchanged, pushedAt: quietAt }]
+        const reachedCommit = reached === deferred ? commitB : commitA
+        const { fetchImpl, requested } = rereadFetch(seen, answerFrom({
+          [rawAt(reached, reachedCommit)]: manifestOf(reached.split('/')[1] ?? reached),
+        }))
+        const result = await harvestRepos({ state, budget: 0, rereadBudget: 1, fetchImpl, sleep, token: 't' })
+        expect(requested).toEqual([rawAt(reached, reachedCommit)])
+        expect([result.rereadAttempted, result.rereadUpdated, result.rereadDeferred]).toEqual([1, 1, 1])
+        const left = reached === deferred ? unchanged : deferred
+        expect(result.nextState[left]).toEqual(state[left])
+      })
     })
 
     it('defaults its budget to 4,000 repositories, which clears the queue the stamp opened in three runs', () => {

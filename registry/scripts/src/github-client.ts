@@ -2463,10 +2463,11 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
   // tuning and cannot starve either side — the backfill spends exactly what
   // the day's changes left over, and is still bounded and self-terminating.
   const byName = (a: RepoToFetch, b: RepoToFetch) => (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0)
-  const queue = [
+  const ordered = [
     ...toFetch.filter(entry => !entry.backfillOnly).sort(byName),
     ...toFetch.filter(entry => entry.backfillOnly).sort(byName),
-  ].slice(0, budget)
+  ]
+  const queue = ordered.slice(0, budget)
   const fresh = new Map<string, {
     candidates: RepoCandidate[]
     failure?: { code: 'no-manifest'; detail: string }
@@ -2580,15 +2581,41 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
   // The declarations re-read, after every full fetch and after the bound: it
   // cannot trip that bound (its failures change nothing, so they are not
   // evidence of a harvest about to publish something wrong), and a run the
-  // bound stops has no state to update. The queue is disjoint from the one
-  // above by construction — a full fetch stamps what it projects — and has a
-  // budget of its own. That is not the second budget the comment above argues
-  // against: this queue never competes with a changed repository for anything,
-  // so there is nothing to order; the budget exists because a re-read costs
+  // bound stops has no state to update.
+  //
+  // Its queue is disjoint from the FETCHED queue above, not from `toFetch`. A
+  // full fetch stamps what it projects, so a repository fetched this run is
+  // never read again; that is why the diff keeps `toReread` out of `toFetch`.
+  // But the fetch budget cuts `toFetch`, and a repository it cuts is not
+  // fetched: for this run it is a carried record, and the build publishes its
+  // recorded candidates at their recorded commit like any other's. So it joins
+  // this queue when one of them needsDeclarationsReread, changed or backfill
+  // alike, and is read at that recorded commit and nowhere else. Before this a
+  // cut repository was in no queue but the fetch's: the live report of
+  // 2026-10-23 read "2000 fetched, 2310 deferred; declaration re-reads: 0
+  // repos", because the changed queue alone filled the budget, so no backfill
+  // repository was fetched, and none was re-read either. Reading it settles
+  // nothing about its fetch: `nextRepoState` carries the entry whole, its
+  // `pushedAt` and the marks it still lacks included, so the next run queues it
+  // again exactly as this one did.
+  //
+  // And it has a budget of its own. That is not the second budget the fetch
+  // queue's comment argues against: nothing here displaces a fetch, so there is
+  // nothing to order but the name; the budget exists because a re-read costs
   // one raw request where a full fetch costs several REST calls and a sizing
   // tree, and its one-time backlog is measured on
   // DECLARATIONS_REREAD_BUDGET_DEFAULT.
-  const rereadQueue = [...toReread].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).slice(0, rereadBudget)
+  const recordNeedsReread = (repo: string): boolean => {
+    // hasOwn: the key is a repository name the search returned. One nothing is
+    // recorded for has no candidates to read, and is left to its fetch.
+    const recorded = Object.hasOwn(state, repo) ? state[repo] : undefined
+    return recorded !== undefined && recorded.candidates.some(candidate => needsDeclarationsReread(candidate))
+  }
+  const rereadRepos = [
+    ...toReread,
+    ...ordered.slice(queue.length).map(entry => entry.repo).filter(recordNeedsReread),
+  ].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  const rereadQueue = rereadRepos.slice(0, rereadBudget)
   const reread = await rereadDeclarations(
     nextRepoState(state, seen, fresh),
     rereadQueue,
@@ -2627,8 +2654,10 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
     rereadFailed: reread.failed,
     rereadAssetChanged: reread.assetChanged,
     // Beyond the count budget, and whatever a time budget or the breaker left
-    // unstarted: `attempted` counts only the repositories a batch began.
-    rereadDeferred: toReread.length - reread.attempted,
+    // unstarted: `attempted` counts only the repositories a batch began. Counted
+    // out of everything that needed a read, the repositories the fetch budget
+    // deferred included.
+    rereadDeferred: rereadRepos.length - reread.attempted,
     rereadStopped: reread.stopped,
   }
 }
@@ -2739,8 +2768,12 @@ function recordedReleaseUrl(raw: string, owner: string, slug: string): URL | nul
  * the full fetch read this manifest at the default branch and took the commit
  * from a separate request: the two name the same file unless a push landed
  * between those requests, and a push moves `pushedAt`, which sends the
- * repository to the full fetch instead of here. So a 404 at the recorded
- * commit says the read went wrong, not that the manifest is gone.
+ * repository to the full fetch. The fetch budget can defer that fetch, and a
+ * repository it defers is a carried record like any other, read here at the
+ * commit it recorded and never at a newer head, so this read can meet a pushed
+ * repository too; the verdict is still the full fetch's, when its turn comes.
+ * So a 404 at the recorded commit says the read went wrong, not that the
+ * manifest is gone.
  *
  * On the rescued path a 404, an answer past the cap and bytes that miss the pin
  * are all `asset-changed` instead: definite answers that the verified asset is
@@ -2822,10 +2855,12 @@ async function rereadCandidate(
     // through the optional chain, and an array or a primitive has none that can
     // equal a bundle name. The candidate was projected from the manifest at
     // this path on the default branch, read moments before its commit was
-    // resolved — the same file unless a push landed between the two requests,
-    // and a push routes the repository to the full fetch. So a name that
-    // differs means the read reached something else, and its declarations
-    // would describe a package this entry does not install.
+    // resolved — the same file unless a push landed between the two requests.
+    // A push routes the repository to the full fetch, and one the fetch budget
+    // defers is read here too, still at the commit it recorded, so that race
+    // can reach this check as well. A name that differs means the read reached
+    // something else, and its declarations would describe a package this entry
+    // does not install.
     if (manifest?.name !== candidate.name) {
       return { outcome: 'unusable', reason: 'the manifest at the recorded commit names a different package' }
     }
