@@ -16,16 +16,19 @@
  */
 
 import { canEverList } from './repo-gate.ts'
+import type { IconMediaType } from './icon-declaration.ts'
 import { UNBUILT_FIELD_MAX_LENGTH } from './release-asset.ts'
 import type { RepoCandidate } from './types.ts'
 
 /**
  * The version of the rule that writes a repository candidate's declaration
- * fields (`peers`, `compatibility`, `dshPeers` and `manifestVersion`), stamped
- * beside them as {@link RepoCandidate.declarationsRule}.
+ * fields (`peers`, `compatibility`, `dshPeers`, `manifestVersion` and `icon`),
+ * stamped beside them as {@link RepoCandidate.declarationsRule}.
  *
  * Bump it whenever `peerNamesOf`, `compatibilityOf` or `dshPeersOf`
- * (npm-client.ts) changes what it returns, whenever the declarations writer
+ * (npm-client.ts), or `readIconDeclaration` or `fileListIncludes`
+ * (icon-declaration.ts), changes what it returns (a refusal's sentence, from
+ * `iconDetail`, is part of what is recorded), whenever the declarations writer
  * (`writeDeclarations`, github-client.ts) starts or stops recording a field,
  * or whenever WHERE a candidate's declarations are read from changes: a
  * release-rescued root reading its tarball's manifest instead of HEAD's was
@@ -52,8 +55,11 @@ import type { RepoCandidate } from './types.ts'
  * 2026-09-28-bundle-components-and-github-peers, sections 6 and 13). Every
  * listable carried candidate stamped 1 is re-read once to gain them; until
  * it is, it carries neither.
+ * 3 (2026-10-23): `icon` as well (design 2026-10-23-shop-plugin-icons §4);
+ * every listable carried candidate stamped 2 is re-read once to gain it, and
+ * until it is, it carries none.
  */
-export const DECLARATIONS_RULE = 2
+export const DECLARATIONS_RULE = 3
 
 /** One repository's recorded state. Exactly one of the outcome fields is
  * present: candidates for a usable fetch, or a failure reason. */
@@ -189,8 +195,8 @@ function reboundCarriedSize(candidate: RepoCandidate): RepoCandidate {
 
 /**
  * Refuse a carried candidate whose `peers`, `compatibility`, `dshPeers`,
- * `manifestVersion` or declarations stamp is a shape this build never writes,
- * and return it typed.
+ * `manifestVersion`, `icon` or declarations stamp is a shape this build never
+ * writes, and return it typed.
  *
  * Every field just named rides the bare cast `parseRepoState` revives
  * candidates with, and none is re-derived on the way out: whatever `tier.ts`
@@ -206,20 +212,25 @@ function reboundCarriedSize(candidate: RepoCandidate): RepoCandidate {
  * re-read its repository every run, and one that compared equal by accident
  * would freeze its declarations under a rule nobody applied.
  *
- * ABSENT is not a wrong shape for `peers`, `compatibility` or the stamp. A
- * record written before a field existed carries none of it, and it stays
- * absent: a missing stamp is what queues `diffRepoState`'s re-read, and a
- * missing `peers` is what that re-read fills in. `dshPeers` and
+ * ABSENT is not a wrong shape for `peers`, `compatibility`, `icon` or the
+ * stamp. A record written before a field existed carries none of it, and it
+ * stays absent: a missing stamp is what queues `diffRepoState`'s re-read, and
+ * a missing `peers` is what that re-read fills in. `dshPeers` and
  * `manifestVersion` are absent together on every record rule 1 wrote and on
  * every manifest with no usable harness peer, which is their ordinary shape;
  * one present without the other is a record the one writer never makes
- * (`writeDeclarations`), and this throws on it.
+ * (`writeDeclarations`), and this throws on it. `icon` is absent on every
+ * record rule 2 wrote and on every manifest that declares none; present, it is
+ * `declared` or `refused` and nothing else, so the `none` read, which the
+ * writer removes rather than stores, is a record no build wrote
+ * ({@link isIconRecord}).
  *
  * Types only, not the harvest's length and count bounds. Those are applied
- * where the value is read (`peerNamesOf`, `compatibilityOf`, `dshPeersOf`, the
- * writer's version bound), and a bound lowered later must not turn every row
- * written under the old one into a build that cannot start; the payload budget
- * in `repo-gate.ts` still measures whatever a carried row would publish.
+ * where the value is read (`peerNamesOf`, `compatibilityOf`, `dshPeersOf`,
+ * `readIconDeclaration`, the writer's version bound), and a bound lowered
+ * later must not turn every row written under the old one into a build that
+ * cannot start; the payload budget in `repo-gate.ts` still measures whatever a
+ * carried row would publish.
  * @param repo - the state key, for the error.
  * @param candidate - one carried candidate, unvalidated.
  */
@@ -227,12 +238,13 @@ function checkCarriedDeclarations(repo: string, candidate: unknown): RepoCandida
   if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
     throw new Error(`repo-state.json: ${repo} has a candidate that is not an object`)
   }
-  const { peers, compatibility, declarationsRule, dshPeers, manifestVersion } = candidate as {
+  const { peers, compatibility, declarationsRule, dshPeers, manifestVersion, icon } = candidate as {
     peers?: unknown
     compatibility?: unknown
     declarationsRule?: unknown
     dshPeers?: unknown
     manifestVersion?: unknown
+    icon?: unknown
   }
   if (peers !== undefined && !isStringArray(peers)) {
     throw new Error(`repo-state.json: ${repo} has a candidate with a malformed peers record`)
@@ -261,6 +273,9 @@ function checkCarriedDeclarations(repo: string, candidate: unknown): RepoCandida
   if ((dshPeers === undefined) !== (manifestVersion === undefined)) {
     throw new Error(`repo-state.json: ${repo} has a candidate with dshPeers and manifestVersion recorded apart`)
   }
+  if (icon !== undefined && !isIconRecord(icon)) {
+    throw new Error(`repo-state.json: ${repo} has a candidate with a malformed icon record`)
+  }
   return candidate as RepoCandidate
 }
 
@@ -280,6 +295,56 @@ function isDshPeersRecord(value: unknown): value is Record<string, string> {
   const entries = Object.entries(value)
   return entries.length > 0 && entries.every(([name, range]) =>
     (name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')) && typeof range === 'string')
+}
+
+/**
+ * The media types `readIconDeclaration` writes, as a record so that a type
+ * added to {@link IconMediaType} stops compiling here until it is listed:
+ * `icon-declaration.ts` keeps its table by extension and exports no list.
+ */
+const ICON_MEDIA_TYPES: Record<IconMediaType, true> = {
+  'image/svg+xml': true,
+  'image/png': true,
+  'image/jpeg': true,
+  'image/webp': true,
+}
+
+/**
+ * The shape a carried `icon` has: `readIconDeclaration`'s `declared` or
+ * `refused`, and nothing else (design 2026-10-23-shop-plugin-icons §4).
+ * `declared` is exactly `{ kind, declaration }`, and `declaration` exactly
+ * `{ source, path, mediaType }`: `source` one of dsh's two, `path` a non-empty
+ * string, `mediaType` one of the four the reader writes. `refused` is exactly
+ * `{ kind, detail }` with a string `detail`. `none` is refused, like every
+ * kind the reader never answers: the writer removes the key instead of
+ * storing it.
+ *
+ * Exact key sets, as {@link isCompatibilityRecord} asks for, because a `path`
+ * becomes a key and a request and a `detail` is published under the author's
+ * name (design §5 and §10), so a key the harvest never wrote has no business
+ * riding along. Types only otherwise: a path's own rules (relative, inside the
+ * package, an extension that agrees with its media type) are the reader's, and
+ * a rule tightened later must not turn every row written under the old one
+ * into a build that cannot start.
+ */
+function isIconRecord(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (record.kind === 'refused') return hasExactKeys(record, ['kind', 'detail']) && typeof record.detail === 'string'
+  if (record.kind !== 'declared' || !hasExactKeys(record, ['kind', 'declaration'])) return false
+  const declaration = record.declaration
+  if (typeof declaration !== 'object' || declaration === null || Array.isArray(declaration)) return false
+  const { source, path, mediaType } = declaration as { source?: unknown; path?: unknown; mediaType?: unknown }
+  return hasExactKeys(declaration as Record<string, unknown>, ['source', 'path', 'mediaType'])
+    && (source === 'icon' || source === 'export')
+    && typeof path === 'string' && path !== ''
+    && typeof mediaType === 'string' && Object.hasOwn(ICON_MEDIA_TYPES, mediaType)
+}
+
+/** Whether a plain object's own keys are exactly `keys`, in any order. */
+function hasExactKeys(record: Record<string, unknown>, keys: readonly string[]): boolean {
+  const own = Object.keys(record)
+  return own.length === keys.length && keys.every(key => own.includes(key))
 }
 
 /**

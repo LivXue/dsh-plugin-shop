@@ -6,6 +6,7 @@ import { DECLARATIONS_RULE, applyArchivedFlags, applyForkFlags, diffRepoState, l
 import type { RepoState, RepoStateEntry } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
 import { dshPeersOf } from '../src/npm-client.ts'
+import { readIconDeclaration } from '../src/icon-declaration.ts'
 
 const commit = 'a'.repeat(40)
 
@@ -841,6 +842,19 @@ describe('a carried declarations record is checked on the way in', () => {
     expect(toReread).toEqual(['a/one'])
   })
 
+  it('queues a record stamped by the literal rule 2, the stamp every committed record holds when rule 3 lands', () => {
+    // The same case one rule on, for the same reason: the previous-rule case
+    // above holds for any greater DECLARATIONS_RULE, so it cannot say that the
+    // icon declaration (design 2026-10-23-shop-plugin-icons §4) bumped the rule
+    // to 3. This names the stamp the committed records carry now, and breaks
+    // the moment rule 2 is current again: a record stamped 2 would then never
+    // be queued, and no github entry would ever gain an icon declaration.
+    const parsed = parseRepoState(rowWith({ declarationsRule: 2 }))
+    const { toFetch, toReread } = diffRepoState(parsed, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch).toEqual([])
+    expect(toReread).toEqual(['a/one'])
+  })
+
   it('round-trips the rule-2 pair, and leaves a record without it as it is', () => {
     const recorded: RepoState = {
       'a/one': {
@@ -883,6 +897,100 @@ describe('a carried declarations record is checked on the way in', () => {
     // this build never writes is a malformed registry file, like a malformed
     // `peers` or `compatibility`.
     expect(() => parseRepoState(rowWith(extra))).toThrow(`a/one has a candidate with ${message}`)
+  })
+
+  describe('the icon record (design 2026-10-23-shop-plugin-icons §4)', () => {
+    // A candidate's icon is `readIconDeclaration`'s answer, stored as it came:
+    // `declared` or `refused`. `none` is never stored (the writer deletes the
+    // key, so absent beside the current stamp means "declares none"), which
+    // makes it, like every other shape this build never writes, a malformed
+    // registry file.
+    const ok = { source: 'icon', path: 'icon.svg', mediaType: 'image/svg+xml' } as const
+    const declaredIcon = { kind: 'declared', declaration: ok } as const
+    const message = 'a/one has a candidate with a malformed icon record'
+
+    it('round-trips an icon built by its real producer, declared and refused, from either source', () => {
+      const reads = [
+        readIconDeclaration({ icon: './assets/Logo.SVG' }),
+        readIconDeclaration({ exports: { './icon': './dist/logo.png' } }),
+        readIconDeclaration({ icon: 7 }),
+        readIconDeclaration({ icon: 'icon.gif' }),
+      ]
+      // The producer's own kinds, so a fixture that drifted from it would fail
+      // here rather than round-trip a shape no build writes.
+      expect(reads.map(read => read.kind)).toEqual(['declared', 'declared', 'refused', 'refused'])
+      for (const icon of reads) {
+        expect(parseRepoState(rowWith({ icon }))['a/one']?.candidates[0]?.icon, JSON.stringify(icon)).toEqual(icon)
+      }
+    })
+
+    it('accepts every media type the reader writes, and both sources', () => {
+      for (const source of ['icon', 'export']) {
+        for (const { mediaType, path } of [
+          { mediaType: 'image/svg+xml', path: 'icon.svg' },
+          { mediaType: 'image/png', path: 'icon.png' },
+          { mediaType: 'image/jpeg', path: 'icon.jpg' },
+          { mediaType: 'image/webp', path: 'icon.webp' },
+        ]) {
+          const icon = { kind: 'declared', declaration: { source, path, mediaType } }
+          expect(parseRepoState(rowWith({ icon }))['a/one']?.candidates[0]?.icon, JSON.stringify(icon)).toEqual(icon)
+        }
+      }
+    })
+
+    it('leaves a record without an icon without one, never inventing the none read', () => {
+      // Every committed record is in this state until the rule-3 re-read gets
+      // to it, and absent is not a wrong shape.
+      expect(parseRepoState(rowWith({}))['a/one']?.candidates[0]).not.toHaveProperty('icon')
+    })
+
+    it('keeps a carried candidate\'s icon through serialization and the next state', () => {
+      const refusedIcon = readIconDeclaration({ icon: 7 })
+      const recorded: RepoState = {
+        'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [{ ...candidate('a/one'), icon: declaredIcon }] },
+        'b/two': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [{ ...candidate('b/two'), icon: refusedIcon }] },
+      }
+      const parsed = parseRepoState(serializeRepoState(recorded))
+      expect(parsed).toEqual(recorded)
+      // Untouched repositories carry their recorded candidates wholesale: the
+      // search item says nothing about an icon, so nothing may drop it.
+      const next = nextRepoState(parsed, [
+        { repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' },
+        { repo: 'b/two', pushedAt: '2026-08-01T00:00:00Z' },
+      ], new Map())
+      expect(next['a/one']?.candidates[0]?.icon).toEqual(declaredIcon)
+      expect(next['b/two']?.candidates[0]?.icon).toEqual(refusedIcon)
+    })
+
+    it.each([
+      ['null', null],
+      ['a string', 'declared'],
+      ['an array', [declaredIcon]],
+      ['empty', {}],
+      // What `readIconDeclaration` answers for a manifest that declares
+      // nothing, and what the writer turns into an absent key.
+      ['the none read', { kind: 'none' }],
+      ['of a kind the reader never answers', { kind: 'withheld', detail: 'x' }],
+      ['declared without its declaration', { kind: 'declared' }],
+      ['declared with a null declaration', { kind: 'declared', declaration: null }],
+      ['declared with an array for its declaration', { kind: 'declared', declaration: [ok] }],
+      ['declared from a source that is neither dsh\'s', { kind: 'declared', declaration: { ...ok, source: 'field' } }],
+      ['declared with no source', { kind: 'declared', declaration: { path: ok.path, mediaType: ok.mediaType } }],
+      ['declared with an empty path', { kind: 'declared', declaration: { ...ok, path: '' } }],
+      ['declared with a path that is not a string', { kind: 'declared', declaration: { ...ok, path: 7 } }],
+      ['declared with no path', { kind: 'declared', declaration: { source: ok.source, mediaType: ok.mediaType } }],
+      ['declared with a media type of no kind the reader writes', { kind: 'declared', declaration: { ...ok, mediaType: 'image/gif' } }],
+      ['declared with no media type', { kind: 'declared', declaration: { source: ok.source, path: ok.path } }],
+      // Both are published or built into keys by whatever reads them, so a key
+      // the harvest never wrote would go out under the author's name.
+      ['declared with a key the reader never writes in its declaration', { kind: 'declared', declaration: { ...ok, subdir: 'packages/a' } }],
+      ['declared beside a detail', { kind: 'declared', declaration: ok, detail: 'x' }],
+      ['refused without its detail', { kind: 'refused' }],
+      ['refused with a detail that is not a string', { kind: 'refused', detail: 5 }],
+      ['refused beside a declaration', { kind: 'refused', detail: 'x', declaration: ok }],
+    ])('throws on an icon that is %s', (_label, icon) => {
+      expect(() => parseRepoState(rowWith({ icon }))).toThrow(message)
+    })
   })
 
   it('throws on a candidate that is not an object at all', () => {

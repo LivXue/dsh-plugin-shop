@@ -17,6 +17,7 @@
 import { createHash } from 'node:crypto'
 import { truncateWholeCharacters, VERSION_MAX_LENGTH } from './gate.ts'
 import { compatibilityOf, dshPeersOf, FetchTimeoutError, fetchWithRetry, peerNamesOf, withTimeout } from './npm-client.ts'
+import { fileListIncludes, type IconRead, iconDetail, iconLabel, readIconDeclaration, shownPath } from './icon-declaration.ts'
 import { canEverList } from './repo-gate.ts'
 import { DECLARATIONS_RULE, diffRepoState, needsDeclarationsReread, nextRepoState, type RepoSeen, type RepoState, type RepoStateEntry, type RepoToFetch } from './repo-state.ts'
 import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
@@ -1179,6 +1180,9 @@ function projectCandidate(
     version?: unknown
     peerDependencies?: unknown
     peerDependenciesMeta?: unknown
+    icon?: unknown
+    exports?: unknown
+    files?: unknown
     dsh?: { bundle?: unknown; catalog?: unknown }
   }
   const scripts = typeof m.scripts === 'object' && m.scripts !== null ? m.scripts : {}
@@ -1235,6 +1239,15 @@ function projectCandidate(
  * command that could clear it. An install may fail even earlier, at pnpm,
  * which refuses a package version that is not semver.
  *
+ * Since rule 3 (design 2026-10-23-shop-plugin-icons §4), `icon` as well: what
+ * `readIconDeclaration` makes of the manifest, with one rule of this channel on
+ * top. A git install is packed as `npm pack` would pack the tree, so an icon
+ * the manifest's `files` leaves out never reaches dsh, and a declaration
+ * `fileListIncludes` rejects becomes the `notInFiles` refusal, naming the
+ * source it came from. A rescued root's declarations carry no `files`, because
+ * a packed archive has applied its own ({@link PackedDeclarations}), so none
+ * applies to it. The `none` read is never stored: the key is removed.
+ *
  * The one writer, and every place that writes a candidate's declarations goes
  * through it: the projection, a rescued root overwriting the ones its HEAD
  * projection wrote with its tarball's, and the manifest-only re-read. So the
@@ -1248,7 +1261,15 @@ function projectCandidate(
  */
 function writeDeclarations(
   candidate: RepoCandidate,
-  declarations: { peerDependencies?: unknown; peerDependenciesMeta?: unknown; dsh?: unknown; version?: unknown },
+  declarations: {
+    peerDependencies?: unknown
+    peerDependenciesMeta?: unknown
+    dsh?: unknown
+    version?: unknown
+    icon?: unknown
+    exports?: unknown
+    files?: unknown
+  },
 ): void {
   candidate.peers = peerNamesOf(declarations)
   const compatibility = compatibilityOf(declarations.dsh)
@@ -1263,6 +1284,12 @@ function writeDeclarations(
     delete candidate.dshPeers
     delete candidate.manifestVersion
   }
+  const read = readIconDeclaration(declarations)
+  const icon: IconRead = read.kind === 'declared' && !fileListIncludes(declarations.files, read.declaration.path)
+    ? { kind: 'refused', detail: iconDetail.notInFiles(iconLabel(read.declaration.source), shownPath(read.declaration.path)) }
+    : read
+  if (icon.kind === 'none') delete candidate.icon
+  else candidate.icon = icon
   candidate.declarationsRule = DECLARATIONS_RULE
 }
 
@@ -2780,7 +2807,16 @@ async function rereadCandidate(
     }
     const read = await readManifest(response)
     if (!read.ok) return { outcome: 'unusable', reason: read.detail }
-    const manifest = read.manifest as { name?: unknown; version?: unknown; peerDependencies?: unknown; peerDependenciesMeta?: unknown; dsh?: unknown } | null
+    const manifest = read.manifest as {
+      name?: unknown
+      version?: unknown
+      peerDependencies?: unknown
+      peerDependenciesMeta?: unknown
+      icon?: unknown
+      exports?: unknown
+      files?: unknown
+      dsh?: unknown
+    } | null
     // The name decides whether these are this candidate's declarations, and it
     // decides every manifest that is not an object as well: `null` has no name
     // through the optional chain, and an array or a primitive has none that can

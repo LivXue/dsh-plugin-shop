@@ -53,10 +53,11 @@ import type { UnbuiltFinding } from './types.ts'
 /**
  * The packed manifest's declaration inputs, exactly as the archive holds them
  * and not yet read: the values `peerNamesOf`, `compatibilityOf` and
- * `dshPeersOf` take, and the manifest `version` dsh keys an exemption by.
+ * `dshPeersOf` take, the manifest `version` dsh keys an exemption by, and the
+ * `icon` and `exports` that `readIconDeclaration` reads an icon from.
  *
  * Untyped on purpose. A rescued entry installs the archive, so its `peers`,
- * `compatibility`, `dshPeers` and `manifestVersion` must come from the
+ * `compatibility`, `dshPeers`, `manifestVersion` and `icon` must come from the
  * archive's own package.json rather than the default-branch HEAD it was
  * projected from (a live scan found 7 of 220 rescued repositories whose
  * installed peers differ). But those readers are the one reader each for both
@@ -65,12 +66,23 @@ import type { UnbuiltFinding } from './types.ts'
  * functions it reads every other manifest with. `version` is no exception:
  * whether it is usable is decided there, beside `dshPeersOf` (design
  * 2026-09-28-bundle-components-and-github-peers, section 6.1).
+ *
+ * `icon` and `exports` travel as a pair, because dsh finds both the manifest
+ * and an exported icon through `exports` and the field means nothing read
+ * without it (design 2026-10-23-shop-plugin-icons §4). `files` is the manifest
+ * field a git install applies that is deliberately NOT here: a packed archive
+ * has already applied its own, so what it holds is the truth, and a list
+ * handed over beside it would make the writer refuse an icon the archive
+ * ships, in a sentence about git installs that a tarball install never
+ * reaches. A path the archive lacks is the icon step's `notInRelease`.
  */
 export interface PackedDeclarations {
   peerDependencies: unknown
   peerDependenciesMeta: unknown
   dsh: unknown
   version: unknown
+  icon: unknown
+  exports: unknown
 }
 
 export type ReleaseAssetVerdict =
@@ -454,6 +466,7 @@ interface PackedManifest {
   name?: unknown
   dsh?: unknown
   exports?: unknown
+  icon?: unknown
   main?: unknown
   peerDependencies?: unknown
   peerDependenciesMeta?: unknown
@@ -530,6 +543,8 @@ function declarationsOf(manifest: PackedManifest): PackedDeclarations {
     peerDependenciesMeta: manifest.peerDependenciesMeta,
     dsh: manifest.dsh,
     version: manifest.version,
+    icon: manifest.icon,
+    exports: manifest.exports,
   }
 }
 

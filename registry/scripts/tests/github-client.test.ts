@@ -11,6 +11,7 @@ import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
 import { COMPATIBILITY_RANGE_MAX_LENGTH, compatibilityOf, dshPeersOf, FetchTimeoutError, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, peerNamesOf } from '../src/npm-client.ts'
 import { verifyReleaseAsset } from '../src/release-asset.ts'
+import { iconDetail, readIconDeclaration } from '../src/icon-declaration.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
 
 const sleep = async (_ms: number) => {}
@@ -939,6 +940,72 @@ describe('fetchRepoCandidate', () => {
       peerDependencies: { '@deepseek-ai/dsh': '0.1.5-rc.2' },
     })
     expect(candidate).toMatchObject({ dshPeers: { '@deepseek-ai/dsh': '0.1.5-rc.2' }, manifestVersion: version, declarationsRule: DECLARATIONS_RULE })
+  })
+
+  describe('the icon declaration (design 2026-10-23-shop-plugin-icons §4)', () => {
+    // Read from the manifest the projection already holds, by the reader the
+    // npm channel uses, and recorded by the one declarations writer: so it is
+    // stamped with the rule beside `peers`, and a record that predates it is
+    // re-read rather than guessed at.
+    const base = { name: 'dsh-iconic', dsh: { bundle: { patch: './cordis.patch.yml' } } }
+    const declaredSvg = { kind: 'declared', declaration: { source: 'icon', path: 'icon.svg', mediaType: 'image/svg+xml' } }
+
+    it('records the icon a manifest declares, as the shared reader reads it', async () => {
+      const manifest = { ...base, icon: './icon.svg' }
+      const candidate = await candidateFromManifest(manifest)
+      expect(candidate?.icon).toEqual(declaredSvg)
+      expect(candidate?.icon).toEqual(readIconDeclaration(manifest))
+      expect(candidate?.declarationsRule).toBe(DECLARATIONS_RULE)
+    })
+
+    it('reads the ./icon export through the manifest\'s exports, as dsh 0.2.1 does', async () => {
+      const candidate = await candidateFromManifest({ ...base, exports: { './icon': './assets/logo.png' } })
+      expect(candidate?.icon).toEqual({ kind: 'declared', declaration: { source: 'export', path: 'assets/logo.png', mediaType: 'image/png' } })
+      // And an icon field that dsh never reads, because `exports` hides the
+      // manifest, is the author's to be told about.
+      const hidden = await candidateFromManifest({ ...base, icon: './icon.svg', exports: { '.': './index.js' } })
+      expect(hidden?.icon).toEqual({ kind: 'refused', detail: iconDetail.fieldUnreachable() })
+    })
+
+    it('refuses an icon the manifest\'s files list leaves out, since a git install would not carry it', async () => {
+      const candidate = await candidateFromManifest({ ...base, icon: './icon.svg', files: ['dist'] })
+      expect(candidate?.icon).toEqual({ kind: 'refused', detail: iconDetail.notInFiles('package.json "icon"', '"icon.svg"') })
+      // Refused, not dropped: the build report tells the author, and the
+      // candidate is still stamped, so it is not re-read for nothing.
+      expect(candidate?.declarationsRule).toBe(DECLARATIONS_RULE)
+    })
+
+    it('names the export, not the field, when the export is what files leaves out', async () => {
+      const candidate = await candidateFromManifest({
+        ...base, exports: { './icon': './logo.png', './package.json': './package.json' }, files: ['dist'],
+      })
+      expect(candidate?.icon).toEqual({ kind: 'refused', detail: iconDetail.notInFiles('the "./icon" export', '"logo.png"') })
+    })
+
+    it.each([
+      ['by name', './icon.svg', ['icon.svg']],
+      ['through its directory', './assets/icon.svg', ['assets']],
+      ['by a pattern', './icon.svg', ['*.svg', 'dist']],
+    ])('keeps an icon the files list names %s', async (_label, icon, files) => {
+      const candidate = await candidateFromManifest({ ...base, icon, files })
+      expect(candidate?.icon).toMatchObject({ kind: 'declared' })
+    })
+
+    it('records a refusal with its sentence, from the same reader as the declaration', async () => {
+      const candidate = await candidateFromManifest({ ...base, icon: 7 })
+      expect(candidate?.icon).toEqual({ kind: 'refused', detail: iconDetail.notString() })
+    })
+
+    it('records no icon, and no key, for a manifest that declares none', async () => {
+      // Absent beside the current stamp means "declares none". `none` is never
+      // stored, so the record carries nothing for the common case.
+      for (const extra of [{}, { files: ['dist'] }, { exports: { '.': './index.js' } }]) {
+        const candidate = await candidateFromManifest({ ...base, ...extra })
+        expect(candidate, JSON.stringify(extra)).toBeDefined()
+        expect(candidate !== undefined && 'icon' in candidate, JSON.stringify(extra)).toBe(false)
+        expect(candidate?.declarationsRule).toBe(DECLARATIONS_RULE)
+      }
+    })
   })
 
   /**
@@ -1965,6 +2032,45 @@ describe('release-tarball rescue probe', () => {
       expect(candidate).not.toHaveProperty('dshPeers')
       expect(candidate).not.toHaveProperty('manifestVersion')
       expect(candidate?.declarationsRule).toBe(DECLARATIONS_RULE)
+    })
+
+    // The icon follows the same rule (design 2026-10-23-shop-plugin-icons §4
+    // and §5.2): the entry installs the archive, its icon is keyed by the
+    // archive's sha256, and the file is read out of that archive, so the
+    // declaration is the archive's own and never the default branch's.
+    const iconHead = JSON.stringify({ ...(JSON.parse(headManifest) as Record<string, unknown>), icon: './head.svg' })
+
+    it('takes the icon the tarball declares in place of the one HEAD declares', async () => {
+      const candidate = await rescuedWith(packedTarball('dsh-repo-plugin', { icon: './assets/logo.png' }, { 'package/assets/logo.png': 'x' }), iconHead)
+      expect(candidate?.icon).toEqual({ kind: 'declared', declaration: { source: 'icon', path: 'assets/logo.png', mediaType: 'image/png' } })
+    })
+
+    it('drops HEAD\'s icon when the tarball declares none', async () => {
+      // Removed, not left at HEAD's value: the entry installs the tarball, and
+      // an icon read from a file it does not hold would be a fetch of a path
+      // the archive never had.
+      const candidate = await rescuedWith(packedTarball('dsh-repo-plugin'), iconHead)
+      expect(candidate).toBeDefined()
+      expect(candidate).not.toHaveProperty('icon')
+      expect(candidate?.declarationsRule).toBe(DECLARATIONS_RULE)
+    })
+
+    it('does not hold the tarball\'s icon to its files list, which the archive has already applied', async () => {
+      // A git install is packed by `files`, so there a list that leaves the
+      // icon out refuses it. A tarball is what that packing produced: what it
+      // holds is the truth, and the icon step answers "not in the release
+      // asset" for a path it lacks. The refusal's own sentence, about git
+      // installs, would misattribute a tarball install anyway.
+      const candidate = await rescuedWith(
+        packedTarball('dsh-repo-plugin', { icon: './icon.svg', files: ['dist'] }, { 'package/icon.svg': '<svg/>' }),
+        JSON.stringify({ ...(JSON.parse(headManifest) as Record<string, unknown>), files: ['src'] }),
+      )
+      expect(candidate?.icon).toEqual({ kind: 'declared', declaration: { source: 'icon', path: 'icon.svg', mediaType: 'image/svg+xml' } })
+    })
+
+    it('reads the ./icon export of the tarball\'s manifest through the tarball\'s exports', async () => {
+      const candidate = await rescuedWith(packedTarball('dsh-repo-plugin', { exports: { './icon': './logo.webp' } }, { 'package/logo.webp': 'x' }))
+      expect(candidate?.icon).toEqual({ kind: 'declared', declaration: { source: 'export', path: 'logo.webp', mediaType: 'image/webp' } })
     })
   })
 
@@ -3153,6 +3259,67 @@ describe('harvestRepos', () => {
       })
     })
 
+    describe('the icon declaration (design 2026-10-23-shop-plugin-icons §4)', () => {
+      // Stamped `2` on purpose, the stamp every committed record holds when
+      // rule 3 lands: the bump is what queues it, and this re-read is what
+      // writes the icon rule 2 never read.
+      const declaredSvg = { kind: 'declared', declaration: { source: 'icon', path: 'icon.svg', mediaType: 'image/svg+xml' } } as const
+      const rawRoot = `https://raw.githubusercontent.com/a/root/${commitA}/package.json`
+      const seen = [{ repo: 'a/root', pushedAt: quietAt }]
+
+      /** Re-read one stale root against `manifest` at its recorded commit. */
+      async function rereadRoot(root: RepoCandidate, manifest: unknown) {
+        const state: RepoState = { 'a/root': { pushedAt: quietAt, commit: commitA, candidates: [root] } }
+        const { fetchImpl, requested } = rereadFetch(seen, url => (url === rawRoot ? new Response(JSON.stringify(manifest), { status: 200 }) : undefined))
+        const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
+        expect(requested).toEqual([rawRoot])
+        expect(result.rereadUpdated).toBe(1)
+        return result
+      }
+
+      it('writes the icon from the manifest at the recorded commit, the same as the projection does', async () => {
+        const root = unstamped('a/root', commitA, { peers: [], declarationsRule: 2 })
+        const manifest = { name: 'root', dsh: { bundle: {} }, icon: './icon.svg' }
+        const result = await rereadRoot(root, manifest)
+        expect(result.nextState['a/root']?.candidates).toEqual([{ ...root, icon: declaredSvg, declarationsRule: DECLARATIONS_RULE }])
+        expect(result.nextState['a/root']?.candidates[0]?.icon).toEqual(readIconDeclaration(manifest))
+        // Once per rule: what this run wrote queues nothing next run.
+        expect(diffRepoState(result.nextState, seen).toReread).toEqual([])
+      })
+
+      it('refuses an icon the files list leaves out, as the projection does', async () => {
+        const root = unstamped('a/root', commitA, { peers: [], declarationsRule: 2 })
+        const result = await rereadRoot(root, { name: 'root', dsh: { bundle: {} }, icon: './icon.svg', files: ['dist'] })
+        expect(result.nextState['a/root']?.candidates[0]?.icon).toEqual({
+          kind: 'refused', detail: iconDetail.notInFiles('package.json "icon"', '"icon.svg"'),
+        })
+      })
+
+      it('removes a recorded icon the manifest at the recorded commit no longer declares', async () => {
+        // A field with nothing usable is removed, never left as a fact about a
+        // manifest this read superseded: absent beside the current stamp means
+        // "declares none".
+        const root = unstamped('a/root', commitA, { peers: [], icon: declaredSvg, declarationsRule: 2 })
+        const result = await rereadRoot(root, { name: 'root', dsh: { bundle: {} } })
+        const updated = result.nextState['a/root']?.candidates[0]
+        expect(updated).not.toHaveProperty('icon')
+        expect(updated?.declarationsRule).toBe(DECLARATIONS_RULE)
+      })
+
+      it('reads a subpackage\'s icon from its own manifest, relative to its own directory', async () => {
+        const sub = unstamped('b/mono', commitB, { name: 'the-plugin', subdir: 'packages/p', peers: [], declarationsRule: 2 })
+        const state: RepoState = { 'b/mono': { pushedAt: quietAt, commit: commitB, candidates: [sub] } }
+        const { fetchImpl } = rereadFetch([{ repo: 'b/mono', pushedAt: quietAt }], url => (
+          url === `https://raw.githubusercontent.com/b/mono/${commitB}/packages/p/package.json`
+            ? new Response(JSON.stringify({ name: 'the-plugin', dsh: { bundle: {} }, icon: './assets/icon.png' }), { status: 200 })
+            : undefined))
+        const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
+        expect(result.nextState['b/mono']?.candidates[0]?.icon).toEqual({
+          kind: 'declared', declaration: { source: 'icon', path: 'assets/icon.png', mediaType: 'image/png' },
+        })
+      })
+    })
+
     describe('a rescued root', () => {
       // A rescued entry installs its recorded asset, so that — not the commit —
       // is what the re-read opens (design 2026-09-01-harness-compatibility
@@ -3210,6 +3377,40 @@ describe('harvestRepos', () => {
         expect(result.nextState['r/rescued']?.candidates[0]).toMatchObject({
           peers: ['@deepseek-ai/dsh'], dshPeers: { '@deepseek-ai/dsh': '0.1.5-rc.2' }, manifestVersion: '2.0.0', declarationsRule: DECLARATIONS_RULE,
         })
+      })
+
+      it('takes the icon from the recorded asset in place of the one HEAD gave the record, and never holds it to the asset\'s files', async () => {
+        // The release branch writes the archive's declarations like the rest
+        // (design 2026-10-23-shop-plugin-icons §4 and §5.2): the entry
+        // installs this archive, and its icon is keyed by the archive's own
+        // sha256. The archive's `files` leaves its icon out, and the icon is
+        // still declared: what the archive holds is the truth, and the icon
+        // step says "not in the release asset" for a path it lacks.
+        const iconic = packedTarball('rescued', { icon: './logo.svg', files: ['dist'] }, { 'package/logo.svg': '<svg/>' })
+        const state = recordedRescue(createHash('sha256').update(iconic).digest('hex'))
+        const recorded = state['r/rescued']?.candidates[0]
+        if (recorded === undefined) throw new Error('fixture has no candidate')
+        // What a HEAD projection recorded: an icon the tarball does not declare.
+        recorded.icon = { kind: 'declared', declaration: { source: 'icon', path: 'head.svg', mediaType: 'image/svg+xml' } }
+        const { fetchImpl, requested } = rereadFetch(seen, url => (url === assetUrl ? new Response(iconic, { status: 200 }) : undefined))
+        const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
+        expect(requested).toEqual([assetUrl])
+        expect(result.nextState['r/rescued']?.candidates[0]?.icon).toEqual({
+          kind: 'declared', declaration: { source: 'icon', path: 'logo.svg', mediaType: 'image/svg+xml' },
+        })
+        expect(result.rereadUpdated).toBe(1)
+      })
+
+      it('removes the icon the record carries when the recorded asset declares none', async () => {
+        const state = recordedRescue(sha256)
+        const recorded = state['r/rescued']?.candidates[0]
+        if (recorded === undefined) throw new Error('fixture has no candidate')
+        recorded.icon = { kind: 'declared', declaration: { source: 'icon', path: 'head.svg', mediaType: 'image/svg+xml' } }
+        const { fetchImpl } = rereadFetch(seen, url => (url === assetUrl ? new Response(packed, { status: 200 }) : undefined))
+        const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
+        const updated = result.nextState['r/rescued']?.candidates[0]
+        expect(updated).not.toHaveProperty('icon')
+        expect(updated?.declarationsRule).toBe(DECLARATIONS_RULE)
       })
 
       it.each([
@@ -4263,6 +4464,49 @@ describe('subpackage probe', () => {
       ['packages/peered', { '@deepseek-ai/dsh-tools': '^0.1.7-0' }, '0.3.0', DECLARATIONS_RULE],
       ['packages/unpeered', undefined, undefined, DECLARATIONS_RULE],
     ])
+  })
+
+  it('records each subpackage\'s icon from its OWN manifest, with the path its manifest wrote', async () => {
+    // The root declares an icon of its own, so inheriting it is visible. The
+    // path stays relative to the manifest's own directory, `subdir` is not
+    // prefixed onto it (the icon step joins them, where it builds the key), and
+    // a `files` list applies to the directory it sits in.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json': new Response(JSON.stringify({
+        private: true,
+        workspaces: ['packages/*'],
+        icon: './root.svg',
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [
+          { path: 'package.json' },
+          { path: 'packages/a-iconic/package.json' },
+          { path: 'packages/b-iconless/package.json' },
+          { path: 'packages/c-unpacked/package.json' },
+        ],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/a-iconic/package.json': new Response(JSON.stringify({
+        name: 'a-iconic', dsh: { bundle: {} }, icon: './assets/icon.png',
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/b-iconless/package.json': new Response(JSON.stringify({
+        name: 'b-iconless', dsh: { bundle: {} },
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/c-unpacked/package.json': new Response(JSON.stringify({
+        name: 'c-unpacked', dsh: { bundle: {} }, icon: './icon.svg', files: ['dist'],
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    if (!result.ok) throw new Error(`fixture monorepo was not projected: ${result.detail}`)
+    expect(result.candidates.map(c => [c.subdir, c.icon])).toEqual([
+      ['packages/a-iconic', { kind: 'declared', declaration: { source: 'icon', path: 'assets/icon.png', mediaType: 'image/png' } }],
+      ['packages/b-iconless', undefined],
+      ['packages/c-unpacked', { kind: 'refused', detail: iconDetail.notInFiles('package.json "icon"', '"icon.svg"') }],
+    ])
+    expect(result.candidates.map(c => 'icon' in c)).toEqual([true, false, true])
   })
 
   it('stamps each subpackage candidate beside its own peers', async () => {
