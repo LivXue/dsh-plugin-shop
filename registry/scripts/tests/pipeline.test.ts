@@ -18,6 +18,7 @@ const config = parseRegistryConfig({
   verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
   denied: '[]',
   allowedSimilar: '[]',
+  withheldIcons: '[]',
   categories: '[]',
   firstSeen: [
     '- name: dsh-fs-tool',
@@ -107,6 +108,7 @@ describe('runPipeline', () => {
       verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
       denied: '[]',
       allowedSimilar: '[]',
+      withheldIcons: '[]',
       categories: '- name: dsh-derived-plugin\n  category: tool\n',
       firstSeen: [
         '- name: dsh-fs-tool',
@@ -139,6 +141,7 @@ describe('runPipeline', () => {
       verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
       denied: '[]',
       allowedSimilar: '[]',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '- name: dsh-hello-plugin\n  added: 2026-08-11\n- name: dsh-derived-plugin\n  added: 2026-08-12\n',
     })
@@ -186,6 +189,7 @@ describe('runPipeline', () => {
       verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
       denied: '[]',
       allowedSimilar: '[]',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: [
         '- name: dsh-fs-tool',
@@ -236,6 +240,7 @@ describe('runPipeline', () => {
       verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
       denied: '[]',
       allowedSimilar: '[]',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: [
         '- name: dsh-fs-tool',
@@ -328,7 +333,7 @@ describe('runPipeline with repository candidates', () => {
 
   it('keys a repository first appearance by owner/slug and not by the bundle name', () => {
     const noRows = parseRegistryConfig({
-      verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]',
+      verified: '[]', denied: '[]', allowedSimilar: '[]', withheldIcons: '[]', categories: '[]', firstSeen: '[]',
     })
     const { firstSeen, pluginsJson } = runPipeline([], [repoCandidate], noRows, BUILT_AT)
     expect(firstSeen.get('someone/dsh-repo-plugin')).toBe('2026-08-18')
@@ -342,7 +347,7 @@ describe('runPipeline with repository candidates', () => {
     // verified repo's name inherited its `added` date and looked as old as
     // the entry it displaced.
     const noRows = parseRegistryConfig({
-      verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]',
+      verified: '[]', denied: '[]', allowedSimilar: '[]', withheldIcons: '[]', categories: '[]',
       firstSeen: '- name: alice/dsh-repo-plugin\n  added: 2026-07-01\n',
     })
     const { firstSeen, pluginsJson } = runPipeline([], [
@@ -510,7 +515,7 @@ describe('nothing unpaired leaves for plugins.json', () => {
   const LONE_SURROGATE_ESCAPE = /\\ud[89ab][0-9a-f]{2}/i
 
   const hostileConfig = parseRegistryConfig({
-    verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]',
+    verified: '[]', denied: '[]', allowedSimilar: '[]', withheldIcons: '[]', categories: '[]',
     firstSeen: '- name: dsh-hostile-plugin\n  added: 2026-08-11\n',
   })
 
@@ -640,6 +645,7 @@ describe('a repo denial survives the author publishing to npm', () => {
       verified: '[]',
       denied: '- name: evil/dsh-x\n  reason: Exfiltrates credentials.\n',
       allowedSimilar: '[]',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '- name: dsh-x\n  added: 2026-08-10\n- name: evil/dsh-x\n  added: 2026-08-10\n',
     })
@@ -738,6 +744,7 @@ describe('determinism under every perturbation', () => {
     verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
     denied: '[]',
     allowedSimilar: '[]',
+    withheldIcons: '[]',
     categories: '[]',
     firstSeen: [
       '- name: dsh-derived-plugin\n  added: 2026-08-12\n',
@@ -840,6 +847,7 @@ describe('the LLM-only market verdicts reach the build report', () => {
       verified: '[]',
       denied: '[]',
       allowedSimilar: '[]',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '- name: dsh-hello-plugin\n  added: 2026-08-11\n- name: dsh-derived-plugin\n  added: 2026-08-12\n- name: dsh-fs-tool\n  added: 2026-08-10\n',
       markets: [
@@ -874,7 +882,7 @@ describe('the LLM-only market verdicts reach the build report', () => {
     // names are shared by 243 entries.
     const commit = 'f'.repeat(40)
     const cleared = parseRegistryConfig({
-      verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]',
+      verified: '[]', denied: '[]', allowedSimilar: '[]', withheldIcons: '[]', categories: '[]',
       firstSeen: '- name: alice/dsh-store\n  added: 2026-08-01\n- name: bob/dsh-store\n  added: 2026-08-02\n',
       markets: '- name: dsh-store\n  market: false\n  by: human\n  reason: stores session logs\n',
     })
@@ -911,6 +919,7 @@ describe('unmatchedRegistryNotes', () => {
       verified: '- name: dsh-hello-plugin\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
       denied: '- name: someone/dsh-repo-plugin\n  reason: known bad actor\n',
       allowedSimilar: '- dsh-hello-plugin\n',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '[]',
     })
@@ -926,6 +935,7 @@ describe('unmatchedRegistryNotes', () => {
       ].join(''),
       denied: '- name: DSH-Evil\n  reason: typed in the wrong case\n',
       allowedSimilar: '- dsh-gone\n',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '[]',
     })
@@ -946,6 +956,7 @@ describe('unmatchedRegistryNotes', () => {
       verified: `- name: dsh-repo-plugin\n  repo: someone/dsh-repo-plugin\n  reviewedCommit: ${commit}\n  reviewer: r\n  reviewCommit: c\n`,
       denied: '[]',
       allowedSimilar: '- SOMEONE/dsh-repo-plugin\n',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '[]',
     })
@@ -955,6 +966,7 @@ describe('unmatchedRegistryNotes', () => {
       verified: '[]',
       denied: '- name: dsh-repo-plugin\n  reason: denied by bundle name\n',
       allowedSimilar: '[]',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '[]',
     })
@@ -966,6 +978,7 @@ describe('unmatchedRegistryNotes', () => {
       verified: '[]',
       denied: '- name: dsh-never-seen\n  reason: nothing matches this\n',
       allowedSimilar: '[]',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '- name: dsh-hello-plugin\n  added: 2026-08-11\n- name: dsh-derived-plugin\n  added: 2026-08-12\n- name: dsh-fs-tool\n  added: 2026-08-10\n',
     })
@@ -1010,7 +1023,7 @@ describe('selectEntries', () => {
     // freshly-stamped entries would have found none and proved nothing about
     // the date at all.
     const unrecorded = parseRegistryConfig({
-      verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]',
+      verified: '[]', denied: '[]', allowedSimilar: '[]', withheldIcons: '[]', categories: '[]', firstSeen: '[]',
     })
     const fresh = selectEntries(candidates, [], unrecorded, '2026-12-25T00:00:00.000Z')
     expect(fresh.entries.length).toBeGreaterThan(0)

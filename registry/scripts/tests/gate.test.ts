@@ -11,6 +11,7 @@ const config = parseRegistryConfig({
   verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n',
   denied: '- name: dsh-evil-plugin\n  reason: Exfiltrates credentials.\n',
   allowedSimilar: '- dsh-fs-tools\n',
+  withheldIcons: '[]',
   categories: '[]',
   firstSeen: '[]',
 })
@@ -43,6 +44,7 @@ const withCategories = (rows: Record<string, string>): ReturnType<typeof parseRe
     verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n',
     denied: '- name: dsh-evil-plugin\n  reason: Exfiltrates credentials.\n',
     allowedSimilar: '- dsh-fs-tools\n',
+    withheldIcons: '[]',
     categories: Object.keys(rows).length === 0 ? '[]' : Object.entries(rows).map(([name, category]) => `- name: ${name}\n  category: ${category}\n`).join(''),
     firstSeen: '[]',
   })
@@ -191,6 +193,7 @@ describe('gate', () => {
       verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n',
       denied: '- name: dsh-evil-plugin\n  reason: Exfiltrates credentials.\n  replacement: dsh-good-plugin\n',
       allowedSimilar: '[]',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '[]',
     })
@@ -302,6 +305,7 @@ describe('gate', () => {
       verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
       denied: '- name: dsh-fs-too1\n  reason: Typosquat.\n',
       allowedSimilar: '[]',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '[]',
     })
@@ -760,6 +764,7 @@ describe('the hold and the candidate own identity', () => {
       ].join(''),
       denied: '[]',
       allowedSimilar: '[]',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '[]',
     })
@@ -777,6 +782,7 @@ describe('the hold and the candidate own identity', () => {
     ].join('\n') + '\n',
     denied: '[]',
     allowedSimilar: '[]',
+    withheldIcons: '[]',
     categories: '[]',
     firstSeen: '[]',
   })
@@ -808,6 +814,7 @@ describe('the hold and the candidate own identity', () => {
       ].join('\n') + '\n',
       denied: '[]',
       allowedSimilar: '- dsh-x\n',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '[]',
     })
@@ -826,6 +833,7 @@ describe('a denial names a project, not one of its two spellings', () => {
     verified: '[]',
     denied: '- name: Evil/dsh-x\n  reason: Exfiltrates credentials.\n  replacement: dsh-good\n',
     allowedSimilar: '[]',
+    withheldIcons: '[]',
     categories: '[]',
     firstSeen: '[]',
   })

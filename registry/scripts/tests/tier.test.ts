@@ -34,6 +34,7 @@ const config = parseRegistryConfig({
   ].join('\n') + '\n',
   denied: '[]',
   allowedSimilar: '[]',
+  withheldIcons: '[]',
   categories: '[]',
   firstSeen: [
     '- name: dsh-hello-plugin',

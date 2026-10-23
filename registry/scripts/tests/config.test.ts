@@ -8,7 +8,7 @@ import { parse } from 'yaml'
 import { loadRegistryConfig, parseRegistryConfig, serializeFirstSeen } from '../src/config.ts'
 
 const empty = {
-  verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]',
+  verified: '[]', denied: '[]', allowedSimilar: '[]', withheldIcons: '[]', categories: '[]', firstSeen: '[]',
 }
 
 describe('parseRegistryConfig', () => {
@@ -373,6 +373,80 @@ describe('parseRegistryConfig', () => {
   })
 })
 
+describe('parseRegistryConfig withheld icons', () => {
+  it('parses an empty list as no withheld icons', () => {
+    expect(parseRegistryConfig(empty).withheldIcons.size).toBe(0)
+  })
+
+  it('records an npm package under its name, with the reason', () => {
+    const config = parseRegistryConfig({ ...empty, withheldIcons: '- name: x\n  reason: r\n' })
+    expect(config.withheldIcons.get('x')).toEqual({ reason: 'r' })
+    expect(config.withheldIcons.size).toBe(1)
+  })
+
+  it('keys a repository by its lowercased owner/slug', () => {
+    // The icon planner looks an entry up by `firstSeenKey`, which lowercases a
+    // repository: GitHub resolves repository names case-insensitively, so a
+    // row written `Owner/Repo` has to be found by `owner/repo`.
+    const config = parseRegistryConfig({ ...empty, withheldIcons: '- name: Owner/Repo\n  reason: r\n' })
+    expect([...config.withheldIcons.keys()]).toEqual(['owner/repo'])
+    expect(config.withheldIcons.get('owner/repo')).toEqual({ reason: 'r' })
+  })
+
+  it('keeps a scoped npm name as written, though it holds a slash', () => {
+    // A repository is told from a package by its shape, and a scoped name has
+    // the slash a repository has. What keeps it a package is the leading `@`,
+    // which REPO_FULL_NAME refuses: `firstSeenKey` leaves an npm name as it
+    // is, so folding this one would key it where no entry looks. The capitals
+    // are what make a fold visible.
+    const config = parseRegistryConfig({ ...empty, withheldIcons: '- name: "@Scope/Dsh-X"\n  reason: r\n' })
+    expect([...config.withheldIcons.keys()]).toEqual(['@Scope/Dsh-X'])
+    expect(config.withheldIcons.get('@Scope/Dsh-X')).toEqual({ reason: 'r' })
+  })
+
+  it('throws on a repeated name instead of silently keeping the last row', () => {
+    expect(() => parseRegistryConfig({
+      ...empty,
+      withheldIcons: '- name: x\n  reason: a\n- name: x\n  reason: b\n',
+    })).toThrow(/withheld-icons\.yml: duplicate entry for x/)
+  })
+
+  it('throws when one repository is written in two cases', () => {
+    // They are one project, so two rows would be two verdicts on one icon.
+    expect(() => parseRegistryConfig({
+      ...empty,
+      withheldIcons: '- name: Owner/Repo\n  reason: a\n- name: owner/repo\n  reason: b\n',
+    })).toThrow(/withheld-icons\.yml: duplicate entry for owner\/repo/)
+  })
+
+  it('throws on a row with no reason, or an empty one', () => {
+    // The reason is published beside the withheld icon in the build report; a
+    // row without one would print a sentence that stops at its colon.
+    for (const rows of ['- name: x\n', '- name: x\n  reason: ""\n']) {
+      expect(() => parseRegistryConfig({ ...empty, withheldIcons: rows }),
+        `withheld-icons.yml must reject ${JSON.stringify(rows)}`).toThrow(/withheld-icons\.yml: row 1 \(x\) reason/)
+    }
+  })
+
+  it('throws on a row with a field it does not know', () => {
+    // `replacement` is denied.yml's. A row copied from there would otherwise
+    // load, and quietly drop the half of it that was meant.
+    expect(() => parseRegistryConfig({
+      ...empty,
+      withheldIcons: '- name: x\n  reason: r\n  replacement: y\n',
+    })).toThrow(/withheld-icons\.yml: row 1 \(x\).*replacement/s)
+  })
+
+  it('rejects a name that is not a package name or an owner/slug', () => {
+    // A padded or newline-terminated name loads fine and then matches no
+    // entry, so the icon is shown after a maintainer withheld it.
+    for (const name of ['" x "', '"x y"', '"x\\n"', '"a/b/c"']) {
+      expect(() => parseRegistryConfig({ ...empty, withheldIcons: `- name: ${name}\n  reason: r\n` }),
+        `withheld-icons.yml must reject ${name}`).toThrow(/withheld-icons\.yml/)
+    }
+  })
+})
+
 describe('parseRegistryConfig categories', () => {
   it('parses assigned categories', () => {
     const config = parseRegistryConfig({
@@ -485,10 +559,13 @@ describe('serializeFirstSeen', () => {
 })
 
 describe('loadRegistryConfig', () => {
+  /** The files a maintainer writes, which the loader reads with no fallback. */
+  const REVIEW_FILES = ['verified.yml', 'denied.yml', 'allowed-similar.yml', 'withheld-icons.yml']
+
   it('treats a missing categories.yml as empty', () => {
     const dir = mkdtempSync(join(tmpdir(), 'categories-config-'))
     try {
-      for (const f of ['verified.yml', 'denied.yml', 'allowed-similar.yml']) writeFileSync(join(dir, f), '[]\n')
+      for (const f of REVIEW_FILES) writeFileSync(join(dir, f), '[]\n')
       const config = loadRegistryConfig(dir)
       expect(config.categories.size).toBe(0)
     } finally {
@@ -499,9 +576,34 @@ describe('loadRegistryConfig', () => {
   it('treats a missing first-seen.yml as empty', () => {
     const dir = mkdtempSync(join(tmpdir(), 'first-seen-config-'))
     try {
-      for (const f of ['verified.yml', 'denied.yml', 'allowed-similar.yml']) writeFileSync(join(dir, f), '[]\n')
+      for (const f of REVIEW_FILES) writeFileSync(join(dir, f), '[]\n')
       const config = loadRegistryConfig(dir)
       expect(config.firstSeen.size).toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reads withheld-icons.yml from the directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'withheld-icons-config-'))
+    try {
+      for (const f of REVIEW_FILES) writeFileSync(join(dir, f), '[]\n')
+      writeFileSync(join(dir, 'withheld-icons.yml'), '- name: x\n  reason: r\n')
+      const config = loadRegistryConfig(dir)
+      expect(config.withheldIcons.get('x')).toEqual({ reason: 'r' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('stops on a missing withheld-icons.yml, as it does for the other files a maintainer writes', () => {
+    // categories.yml and first-seen.yml may be absent because the build writes
+    // them. This file is a maintainer's, and an absent one would publish the
+    // icons it exists to hold back, looking exactly like an empty list.
+    const dir = mkdtempSync(join(tmpdir(), 'withheld-icons-missing-'))
+    try {
+      for (const f of REVIEW_FILES.filter(file => file !== 'withheld-icons.yml')) writeFileSync(join(dir, f), '[]\n')
+      expect(() => loadRegistryConfig(dir)).toThrow(/ENOENT.*withheld-icons\.yml/)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

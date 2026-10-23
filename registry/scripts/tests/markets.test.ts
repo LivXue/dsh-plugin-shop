@@ -110,7 +110,7 @@ describe('what a steered verdict can and cannot reach', () => {
     )
     const rows = serializeMarketRows(mergeMarketRows([], verdicts, new Map()))
     const config = parseRegistryConfig({
-      verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]',
+      verified: '[]', denied: '[]', allowedSimilar: '[]', withheldIcons: '[]', categories: '[]', firstSeen: '[]',
       markets: rows,
     })
     expect(config.notAShop.has('dsh-a'), 'a false clears').toBe(true)
@@ -119,7 +119,7 @@ describe('what a steered verdict can and cannot reach', () => {
 
   it('treats a human row exactly the same, because the verdict is what decides', () => {
     const config = parseRegistryConfig({
-      verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]',
+      verified: '[]', denied: '[]', allowedSimilar: '[]', withheldIcons: '[]', categories: '[]', firstSeen: '[]',
       markets: '- name: dsh-b\n  market: true\n  by: human\n  reason: it sells dsh plugins\n',
     })
     expect(config.notAShop.has('dsh-b')).toBe(false)

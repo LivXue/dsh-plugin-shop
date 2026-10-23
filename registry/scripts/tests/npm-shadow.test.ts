@@ -174,7 +174,9 @@ describe('acceptedNpmRepositories', () => {
     // `npmShadowOf` reads the declared string itself, so the map carries it
     // unchanged: in its author's case, which a same-owner detail quotes, and a
     // `github:` spelling as one, which is case 2 there.
-    const config = parseRegistryConfig({ verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]' })
+    const config = parseRegistryConfig({
+      verified: '[]', denied: '[]', allowedSimilar: '[]', withheldIcons: '[]', categories: '[]', firstSeen: '[]',
+    })
     const accepted = [
       npm({ name: 'dsh-a', repository: 'https://github.com/Alice/dsh-a' }),
       npm({ name: 'dsh-b', repository: 'github:bob/dsh-b' }),
