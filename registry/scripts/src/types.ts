@@ -1,3 +1,5 @@
+import type { IconRead } from './icon-declaration.ts'
+
 /** Closed set of catalog categories. Adding one is a schema change. */
 export const CATEGORIES = ['tool', 'provider', 'ui', 'workflow', 'integration', 'theme', 'other'] as const
 export type Category = typeof CATEGORIES[number]
@@ -125,6 +127,31 @@ export interface Candidate {
    * Absent when the manifest declares none.
    */
   dshPeers?: Record<string, string>
+  /**
+   * What the latest version's manifest says about its icon, by dsh 0.2.1's
+   * rule (`readIconDeclaration`, design 2026-10-23-shop-plugin-icons §4):
+   * `declared` is an icon dsh would try to read, with its file and media type,
+   * and `refused` one dsh would not accept, with the sentence its author is
+   * told. Absent when the manifest declares nothing, which is the common case:
+   * the `none` read is never stored.
+   *
+   * Only what the manifest alone can say. That the file is in the tarball, is
+   * small enough and holds what its extension promises is for the icon step's
+   * fetch, and `files` is not consulted: npm packed this tarball by it, so the
+   * tarball is the truth. (A git install is packed at install time, which is
+   * why {@link RepoCandidate.icon} applies `files` and this does not.)
+   */
+  icon?: IconRead
+  /**
+   * The latest version's `dist.tarball`, verbatim: where the icon step
+   * downloads the listed artifact from (design 2026-10-23-shop-plugin-icons
+   * §5.2). Present only beside a `declared` icon, and only when npm gave a
+   * string: it is on every version, and the catalog needs it for the few that
+   * declare an icon. Hostile text like the rest of the packument: the design
+   * has the icon step request it from the registry host alone (§5.2), and
+   * nothing here has checked it.
+   */
+  distTarball?: string
 }
 
 /**
@@ -263,11 +290,35 @@ export interface RepoCandidate {
    */
   manifestVersion?: string
   /**
+   * What the manifest says about its icon: the same record, read by the same
+   * `readIconDeclaration`, as {@link Candidate.icon} (design
+   * 2026-10-23-shop-plugin-icons §4). `declared` or `refused`, and absent when
+   * the manifest declares none; the `none` read is never stored.
+   *
+   * Written by the one declarations writer and stamped by
+   * {@link RepoCandidate.declarationsRule}, so absent beside a rule-3 stamp
+   * means "declares none", and beside an older stamp, or none, not yet read:
+   * every record written before rule 3 gains it on its one re-read. The
+   * refusal's sentence is stored with it, so a change to a sentence reaches a
+   * carried record only through a rule bump.
+   *
+   * `path` is relative to the directory the manifest sits in. A
+   * subpackage's is relative to its own `subdir`, which is NOT prefixed onto
+   * it: the icon step joins the two where it builds the key.
+   *
+   * A git-installed candidate's `files` list is applied here, because pnpm
+   * installs a git dependency as `npm pack` would pack it: an icon `files`
+   * leaves out is refused (`iconDetail.notInFiles`), not declared. A
+   * release-rescued root's is its tarball's own declaration, with no `files`
+   * applied: the archive has applied its own, and what it holds is the truth.
+   */
+  icon?: IconRead
+  /**
    * The declaration rule that wrote {@link RepoCandidate.peers},
-   * {@link RepoCandidate.compatibility}, {@link RepoCandidate.dshPeers} and
-   * {@link RepoCandidate.manifestVersion}: `DECLARATIONS_RULE` in
-   * `repo-state.ts` at the time. A positive integer; `parseRepoState` refuses
-   * any other shape.
+   * {@link RepoCandidate.compatibility}, {@link RepoCandidate.dshPeers},
+   * {@link RepoCandidate.manifestVersion} and {@link RepoCandidate.icon}:
+   * `DECLARATIONS_RULE` in `repo-state.ts` at the time. A positive integer;
+   * `parseRepoState` refuses any other shape.
    *
    * The re-read marker for every field just named. A listable candidate whose
    * stamp is not the current rule (absent included, which is every record

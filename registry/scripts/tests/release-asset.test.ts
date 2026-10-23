@@ -116,8 +116,15 @@ describe('verifyReleaseAsset', () => {
     // `version` rides the declarations since DECLARATIONS_RULE 2 (design
     // 2026-09-28-bundle-components-and-github-peers, section 6.1): dsh keys
     // the exemption that clears a refused install by the installed manifest's
-    // version, and `packedTarball` packs '1.0.0'.
-    if (verdict.ok) expect(verdict.declarations).toStrictEqual({ peerDependencies, peerDependenciesMeta, dsh, version: '1.0.0' })
+    // version, and `packedTarball` packs '1.0.0'. `icon` and `exports` ride
+    // them since DECLARATIONS_RULE 3 (design 2026-10-23-shop-plugin-icons §4):
+    // fixed keys like the rest, `undefined` here because this manifest
+    // declares neither, and `toStrictEqual` counts an undefined key.
+    if (verdict.ok) {
+      expect(verdict.declarations).toStrictEqual({
+        peerDependencies, peerDependenciesMeta, dsh, version: '1.0.0', icon: undefined, exports: undefined,
+      })
+    }
   })
 
   it('hands back nothing for a declaration the packed manifest does not make', () => {
@@ -152,7 +159,7 @@ describe('verifyReleaseAsset', () => {
       ok: true,
       declarations: {
         peerDependencies: { a: '*' }, peerDependenciesMeta: undefined, dsh: { bundle: { patch: './missing.yml' } },
-        version: undefined,
+        version: undefined, icon: undefined, exports: undefined,
       },
     })
   })
@@ -169,6 +176,28 @@ describe('verifyReleaseAsset', () => {
     expect(read.ok && read.declarations.version).toBe('3.1.0')
     const odd = readPackedDeclarations(packedTarball('dsh-foo', { version: 3 }), 'dsh-foo')
     expect(odd.ok && odd.declarations.version).toBe(3)
+  })
+
+  it('hands back the packed manifest\'s icon and exports, raw, on both readers, and never its files', () => {
+    // A rescued entry installs THIS archive, and its icon is read from what the
+    // archive declares (design 2026-10-23-shop-plugin-icons §4 and §5.2: the
+    // `release:<sha256>:<path>` key). `exports` rides with it because dsh
+    // reaches both the manifest and the `./icon` export through it. `files` is
+    // the one field that does not: a packed archive has already applied its
+    // own `files`, so what the archive holds is the truth, and a `files` list
+    // handed over beside it would make the shop refuse, as "not in files" and
+    // with a sentence about git installs, an icon the tarball plainly ships.
+    const icon = './assets/logo.svg'
+    const exports = { '.': './index.js', './package.json': './package.json' }
+    const bytes = packedTarball('dsh-foo', { icon, exports, files: ['dist'] }, { 'package/assets/logo.svg': '<svg/>' })
+    const verified = verifyReleaseAsset(bytes, 'dsh-foo')
+    const read = readPackedDeclarations(bytes, 'dsh-foo')
+    for (const declarations of [verified.ok ? verified.declarations : undefined, read.ok ? read.declarations : undefined]) {
+      expect(declarations).toBeDefined()
+      expect(declarations?.icon).toEqual(icon)
+      expect(declarations?.exports).toEqual(exports)
+      expect(declarations).not.toHaveProperty('files')
+    }
   })
 
   it('still refuses to read declarations out of bytes that are not this package', () => {

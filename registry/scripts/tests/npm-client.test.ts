@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, type PublisherState } from '../src/publisher-state.ts'
 import { accountForDepartures, type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPATIBILITY_RANGE_MAX_LENGTH, DSH_PEER_RANGE_MAX_LENGTH, dshPeersOf, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, PROFILE_NAME_MAX_LENGTH, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, readDeparture, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
+import { iconDetail, shownPath } from '../src/icon-declaration.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
 import { describeFeedCoverage, FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, NO_FEED, type FeedCoverage, type FeedInput, type FeedRead } from '../src/feed-state.ts'
@@ -675,6 +676,80 @@ describe('toCandidate', () => {
     for (const entry of [null, 'not a manifest', 42, ['an', 'array']]) {
       expect(toCandidate({ ...packument, versions: { '1.2.0': entry } })).toBe(null)
     }
+  })
+})
+
+describe('toCandidate and the icon declaration (design 2026-10-23-shop-plugin-icons §4)', () => {
+  const tarball = 'https://registry.npmjs.org/dsh-iconic/-/dsh-iconic-1.0.0.tgz'
+  /** A packument whose latest version carries `manifest` beside the dist npm always writes. */
+  const withManifest = (manifest: Record<string, unknown>, dist: Record<string, unknown> = { integrity: 'sha512-iconic', tarball }) => ({
+    name: 'dsh-iconic',
+    'dist-tags': { latest: '1.0.0' },
+    time: { '1.0.0': '2026-10-23T00:00:00.000Z' },
+    versions: { '1.0.0': { dist, license: 'MIT', ...manifest } },
+  })
+
+  it('records the declaration of the latest version, and the tarball its bytes are read from', () => {
+    const candidate = toCandidate(withManifest({ icon: './icon.svg' }))
+    expect(candidate?.icon).toEqual({ kind: 'declared', declaration: { source: 'icon', path: 'icon.svg', mediaType: 'image/svg+xml' } })
+    // Kept beside a declaration and nowhere else: the icon step downloads the
+    // listed version's own tarball, and npm gives its URL only here.
+    expect(candidate?.distTarball).toBe(tarball)
+  })
+
+  it('records no icon and no tarball, and no key for either, for a version that declares none', () => {
+    // `dist.tarball` is on every version, so a tarball kept for all of them
+    // would put a URL on every candidate for the sake of the few that declare
+    // an icon.
+    const candidate = toCandidate(withManifest({}))
+    expect(candidate).not.toBeNull()
+    expect(candidate !== null && 'icon' in candidate).toBe(false)
+    expect(candidate !== null && 'distTarball' in candidate).toBe(false)
+  })
+
+  it('reads the ./icon export when the manifest has no icon field, as dsh 0.2.1 does', () => {
+    const candidate = toCandidate(withManifest({ exports: { './icon': './assets/logo.png' } }))
+    expect(candidate?.icon).toEqual({ kind: 'declared', declaration: { source: 'export', path: 'assets/logo.png', mediaType: 'image/png' } })
+    expect(candidate?.distTarball).toBe(tarball)
+  })
+
+  it('reads the icon field through the manifest\'s exports, which decide whether dsh sees the field at all', () => {
+    // dsh finds package.json through `exports`: a map that does not expose
+    // `./package.json` leaves the field unread, and the author is told why.
+    const hidden = toCandidate(withManifest({ icon: './icon.svg', exports: { '.': './index.js' } }))
+    expect(hidden?.icon).toEqual({ kind: 'refused', detail: iconDetail.fieldUnreachable() })
+    const exposed = toCandidate(withManifest({ icon: './icon.svg', exports: { '.': './index.js', './package.json': './package.json' } }))
+    expect(exposed?.icon).toMatchObject({ kind: 'declared', declaration: { source: 'icon', path: 'icon.svg' } })
+  })
+
+  it('records a refusal with its sentence and no tarball, since there is nothing to fetch', () => {
+    const url = 'https://example.com/icon.svg'
+    for (const [icon, detail] of [
+      [url, iconDetail.notRelative(shownPath(url))],
+      [7, iconDetail.notString()],
+    ] as const) {
+      const candidate = toCandidate(withManifest({ icon }))
+      expect(candidate?.icon, JSON.stringify(icon)).toEqual({ kind: 'refused', detail })
+      expect(candidate !== null && 'distTarball' in candidate, JSON.stringify(icon)).toBe(false)
+    }
+  })
+
+  it('keeps a declared icon and leaves the tarball out when the dist carries no tarball string', () => {
+    // Hostile input, and not worth a listing: the icon step needs both, and
+    // plans nothing for a candidate that lacks either.
+    for (const dist of [{ integrity: 'sha512-iconic' }, { integrity: 'sha512-iconic', tarball: 7 }, { integrity: 'sha512-iconic', tarball: null }]) {
+      const candidate = toCandidate(withManifest({ icon: './icon.svg' }, dist))
+      expect(candidate?.icon, JSON.stringify(dist)).toMatchObject({ kind: 'declared' })
+      expect(candidate !== null && 'distTarball' in candidate, JSON.stringify(dist)).toBe(false)
+    }
+  })
+
+  it('does not consult `files`: npm packed this tarball by it, so the tarball is the truth', () => {
+    // The GitHub channel checks `files` because a git install packs the tree
+    // by it. Here the bytes the build reads are the published tarball, which
+    // either holds the file or does not, and the icon step says which.
+    const candidate = toCandidate(withManifest({ icon: './icon.svg', files: ['dist'] }))
+    expect(candidate?.icon).toMatchObject({ kind: 'declared', declaration: { path: 'icon.svg' } })
   })
 })
 

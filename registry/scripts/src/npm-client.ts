@@ -1,4 +1,5 @@
 import { readCappedBody } from './http-body.ts'
+import { readIconDeclaration } from './icon-declaration.ts'
 import { compareStrings } from './identity.ts'
 import { escapeCell, lockNpmNames } from './emit.ts'
 import { classifyDeparture, departedNames, departureRejection, summarizeDepartures, type DepartureAnswer, type DepartureOutcome, type DepartureSummary } from './departures.ts'
@@ -2196,7 +2197,7 @@ export function toCandidate(packument: unknown): Candidate | null {
     maintainers?: unknown
     time?: Record<string, unknown>
     versions?: Record<string, {
-      dist?: { integrity?: unknown; unpackedSize?: unknown }
+      dist?: { integrity?: unknown; unpackedSize?: unknown; tarball?: unknown }
       license?: unknown
       licenses?: unknown
       repository?: unknown
@@ -2206,6 +2207,8 @@ export function toCandidate(packument: unknown): Candidate | null {
       _npmUser?: { name?: unknown }
       peerDependencies?: unknown
       peerDependenciesMeta?: unknown
+      icon?: unknown
+      exports?: unknown
       dsh?: { bundle?: unknown; catalog?: unknown }
     }>
   }
@@ -2274,6 +2277,19 @@ export function toCandidate(packument: unknown): Candidate | null {
     ...(() => {
       const dshPeers = dshPeersOf(manifest)
       return dshPeers === undefined ? {} : { dshPeers }
+    })(),
+    // And most declare no icon, which is no key: the `none` read is never
+    // stored. The whole manifest goes to the reader, since dsh finds `icon`
+    // and the `./icon` export through `exports`. `files` is not consulted: npm
+    // packed this tarball by it, so the tarball is the truth and the fetch
+    // finds the file or does not. The tarball URL rides only beside a declared
+    // icon, because npm writes one for every version and the icon step reads
+    // it for nothing else (design 2026-10-23-shop-plugin-icons §4 and §5.2).
+    ...(() => {
+      const icon = readIconDeclaration(manifest)
+      if (icon.kind === 'none') return {}
+      const tarball = manifest.dist?.tarball
+      return icon.kind === 'declared' && typeof tarball === 'string' ? { icon, distTarball: tarball } : { icon }
     })(),
   }
 }
