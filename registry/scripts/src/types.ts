@@ -44,6 +44,18 @@ export interface Compatibility {
   profiles?: string[]
 }
 
+/**
+ * An icon read as a candidate records it: `declared` or `refused`, and never
+ * `none`. `readIconDeclaration` answers `none` for a manifest that declares
+ * nothing, and no record keeps that answer: the key is absent, which beside
+ * the current declarations stamp means "declares none". The narrower type
+ * makes that a fact the compiler holds, so whatever reads a candidate's icon
+ * never meets a case no writer produces, and the one place that revives a
+ * stored record, `parseRepoState`, refuses the shape that would put it there
+ * (`isIconRecord`, a guard for exactly this type).
+ */
+export type StoredIconRead = Exclude<IconRead, { kind: 'none' }>
+
 /** One npm package as fetched, before any gating decision. */
 export interface Candidate {
   name: string
@@ -133,7 +145,8 @@ export interface Candidate {
    * `declared` is an icon dsh would try to read, with its file and media type,
    * and `refused` one dsh would not accept, with the sentence its author is
    * told. Absent when the manifest declares nothing, which is the common case:
-   * the `none` read is never stored.
+   * the `none` read is never stored, and {@link StoredIconRead} has no member
+   * for it.
    *
    * Only what the manifest alone can say. That the file is in the tarball, is
    * small enough and holds what its extension promises is for the icon step's
@@ -141,7 +154,7 @@ export interface Candidate {
    * tarball is the truth. (A git install is packed at install time, which is
    * why {@link RepoCandidate.icon} applies `files` and this does not.)
    */
-  icon?: IconRead
+  icon?: StoredIconRead
   /**
    * The latest version's `dist.tarball`, verbatim: where the icon step
    * downloads the listed artifact from (design 2026-10-23-shop-plugin-icons
@@ -293,7 +306,8 @@ export interface RepoCandidate {
    * What the manifest says about its icon: the same record, read by the same
    * `readIconDeclaration`, as {@link Candidate.icon} (design
    * 2026-10-23-shop-plugin-icons §4). `declared` or `refused`, and absent when
-   * the manifest declares none; the `none` read is never stored.
+   * the manifest declares none; the `none` read is never stored, and
+   * {@link StoredIconRead} has no member for it.
    *
    * Written by the one declarations writer and stamped by
    * {@link RepoCandidate.declarationsRule}, so absent beside a rule-3 stamp
@@ -312,7 +326,7 @@ export interface RepoCandidate {
    * release-rescued root's is its tarball's own declaration, with no `files`
    * applied: the archive has applied its own, and what it holds is the truth.
    */
-  icon?: IconRead
+  icon?: StoredIconRead
   /**
    * The declaration rule that wrote {@link RepoCandidate.peers},
    * {@link RepoCandidate.compatibility}, {@link RepoCandidate.dshPeers},

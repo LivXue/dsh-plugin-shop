@@ -2321,8 +2321,8 @@ export interface RepoHarvestResult {
    */
   rereadAttempted: number
   /** Candidates whose re-read succeeded: their declaration fields (`peers`,
-   * `compatibility`, `dshPeers`, `manifestVersion`) and the stamp written,
-   * and nothing else about them changed. */
+   * `compatibility`, `dshPeers`, `manifestVersion` and `icon`) and the stamp
+   * written, and nothing else about them changed. */
   rereadUpdated: number
   /**
    * Candidates whose re-read failed, of every kind: a request that threw; on

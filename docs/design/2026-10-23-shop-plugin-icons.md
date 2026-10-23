@@ -145,8 +145,13 @@ request.
 
 - **npm.** `toCandidate` (`registry/scripts/src/npm-client.ts`) builds the
   candidate from `versions[dist-tags.latest]` of the packument it already
-  read, and keeps no icon, `files` or `exports` field today. It gains the
-  manifest's `icon` and `exports`.
+  read, and keeps no icon, `files` or `exports` field today. It hands the
+  whole manifest to the reader below and keeps the answer, not the fields:
+  `Candidate.icon` holds the declaration or the refusal, and no key at all
+  when the manifest declares none. Beside a declared icon it also keeps the
+  version's `dist.tarball` as `Candidate.distTarball`, which §5.2 downloads
+  from. `exports` is read and not kept, and `files` is not read: npm packed
+  that tarball by it, so the tarball is the truth.
 - **GitHub.** `projectCandidate` (`registry/scripts/src/github-client.ts`)
   reads package.json at the default branch, before the commit is pinned
   (`fetchHeadCommit` runs after it), and `writeDeclarations` stamps what it
