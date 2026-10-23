@@ -20,8 +20,9 @@
  * missing, refused or unanswered makes nothing here throw. An entry no candidate
  * matches, a candidate with nowhere to fetch from, a fetch that did not answer
  * and a budget that turned one away are each an icon that is not there yet, and
- * the next build asks again. A transport failure is never a refusal (§5.3): only
- * what a build read and judged is recorded.
+ * the next build asks again, unless the bytes a recorded key names are already
+ * in hand from another key (§5.3). A transport failure is never a refusal (§5.3):
+ * only what a build read and judged is recorded.
  *
  * Pure: no clock, no network, no filesystem, no environment, and no locale.
  * Every ordering is by code unit (`compareStrings`), so that the plan, the file
@@ -106,8 +107,9 @@ export interface IconWork {
  * What the build does about icons today. `reuse` lists the keys whose recorded
  * icon yesterday's file still holds, each with the sha256 it is recorded under.
  * `fetch` lists the keys to read, in code-unit order of their keys and no more
- * than the budget. `deferred` lists the keys the budget turned away, which the
- * next build asks for again.
+ * than the budget. `deferred` lists the keys the budget turned away, which a
+ * later build asks for again, unless another key's fetch brought in the bytes
+ * their record names in the meantime ({@link foldIconResults}).
  */
 export interface IconPlan {
   reuse: { key: IconKey; sha256: string }[]
@@ -226,9 +228,9 @@ function githubSubject(base: SubjectBase, entry: Entry, candidate: RepoCandidate
       target: { kind: 'release', repo: candidate.repo, url: tarball.url, sha256: tarball.sha256, path },
     }
   }
-  // A git install is keyed by the commit its declaration was read at. That is
-  // the entry's version too, but the candidate is where it is a commit and
-  // nothing else, so the key never rests on a field that is a tag elsewhere.
+  // A git install is keyed by the commit it is pinned to. The candidate was
+  // paired by that commit, and it is read from the candidate because there it is
+  // a commit and nothing else: the entry's `version` is a tag on a rescued entry.
   const inRepository = candidate.subdir === undefined ? path : `${candidate.subdir}/${path}`
   return {
     ...base,
@@ -238,17 +240,40 @@ function githubSubject(base: SubjectBase, entry: Entry, candidate: RepoCandidate
   }
 }
 
+/** The candidates of each install identity, in the order they came. */
+function groupByIdentity<T>(candidates: readonly T[], identityOf: (candidate: T) => string): Map<string, T[]> {
+  const groups = new Map<string, T[]>()
+  for (const candidate of candidates) {
+    const identity = identityOf(candidate)
+    const group = groups.get(identity)
+    if (group === undefined) groups.set(identity, [candidate])
+    else group.push(candidate)
+  }
+  return groups
+}
+
+/** Whether `candidate` is the artifact a repository entry lists: the commit a git install is pinned to, or the release asset a rescue installs. */
+function isListedRepoCandidate(entry: Entry, candidate: RepoCandidate): boolean {
+  const { tarball } = entry
+  return tarball === undefined ? candidate.commit === entry.version : candidate.release?.sha256 === tarball.sha256
+}
+
 /**
  * One subject for each entry, in the order of `entries`: the entry, the icon its
  * candidate declares, and what it takes to read it.
  *
- * An entry is paired with the candidate of its own install identity, which is
- * what a bundle name is not: two forks can claim one, and an npm package can
- * share its name with a repository's bundle. A repeated identity among the
- * candidates keeps the first. The entries are selected from these very
- * candidates in the same build, so every entry has its own; one that somehow
- * has none reads no icon, because a missing icon is the safe absence and an
- * icon must never stop the daily catalog (design decision 6).
+ * An entry is paired with the candidate of its own install identity and of the
+ * artifact it lists: an npm package's version, the commit a git install is
+ * pinned to, the asset a rescue installs. A bundle name is no identity, since
+ * two forks can claim one and an npm package can share its name with a
+ * repository's bundle, and an identity alone is not enough either. The gate can
+ * turn a candidate away and list another of the same identity at another
+ * version, commit or asset, and an icon read from that one is another
+ * artifact's icon under this entry's key. Of two candidates of one artifact the
+ * first is read. The entries are selected from these very candidates in the same
+ * build, so every entry has its own; one that somehow has none reads no icon,
+ * because a missing icon is the safe absence and an icon must never stop the
+ * daily catalog (design decision 6).
  * @param entries - the entries the build will publish.
  * @param candidates - the npm candidates they were selected from.
  * @param repoCandidates - the repository candidates they were selected from.
@@ -258,16 +283,9 @@ export function iconSubjects(
   candidates: readonly Candidate[],
   repoCandidates: readonly RepoCandidate[],
 ): IconSubject[] {
-  const npmByIdentity = new Map<string, Candidate>()
-  for (const candidate of candidates) {
-    const identity = installIdentity({ source: 'npm', name: candidate.name })
-    if (!npmByIdentity.has(identity)) npmByIdentity.set(identity, candidate)
-  }
-  const repoByIdentity = new Map<string, RepoCandidate>()
-  for (const candidate of repoCandidates) {
-    const identity = installIdentity({ source: 'github', name: candidate.name, repo: candidate.repo, subdir: candidate.subdir })
-    if (!repoByIdentity.has(identity)) repoByIdentity.set(identity, candidate)
-  }
+  const npmByIdentity = groupByIdentity(candidates, (candidate) => installIdentity({ source: 'npm', name: candidate.name }))
+  const repoByIdentity = groupByIdentity(repoCandidates, (candidate) =>
+    installIdentity({ source: 'github', name: candidate.name, repo: candidate.repo, subdir: candidate.subdir }))
   return entries.map((entry) => {
     const identity = installIdentity(entry)
     const base: SubjectBase = {
@@ -276,8 +294,8 @@ export function iconSubjects(
       withheldKey: firstSeenKey(entry),
     }
     return entry.source === 'npm'
-      ? npmSubject(base, npmByIdentity.get(identity))
-      : githubSubject(base, entry, repoByIdentity.get(identity))
+      ? npmSubject(base, npmByIdentity.get(identity)?.find((candidate) => candidate.version === entry.version))
+      : githubSubject(base, entry, repoByIdentity.get(identity)?.find((candidate) => isListedRepoCandidate(entry, candidate)))
   })
 }
 
@@ -370,12 +388,20 @@ function settle(result: Exclude<IconFetchResult, { kind: 'not-yet-read' }>, decl
   }
 }
 
-/** What a key stands at this build, from its row and the bytes to be had: an icon in hand, a sentence to report, or nothing yet. */
+/**
+ * Where one entry's icon stands this build, decided once. The set of icons the
+ * file is assembled from and the bucket each entry is counted in are both read
+ * off it, so an entry cannot be counted published without having been handed to
+ * the file. `icon` is an icon in hand, and still waits on the file budget, which
+ * may turn it away; `none` is an entry that declares no icon, counted nowhere.
+ */
 type Standing =
-  | { kind: 'icon'; sha256: string; dataUrl: string }
+  | { kind: 'none' }
+  | { kind: 'withheld-by-hand'; reason: string }
   | { kind: 'refused'; detail: string }
   | { kind: 'not-read'; detail: string }
   | { kind: 'not-yet-read' }
+  | { kind: 'icon'; key: IconKey; sha256: string; dataUrl: string }
 
 /** Rows in the order the report prints them: by name, then identity, then detail. */
 function compareRows(a: IconReportRow, b: IconReportRow): number {
@@ -395,11 +421,14 @@ function compareRows(a: IconReportRow, b: IconReportRow): number {
  * reuses and defers follows from the record and the file, which are in hand here
  * too.
  *
- * A key's bytes are at hand when this build fetched them or yesterday's file
- * holds the sha256 its row names. A key recorded published whose bytes are
- * neither has no icon this build, and counts as not yet read, with no row, no
- * identity entry and its record kept: the next build fetches it against that
- * sha256.
+ * A key recorded published has its icon when the bytes of the sha256 its row
+ * names are in hand: in yesterday's file, or fetched this build under any key. A
+ * sha256 names its bytes whichever key they were read under, and a key names one
+ * immutable artifact, so they are that key's own icon, and a key whose fetch was
+ * deferred or did not answer publishes with them (design §5.3). A key whose
+ * bytes are nowhere has no icon this build, and counts as not yet read, with no
+ * row, no identity entry and its record kept: the next build fetches it against
+ * that sha256.
  *
  * The file is assembled under `budget` from the icons of the entries that are
  * not withheld, handing `assembleIcons` one record for each key and one data URL
@@ -409,13 +438,14 @@ function compareRows(a: IconReportRow, b: IconReportRow): number {
  * not yesterday's file also held it, and bytes just fetched win over the data URL
  * the published file holds for the same sha256.
  *
- * Each entry that declares an icon is counted in exactly one bucket
- * ({@link IconCounts}), and each bucket that reports has one row for it. A
- * withheld entry is counted as withheld, whatever else is true of its icon,
- * because that is what stays true however its author fixes it. The record that
- * goes forward drops the keys no declared entry names, which prunes the row of a
- * package that left and keeps the row of an icon that is withheld, deferred or
- * unreachable today.
+ * Each entry's standing is decided once, and what is handed to the file and the
+ * bucket the entry is counted in are both read off it. Each entry that declares
+ * an icon is counted in exactly one bucket ({@link IconCounts}), and each bucket
+ * that reports has one row for it. A withheld entry is counted as withheld,
+ * whatever else is true of its icon, because that is what stays true however its
+ * author fixes it. The record that goes forward drops the keys no declared entry
+ * names, which prunes the row of a package that left and keeps the row of an
+ * icon that is withheld, deferred or unreachable today.
  * @param subjects - from {@link iconSubjects}.
  * @param plan - from {@link planIconWork} on the same subjects, record, file and withheld rows.
  * @param results - what each fetched key answered.
@@ -446,19 +476,26 @@ export function foldIconResults(
   }
   const dataUrlOf = (sha256: string): string | undefined =>
     freshDataUrls.get(sha256) ?? (published !== null && Object.hasOwn(published.icons, sha256) ? published.icons[sha256] : undefined)
-  const standingOf = (outcome: IconOutcome | undefined): Standing => {
+  const standingOf = (subject: IconSubject): Standing => {
+    const { read } = subject
+    if (read.kind === 'none') return { kind: 'none' }
+    const hold = withheld.get(subject.withheldKey)
+    if (hold !== undefined) return { kind: 'withheld-by-hand', reason: hold.reason }
+    if (read.kind === 'refused') return { kind: 'refused', detail: read.detail }
+    // A declared icon with nothing to fetch it from is no icon this build.
+    if (!isFetchable(subject)) return { kind: 'not-yet-read' }
+    const outcome = record.get(subject.key)
     if (outcome === undefined) return { kind: 'not-yet-read' }
     if (outcome.outcome !== 'published') return { kind: outcome.outcome, detail: outcome.detail }
     const dataUrl = dataUrlOf(outcome.sha256)
-    return dataUrl === undefined ? { kind: 'not-yet-read' } : { kind: 'icon', sha256: outcome.sha256, dataUrl }
+    return dataUrl === undefined ? { kind: 'not-yet-read' } : { kind: 'icon', key: subject.key, sha256: outcome.sha256, dataUrl }
   }
+  const standings = subjects.map((subject) => ({ subject, standing: standingOf(subject) }))
 
   // One record for each key, whoever names it.
   const icons = new Map<IconKey, PublishedIcon>()
-  for (const subject of subjects) {
-    if (!isFetchable(subject) || withheld.has(subject.withheldKey)) continue
-    const standing = standingOf(record.get(subject.key))
-    if (standing.kind === 'icon') icons.set(subject.key, { key: subject.key, sha256: standing.sha256, dataUrl: standing.dataUrl })
+  for (const { standing } of standings) {
+    if (standing.kind === 'icon') icons.set(standing.key, { key: standing.key, sha256: standing.sha256, dataUrl: standing.dataUrl })
   }
   const assembled = assembleIcons([...icons.values()], budget)
   const turnedAway = new Set(assembled.withheldForSize)
@@ -469,36 +506,21 @@ export function foldIconResults(
   const report = (subject: IconSubject, kind: IconReportRow['kind'], detail: string): void => {
     rows.push({ name: subject.name, identity: subject.identity, kind, detail })
   }
-  for (const subject of subjects) {
-    const { read } = subject
-    if (read.kind === 'none') continue
+  for (const { subject, standing } of standings) {
+    if (standing.kind === 'none') continue
     counts.declared += 1
-    const hold = withheld.get(subject.withheldKey)
-    if (hold !== undefined) {
+    if (standing.kind === 'withheld-by-hand') {
       counts.withheldByHand += 1
-      report(subject, 'withheld', iconDetail.withheldByHand(hold.reason))
-      continue
-    }
-    if (read.kind === 'refused') {
-      counts.refused += 1
-      report(subject, 'refused', read.detail)
-      continue
-    }
-    // A declared icon with nothing to fetch it from is no icon this build.
-    if (!isFetchable(subject)) {
-      counts.notYetRead += 1
-      continue
-    }
-    const standing = standingOf(record.get(subject.key))
-    if (standing.kind === 'not-yet-read') {
-      counts.notYetRead += 1
+      report(subject, 'withheld', iconDetail.withheldByHand(standing.reason))
     } else if (standing.kind === 'refused') {
       counts.refused += 1
       report(subject, 'refused', standing.detail)
     } else if (standing.kind === 'not-read') {
       counts.notRead += 1
       report(subject, 'not-read', standing.detail)
-    } else if (turnedAway.has(subject.key)) {
+    } else if (standing.kind === 'not-yet-read') {
+      counts.notYetRead += 1
+    } else if (turnedAway.has(standing.key)) {
       counts.withheldForSize += 1
       report(subject, 'withheld', iconDetail.withheldForSize())
     } else {
