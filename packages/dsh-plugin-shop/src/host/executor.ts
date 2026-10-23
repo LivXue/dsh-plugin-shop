@@ -156,25 +156,25 @@ export function activationFailureDetail(args: {
 }): string {
   const { expectedName, profile, before, after } = args
   if (Object.hasOwn(after, expectedName)) {
-    return `${expectedName} is a dependency of the profile but is not in dsh.profile.bundles, so dsh`
-      + ' did not activate it as a profile layer and the shop has nothing to mount.'
+    return `${expectedName} is installed as a profile dependency, but is not listed in dsh.profile.bundles.`
+      + ' dsh has not enabled it as a plugin, so the shop cannot load it.'
   }
   // Both remaining branches are claims about what CHANGED, and neither can be
   // made without the prior state. Reported before the diff so an unreadable
   // manifest never borrows the wording of a readable one.
   if (before === null) {
-    return `${expectedName} is in neither dsh.profile.bundles nor the profile's dependencies, and the`
-      + ' profile manifest could not be read before the install, so what the install changed is'
-      + ' unknown — compare the profile\'s package.json against what you expected before retrying.'
+    return `${expectedName} is missing from both dsh.profile.bundles and the profile dependencies.`
+      + ' The shop could not read the profile before installation, so it cannot tell what changed.'
+      + ' Check the profile\'s package.json before trying again.'
   }
   const added = Object.keys(after).filter(name => !Object.hasOwn(before, name)).sort()
   if (added.length > 0) {
     const names = added.join(', ')
-    return `${expectedName} is not in the profile's dependencies — the install added ${names} instead.`
-      + ` Remove it with: dsh plugin --profile ${profile} remove ${added[0]}`
+    return `${expectedName} is not in the profile dependencies. The install added ${names} instead.`
+      + ` To remove ${added[0]}, run: dsh plugin --profile ${profile} remove ${added[0]}`
   }
-  return `${expectedName} is in neither dsh.profile.bundles nor the profile's dependencies, and the`
-    + ' install added nothing — if the entry is new the catalog may be behind; refresh it and retry.'
+  return `${expectedName} is missing from both dsh.profile.bundles and the profile dependencies. Nothing was added.`
+    + ' If this plugin was recently published, the catalog may be out of date. Refresh it and try again.'
 }
 
 /** The §7.2 step-6 confirm: after a zero exit, re-read the profile manifest and
@@ -213,8 +213,8 @@ function confirmBundleActivation(
     if (listed && Object.hasOwn(after, expectedName)) return null
     return activationFailureDetail({ expectedName, profile, before, after })
   } catch {
-    return `installed but the profile manifest could not be read (${join(profileDir, 'package.json')})`
-      + ' — the install\'s result is unknown; check that file.'
+    return `Could not confirm the installation because the profile manifest could not be read (${join(profileDir, 'package.json')}).`
+      + ' Check that file before trying again.'
   }
 }
 
@@ -226,9 +226,9 @@ function confirmBundleRemoval(profile: string, home: string | undefined, expecte
   try {
     const manifest = readProfileManifest('dsh-plugin-shop', profileDir)
     if (!manifest.dsh?.profile?.bundles?.includes(expectedName)) return null
-    return 'removed but dsh.profile.bundles did not change — re-run the uninstall'
+    return 'The uninstall command finished, but the plugin is still listed in dsh.profile.bundles. Try uninstalling it again.'
   } catch {
-    return `removed but the profile manifest could not be read (${join(profileDir, 'package.json')}) — re-run the uninstall`
+    return `Could not confirm the uninstall because the profile manifest could not be read (${join(profileDir, 'package.json')}). Check that file and try again.`
   }
 }
 
@@ -346,9 +346,8 @@ const NATIVE_ALLOCATION_ABORT = /^memory allocation of \d+ bytes failed$/
 function nativeAllocationAbortDetail(usable: readonly string[]): string | null {
   const abort = usable.find(line => NATIVE_ALLOCATION_ABORT.test(line.trim()))
   if (abort === undefined) return null
-  return `pnpm crashed: its native binary ran out of memory (${abort.trim()}), which is not caused by this plugin.`
-    + ' pnpm 12 before 12.7.0 has a known bug that exhausts memory when many packages share a missing peer,'
-    + ' which every dsh profile has, because dsh keeps peers uninstalled (autoInstallPeers: false; pnpm/pnpm#15362).'
+  return `pnpm ran out of memory (${abort.trim()}).`
+    + ' pnpm 12 versions before 12.7.0 have a known memory bug with shared missing peer dependencies (pnpm/pnpm#15362).'
     + ' Upgrade pnpm to 12.7.0 or later, or use pnpm 11, then install again.'
     + ' If your pnpm is already 12.7.0 or later, report the line above to pnpm.'
 }
@@ -442,20 +441,19 @@ export function spawnFailureDetail(
   platform: NodeJS.Platform,
 ): string {
   if (platform === 'win32' && (code === 'ENOENT' || code === 'EINVAL')) {
-    return `the shop could not locate the dsh CLI to run (${dshBin}): on Windows npm installs it`
-      + ' as a .cmd shim, which cannot be spawned directly, so the shop runs the'
-      + ` ${DSH_PACKAGE} package's own entry through node instead — and that entry was not found.`
+    return `The shop could not find the dsh CLI entry file (${DSH_PACKAGE}, command: ${dshBin}).`
+      + ' On Windows, the shop needs this file because it cannot run the .cmd launcher directly.'
       + ' Check that `dsh --version` works in a terminal, then reinstall the CLI if it does not.'
   }
-  if (code === 'ENOENT') return 'dsh not found on PATH — install the dsh CLI to manage profile plugins'
-  return `dsh spawn failed: ${message}`
+  if (code === 'ENOENT') return 'dsh was not found on PATH. Install the dsh CLI or add it to PATH, then try again.'
+  return `Could not start dsh: ${message}`
 }
 
 /** The failure detail for a command stopped by the shop's deadline. */
 export function installTimeoutDetail(profile: string, timeoutMs: number): string {
   const seconds = Math.max(1, Math.round(timeoutMs / 1000))
   return `dsh-plugin-shop: the command did not finish within ${seconds}s and was stopped.`
-    + ` Run it yourself to see what it is waiting on: dsh plugin --profile ${profile} install`
+    + ` To check the error and retry, run: dsh plugin --profile ${profile} install`
 }
 
 /** Kill primitives injected by tests so both platform branches are testable. */

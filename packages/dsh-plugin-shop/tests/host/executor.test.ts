@@ -71,7 +71,7 @@ describe('startInstall', () => {
     const install = startInstall({ profile: 'web', spec: 'dsh-hello-plugin@1.2.0', dshBin: join(tmpdir(), 'no-such-dsh-bin') })
     const status = await install.finished
     expect(status.state).toBe('failed')
-    expect(status.detail).toBe('dsh not found on PATH — install the dsh CLI to manage profile plugins')
+    expect(status.detail).toBe('dsh was not found on PATH. Install the dsh CLI or add it to PATH, then try again.')
   })
 
   it('reports progress through onStatus as lines arrive', async () => {
@@ -258,8 +258,8 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
   // an install that did nothing. The name must also be an own dependency.
   // A fixture dsh that MUTATES the profile manifest the way the real one
   // does, so the before/after difference is produced by the run rather than
-  // pre-seeded. An exit-0 stub that writes nothing can only ever model "the
-  // install added nothing".
+  // pre-seeded. An exit-0 stub that writes nothing can only ever model
+  // "Nothing was added".
   function fixtureDshAdding(home: string, name: string, spec: string): string {
     const manifest = JSON.stringify(join(home, 'profiles', 'web', 'package.json'))
     return fakeDsh(mkdtempSync(join(TEMP_ROOT, 'dsh-fixture-add-')), [
@@ -287,8 +287,8 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
     const status = await install.finished
     expect(status.state).toBe('failed')
     expect(status.detail).toBe(
-      'dsh-hello-fixture is not in the profile\'s dependencies — the install added some-monorepo-root'
-      + ' instead. Remove it with: dsh plugin --profile web remove some-monorepo-root',
+      'dsh-hello-fixture is not in the profile dependencies. The install added some-monorepo-root'
+      + ' instead. To remove some-monorepo-root, run: dsh plugin --profile web remove some-monorepo-root',
     )
   })
 
@@ -331,8 +331,8 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
     const status = await install.finished
     expect(status.state).toBe('failed')
     expect(status.detail).toBe(
-      'dsh-hello-fixture is in neither dsh.profile.bundles nor the profile\'s dependencies, and the'
-      + ' install added nothing — if the entry is new the catalog may be behind; refresh it and retry.',
+      'dsh-hello-fixture is missing from both dsh.profile.bundles and the profile dependencies. Nothing was added.'
+      + ' If this plugin was recently published, the catalog may be out of date. Refresh it and try again.',
     )
     // The collected log lines are kept on the confirm failure path too.
     expect(status.log.join('\n')).toContain('installing...')
@@ -353,8 +353,8 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
     const status = await install.finished
     expect(status.state).toBe('failed')
     expect(status.detail).toBe(
-      'dsh-hello-fixture is a dependency of the profile but is not in dsh.profile.bundles, so dsh'
-      + ' did not activate it as a profile layer and the shop has nothing to mount.',
+      'dsh-hello-fixture is installed as a profile dependency, but is not listed in dsh.profile.bundles.'
+      + ' dsh has not enabled it as a plugin, so the shop cannot load it.',
     )
   })
 
@@ -374,8 +374,8 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
     // Was "— the catalog may be stale; refresh it". An unreadable manifest
     // says nothing about the catalog; what it costs is knowing the outcome.
     expect(status.detail).toBe(
-      `installed but the profile manifest could not be read (${join(home, 'profiles', 'web', 'package.json')})`
-      + ' — the install\'s result is unknown; check that file.',
+      `Could not confirm the installation because the profile manifest could not be read (${join(home, 'profiles', 'web', 'package.json')}).`
+      + ' Check that file before trying again.',
     )
   })
 
@@ -409,7 +409,7 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
       expectedName: '@acme/plugin',
     }).finished
     expect(status.state).toBe('failed')
-    expect(status.detail).toContain('could not be read before the install')
+    expect(status.detail).toContain('could not read the profile before installation')
     for (const name of Object.keys(after)) expect(status.detail).not.toContain(name)
     expect(status.detail).not.toContain('remove')
   })
@@ -437,7 +437,7 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
       expectedName: '@acme/plugin',
     }).finished
     expect(status.state).toBe('failed')
-    expect(status.detail).toContain('the install added some-monorepo-root instead')
+    expect(status.detail).toContain('The install added some-monorepo-root instead')
     expect(status.detail).toContain('dsh plugin --profile web remove some-monorepo-root')
   })
 
@@ -527,7 +527,7 @@ describe('activationFailureDetail', () => {
   it('states the dependency fact without claiming why dsh did not list it', () => {
     const detail = activationFailureDetail({ ...base, before: {}, after: { '@acme/plugin': '1.2.3' } })
     expect(detail).toContain('@acme/plugin')
-    expect(detail).toContain('is not in dsh.profile.bundles')
+    expect(detail).toContain('is not listed in dsh.profile.bundles')
     // No cause may be asserted here, and the catalog is not implicated when
     // the entry's own package is sitting in the profile's dependencies.
     expect(detail).not.toMatch(/catalog/i)
@@ -555,8 +555,8 @@ describe('activationFailureDetail', () => {
       before: { 'unrelated-plugin': '2.0.0' },
       after: { 'unrelated-plugin': '2.0.0' },
     })
-    expect(detail).toContain('neither dsh.profile.bundles nor')
-    expect(detail).toContain('the catalog may be behind')
+    expect(detail).toContain('missing from both dsh.profile.bundles and')
+    expect(detail).toContain('the catalog may be out of date')
   })
 
   // `constructor` is a legal npm name, and both records are parsed from the
@@ -571,17 +571,17 @@ describe('activationFailureDetail', () => {
         before: { 'unrelated-plugin': '2.0.0' },
         after: { 'unrelated-plugin': '2.0.0' },
       })
-      expect(detail).toContain('neither dsh.profile.bundles nor')
-      expect(detail).not.toContain('is a dependency of the profile')
+      expect(detail).toContain('missing from both dsh.profile.bundles and')
+      expect(detail).not.toContain('is installed as a profile dependency')
     }
     // Present for real, it still takes the dependency branch.
     expect(activationFailureDetail({
       ...base, expectedName: 'constructor', before: {}, after: { constructor: '1.0.0' },
-    })).toContain('is a dependency of the profile')
+    })).toContain('is installed as a profile dependency')
     // And an inherited key must never be counted as something the install ADDED.
     expect(activationFailureDetail({
       ...base, before: {}, after: {},
-    })).toContain('install added nothing')
+    })).toContain('Nothing was added')
   })
 
   // An ABSENT manifest is an empty prior state, and that is the truth for a
@@ -593,7 +593,7 @@ describe('activationFailureDetail', () => {
       before: {},
       after: { 'some-monorepo-root': 'github:acme/mono#0123456789abcdef' },
     })
-    expect(detail).toContain('the install added some-monorepo-root instead')
+    expect(detail).toContain('The install added some-monorepo-root instead')
     expect(detail).toContain('dsh plugin --profile web remove some-monorepo-root')
   })
 
@@ -605,13 +605,13 @@ describe('activationFailureDetail', () => {
   it('withholds both diff branches when the prior state could not be read', () => {
     const installed = { 'dsh-hello-plugin': '1.0.0', 'dsh-memory': '2.1.0', 'another-plugin': '0.4.0' }
     const detail = activationFailureDetail({ ...base, before: null, after: installed })
-    expect(detail).toContain('could not be read before the install')
-    expect(detail).toContain('unknown')
+    expect(detail).toContain('could not read the profile before installation')
+    expect(detail).toContain('cannot tell what changed')
     for (const name of Object.keys(installed)) expect(detail).not.toContain(name)
     expect(detail).not.toContain('remove')
     // Nor may it borrow the wording of a readable manifest at either end.
-    expect(detail).not.toContain('the install added')
-    expect(detail).not.toContain('install added nothing')
+    expect(detail).not.toContain('The install added')
+    expect(detail).not.toContain('Nothing was added')
     expect(detail).not.toMatch(/catalog/i)
   })
 
@@ -621,7 +621,7 @@ describe('activationFailureDetail', () => {
     const detail = activationFailureDetail({
       ...base, before: null, after: { '@acme/plugin': '1.2.3' },
     })
-    expect(detail).toContain('is not in dsh.profile.bundles')
+    expect(detail).toContain('is not listed in dsh.profile.bundles')
     expect(detail).not.toContain('could not be read')
   })
 })
@@ -756,7 +756,7 @@ describe('startUninstall post-remove confirm', () => {
     })
     const status = await uninstall.finished
     expect(status.state).toBe('failed')
-    expect(status.detail).toBe('removed but dsh.profile.bundles did not change — re-run the uninstall')
+    expect(status.detail).toBe('The uninstall command finished, but the plugin is still listed in dsh.profile.bundles. Try uninstalling it again.')
   })
 
   it('reports failed, naming the file, when the manifest cannot be read', async () => {
@@ -771,7 +771,7 @@ describe('startUninstall post-remove confirm', () => {
     const status = await uninstall.finished
     expect(status.state).toBe('failed')
     expect(status.detail).toBe(
-      `removed but the profile manifest could not be read (${join(home, 'profiles', 'web', 'package.json')}) — re-run the uninstall`,
+      `Could not confirm the uninstall because the profile manifest could not be read (${join(home, 'profiles', 'web', 'package.json')}). Check that file and try again.`,
     )
   })
 })
@@ -1061,8 +1061,9 @@ describe("installFailureDetail on pnpm 12's out-of-memory abort", () => {
     const detail = installFailureDetail('web', log)
     // What happened, in the words a person can search for.
     expect(detail).toContain('memory allocation of 671088640 bytes failed')
-    // Whose fault it is, and the two ways around it.
-    expect(detail).toMatch(/not caused by this plugin/)
+    // State the observed failure and remedies without assigning an unproven cause.
+    expect(detail).toMatch(/pnpm ran out of memory/)
+    expect(detail).not.toMatch(/not caused by this plugin/)
     expect(detail).toMatch(/12\.7\.0/)
     expect(detail).toMatch(/pnpm 11/)
     expect(detail).toContain('pnpm/pnpm#15362')
@@ -1275,7 +1276,7 @@ describe('spawnFailureDetail', () => {
 
   it('does not tell a Windows user to install the dsh they already have', () => {
     const detail = spawnFailureDetail('ENOENT', ENOENT, 'dsh', 'win32')
-    expect(detail).not.toMatch(/install the dsh CLI/)
+    expect(detail).not.toMatch(/Install the dsh CLI/)
     expect(detail).toMatch(/Windows/)
     // Names the actual mechanism, so the report is actionable rather than
     // mysterious: this is the shop's own gap, not the user's setup.
@@ -1294,8 +1295,8 @@ describe('spawnFailureDetail', () => {
   })
 
   it('keeps the honest advice where a missing binary really is the cause', () => {
-    expect(spawnFailureDetail('ENOENT', ENOENT, 'dsh', 'linux')).toMatch(/install the dsh CLI/)
-    expect(spawnFailureDetail('ENOENT', ENOENT, 'dsh', 'darwin')).toMatch(/install the dsh CLI/)
+    expect(spawnFailureDetail('ENOENT', ENOENT, 'dsh', 'linux')).toMatch(/Install the dsh CLI/)
+    expect(spawnFailureDetail('ENOENT', ENOENT, 'dsh', 'darwin')).toMatch(/Install the dsh CLI/)
   })
 
   it('treats EINVAL on Windows as the same shim problem', () => {
@@ -1304,12 +1305,12 @@ describe('spawnFailureDetail', () => {
     // path resolves. Both arrive here as the same underlying gap.
     const detail = spawnFailureDetail('EINVAL', 'spawn EINVAL', 'C:\\npm\\dsh.cmd', 'win32')
     expect(detail).toMatch(/Windows/)
-    expect(detail).not.toMatch(/install the dsh CLI/)
+    expect(detail).not.toMatch(/Install the dsh CLI/)
   })
 
   it('reports any other spawn failure verbatim', () => {
     expect(spawnFailureDetail('EACCES', 'spawn dsh EACCES', 'dsh', 'linux'))
-      .toBe('dsh spawn failed: spawn dsh EACCES')
+      .toBe('Could not start dsh: spawn dsh EACCES')
   })
 })
 

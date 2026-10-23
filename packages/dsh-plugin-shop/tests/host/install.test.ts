@@ -98,7 +98,7 @@ describe('validateInstall', () => {
       // the npm package of this name — the one thing it is known not to be.
       // (`npm:some-other-plugin` may well appear: that is the spec, quoted.)
       expect(result.detail).toContain(installed)
-      expect(result.detail).toContain('cannot identify')
+      expect(result.detail).toContain('could not match it to a catalog entry')
       expect(result.detail).not.toContain('npm:dsh-skill-manager')
     }
   })
@@ -136,7 +136,7 @@ describe('validateInstall', () => {
     const result = validateInstall(snapshot(), { name: 'dsh-hello-plugin', version: '1.2.0' })
     expect(result).toMatchObject({ ok: false, code: 'needs-acknowledgement' })
     if (!result.ok) {
-      expect(result.detail).toBe('dsh-plugin-shop: dsh-hello-plugin is community-tier and has not been reviewed; acknowledgement is required')
+      expect(result.detail).toBe('dsh-plugin-shop: dsh-hello-plugin is a community plugin and has not been reviewed. Confirm the installation to continue.')
     }
   })
 
@@ -144,7 +144,7 @@ describe('validateInstall', () => {
     const result = validateInstall(snapshot({ tier: 'verified-stale' }), { name: 'dsh-hello-plugin', version: '1.2.0' })
     expect(result).toMatchObject({ ok: false, code: 'needs-acknowledgement' })
     if (!result.ok) {
-      expect(result.detail).toBe('dsh-plugin-shop: dsh-hello-plugin is verified-stale: a newer version than the review is current and has not been reviewed; acknowledgement is required')
+      expect(result.detail).toBe('dsh-plugin-shop: a different version of dsh-hello-plugin was reviewed. The current version has not been reviewed. Confirm the installation to continue.')
     }
   })
 
@@ -208,7 +208,7 @@ describe('validateInstall identity (G-1)', () => {
     const result = validateInstall(twoRepos, { name: 'dsh-foo', version: commit, acknowledged: true })
     expect(result).toMatchObject({ ok: false, code: 'ambiguous-identity' })
     if (!result.ok) {
-      expect(result.detail).toBe('dsh-plugin-shop: the catalog holds 2 entries named dsh-foo, and this request does not say which one; refresh the shop and try again')
+      expect(result.detail).toBe('dsh-plugin-shop: the catalog has 2 plugins named dsh-foo. Refresh the shop and select the one you want to install.')
     }
   })
 
@@ -261,7 +261,7 @@ describe('validateInstall with an npm entry and a github entry of one name', () 
     const result = validateInstall(pair, { name: 'dsh-foo', version: '2.0.0', acknowledged: true })
     expect(result).toMatchObject({ ok: false, code: 'ambiguous-identity' })
     if (!result.ok) {
-      expect(result.detail).toBe('dsh-plugin-shop: the catalog holds 2 entries named dsh-foo, and this request does not say which one; refresh the shop and try again')
+      expect(result.detail).toBe('dsh-plugin-shop: the catalog has 2 plugins named dsh-foo. Refresh the shop and select the one you want to install.')
     }
   })
 

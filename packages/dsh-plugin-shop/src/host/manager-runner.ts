@@ -169,7 +169,7 @@ export function startManagerOperation(options: ManagerOperationOptions): Running
       }
       result = outcome(raw)
     } catch (error) {
-      settled = { state: 'failed', detail: `dsh-plugin-shop: the shop could not read dsh's answer: ${messageOf(error)}` }
+      settled = { state: 'failed', detail: `dsh-plugin-shop: could not read the result from dsh: ${messageOf(error)}` }
       state = 'failed'
       return status()
     }
@@ -181,7 +181,7 @@ export function startManagerOperation(options: ManagerOperationOptions): Running
         // The shop's own post-install check threw (it cannot read the
         // package, say), not the answer itself being unreadable: a
         // distinct message, so a published reason is never misattributed.
-        result = { state: 'failed', detail: `dsh-plugin-shop: the shop could not check what dsh installed: ${messageOf(error)}` }
+        result = { state: 'failed', detail: `dsh-plugin-shop: could not verify the installed plugin: ${messageOf(error)}` }
       }
     }
     settled = result

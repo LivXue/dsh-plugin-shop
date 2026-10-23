@@ -511,7 +511,7 @@ export function reduceInstall(state: InstallView, event: InstallEvent): InstallV
       // after a successful start is genuinely anomalous. Surface the host's
       // own detail when it has one; otherwise the honest generic line.
       if (!status.found) {
-        return { kind: 'failed', detail: status.detail ?? 'install record lost', log: status.log }
+        return { kind: 'failed', detail: status.detail ?? 'The installation record is no longer available. Refresh the shop to check whether the plugin was installed.', log: status.log }
       }
       if (!isTerminalInstallState(status.state)) {
         return {

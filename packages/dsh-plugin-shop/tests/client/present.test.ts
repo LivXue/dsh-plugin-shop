@@ -302,7 +302,7 @@ describe('restartBlockedNoticeKey', () => {
     // again recreates the profile, so each locale has to name the flag the
     // notice is about and say what the restart must leave out.
     expect(en[key], 'en names the flag').toContain('--from-default-profile')
-    expect(en[key], 'en carries the remedy').toContain('without that flag')
+    expect(en[key], 'en carries the remedy').toContain('without this flag')
     expect(zh[key], 'zh names the flag').toContain('--from-default-profile')
     expect(zh[key], 'zh carries the remedy').toContain('去掉该参数')
   })

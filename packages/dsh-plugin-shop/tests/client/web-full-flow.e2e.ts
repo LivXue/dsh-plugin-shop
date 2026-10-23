@@ -1488,7 +1488,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const shop = await openShopPage(app)
       expect(await shopRow.getAttribute('aria-current')).toBe('page')
       expect(await shop.locator('[data-shop-page-title]').textContent()).toBe('插件商店')
-      expect(await shop.locator('[data-shop-page-intro]').textContent()).toBe('浏览、安装和更新目录中的插件。')
+      expect(await shop.locator('[data-shop-page-intro]').textContent()).toBe('浏览、安装和更新插件。')
       await checkTextContrast(app, [
         { label: 'page title', locator: shop.locator('[data-shop-page-title]') },
         { label: 'page intro', locator: shop.locator('[data-shop-page-intro]') },
@@ -1682,7 +1682,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         // registry spec. The service never falls from a private registry to
         // a public one (section 8), so the local registry's 404 is the only
         // answer and this leg makes no internet request.
-        await card.getByText(/^dsh-plugin-shop: the install failed( at the registry)?: no such package was found\.$/)
+        await card.getByText(/^dsh-plugin-shop: the install failed( at the registry)?: the package could not be found\.$/)
           .waitFor({ state: 'visible', timeout: 60_000 })
         expect(await card.locator('[data-shop-log-line]').first().textContent())
           .toBe("via dsh's plugin manager: install dsh-e2e-fixture-plugin@1.0.0")
@@ -1786,7 +1786,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // activation `restart`), failing this.
       const notice = card.locator('[data-shop-restart-notice]')
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
-      expect(await notice.textContent()).toContain('已安装并热挂载')
+      expect(await notice.textContent()).toContain('已安装并生效')
       // The success colour, on the card it reports for.
       await checkTextContrast(app, [{ label: 'install notice', locator: notice }])
       // Both offers, not just the enabled one: under activation `restart` a
@@ -1908,7 +1908,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         // `applied`, and the fixture has no browser half: the install is
         // live, offers no restart, and dsh lists the row at the root of its
         // plugin tree, as the hot-mount case's fixture.
-        expect(await notice.textContent()).toContain('已安装并热挂载')
+        expect(await notice.textContent()).toContain('已安装并生效')
         // Both offers, for the reason the hot-mount case states.
         expect(await card.locator('[data-shop-restart], [data-shop-restart-disabled]').count()).toBe(0)
         await expectLiveInInventory('include:e2e-config')
@@ -1918,7 +1918,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         // `restart` and the host's published localized reason
         // (parseSimplePatch rejects the row; the reason renders verbatim on
         // the notice).
-        expect(await notice.textContent()).toContain('该插件的补丁包含无法热挂载的配置；重启 dsh 后生效')
+        expect(await notice.textContent()).toContain('已安装，但插件配置需要重启 dsh 才能加载。')
         // The section 8 restart offer for a restart-required install, as the
         // host allows it on THIS platform; see `expectRestartOffer`.
         await expectRestartOffer(shop, card)

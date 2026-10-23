@@ -246,19 +246,19 @@ export type RestartBlockedReason = 'desktop' | 'from-default-profile' | 'windows
  * service and to set an override that the platform check, being checked ahead
  * of the systemd one, could never reach. */
 const RESTART_BLOCKED_DETAIL: Record<RestartBlockedReason, string> = {
-  desktop: 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh refuses to restart it from here; restart the app to apply the change',
-  'from-default-profile': 'dsh-plugin-shop: restart is not supported when dsh was launched with --from-default-profile; from dsh 0.2.1 a restart would recreate the profile from its template and delete every plugin installed in it, this shop included. Restart dsh manually without that flag to apply the change',
-  windows: 'dsh-plugin-shop: restart is not supported on Windows yet; restart dsh manually to apply the change',
-  systemd: 'dsh-plugin-shop: restart is disabled because this process is a systemd service — a restart would kill the takeover helper along with the unit, and the service would not come back. Set allowRestart: true in the shop row config to override.',
-  'port-zero': 'dsh-plugin-shop: restart is not supported when dsh was launched with --port 0; restart dsh manually',
+  desktop: 'dsh-plugin-shop: this profile is managed by the DeepSeek Harness desktop app. Restart the app to apply the change.',
+  'from-default-profile': 'dsh-plugin-shop: dsh was started with --from-default-profile. In dsh 0.2.1 and later, restarting with this flag recreates the profile from its template and deletes all installed plugins, including the shop. Restart dsh manually without this flag.',
+  windows: 'dsh-plugin-shop: restarting from the shop is not supported on Windows yet. Quit dsh and start it again to apply the change.',
+  systemd: 'dsh-plugin-shop: dsh is managed by systemd. Restart the service manually; restarting from the shop could stop the service without bringing it back. To allow restarts from the shop, set allowRestart: true in the shop configuration.',
+  'port-zero': 'dsh-plugin-shop: dsh was started with --port 0. Its port will change after a restart. Restart dsh manually and open the new address.',
 }
 
 /** Why the shop changes nothing in the desktop profile, for every mutation
  * that spawns dsh's CLI: install, uninstall and self-update. dsh refuses
  * the profile before any of them would run (`isDesktopProfile`), and the
  * failure that surfaced instead read "pnpm failed in the profile". */
-const DESKTOP_PROFILE_DETAIL = 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh'
-  + ' refuses to change it from the command line the shop runs; add and remove its plugins from the app instead'
+const DESKTOP_PROFILE_DETAIL = 'dsh-plugin-shop: this profile is managed by the DeepSeek Harness desktop app.'
+  + ' The shop cannot change it through the command line. Add or remove plugins from the app.'
 
 /** Why a switch through dsh's `pluginManager` waits for an operation this
  * gateway started: dsh holds its profile lock for a whole install or removal
@@ -269,7 +269,7 @@ const DESKTOP_PROFILE_DETAIL = 'dsh-plugin-shop: the desktop profile is managed 
  * CLI path's switch, and switching a deselected package off) is not
  * refused. */
 const switchWhileBusyDetail = (name: string): string => 'dsh-plugin-shop: an install, update or uninstall is still running'
-  + ` in this profile, and dsh holds the profile until it ends; switch ${name} after it finishes.`
+  + ` in this profile. Wait for it to finish before changing the enabled state of ${name}.`
 
 /** The line a record gains when dsh's plugin manager refuses an update in
  * place and the shop continues it through dsh's CLI (design
@@ -277,7 +277,7 @@ const switchWhileBusyDetail = (name: string): string => 'dsh-plugin-shop: an ins
  * runs instead. It names a `dsh plugin` command, so it never reaches a
  * desktop reader: the continuation does not run in that profile. */
 function cliFallbackLine(profile: string, spec: string): string {
-  return `dsh-plugin-shop: dsh's plugin manager updates no installed package in place (already-installed); running \`dsh plugin --profile ${profile} add ${spec}\` instead`
+  return `dsh-plugin-shop: dsh's plugin manager cannot update this package directly (already-installed). Continuing with: \`dsh plugin --profile ${profile} add ${spec}\``
 }
 
 /** `shop/version` result (§7.3): the RUNNING shop version (from the shipped
@@ -378,13 +378,13 @@ export async function verifyTarballSha256(
   try {
     response = await fetchTarball(url)
   } catch (error) {
-    return `dsh-plugin-shop: the release tarball could not be fetched (network failure: ${(error as Error).message}); refusing to install`
+    return `dsh-plugin-shop: could not download the release archive. Installation stopped. Network error: ${(error as Error).message}`
   }
   if (!response.ok) {
-    return `dsh-plugin-shop: the release tarball could not be fetched (HTTP ${response.status}); refusing to install`
+    return `dsh-plugin-shop: could not download the release archive (HTTP ${response.status}). Installation stopped.`
   }
   if (response.body === null) {
-    return 'dsh-plugin-shop: the release tarball has no readable body; refusing to install'
+    return 'dsh-plugin-shop: the release archive response was empty or unreadable. Installation stopped.'
   }
   const hash = createHash('sha256')
   let bytes = 0
@@ -402,15 +402,15 @@ export async function verifyTarballSha256(
         } catch {
           // The stream already closed or errored; the cap verdict stands.
         }
-        return `dsh-plugin-shop: the release tarball exceeds the size cap (${maxBytes} bytes); refusing to install`
+        return `dsh-plugin-shop: the release archive exceeds the size limit (${maxBytes} bytes). Installation stopped.`
       }
       hash.update(value)
     }
   } catch (error) {
-    return `dsh-plugin-shop: the release tarball download failed (${(error as Error).message}); refusing to install`
+    return `dsh-plugin-shop: the release archive download failed. Installation stopped. Error: ${(error as Error).message}`
   }
   if (hash.digest('hex') !== recordedSha256) {
-    return 'dsh-plugin-shop: the release tarball failed sha256 verification against the catalog record; refusing to install'
+    return 'dsh-plugin-shop: the release archive does not match the catalog checksum (SHA-256). Installation stopped.'
   }
   return null
 }
@@ -965,7 +965,7 @@ export class ShopGateway extends TypertRemoteService {
   @Remote('setEnabled')
   async setEnabled(args: { name: string; enabled: boolean }): Promise<ShopSetEnabledResult> {
     if (args.name === 'dsh-plugin-shop' || args.name.startsWith('@deepseek-ai/')) {
-      return { ok: false, detail: `dsh-plugin-shop: ${args.name} is part of the harness chain and cannot be toggled from the shop` }
+      return { ok: false, detail: `dsh-plugin-shop: ${args.name} is part of dsh itself and cannot be enabled or disabled from the shop.` }
     }
     // Read once, and passed to the deselected branch (see `pluginManager`).
     const manager = this.pluginManager()
@@ -986,10 +986,10 @@ export class ShopGateway extends TypertRemoteService {
     try {
       owned = ownedEntries({ profileDir, packageName: args.name })
     } catch (error) {
-      return { ok: false, detail: `dsh-plugin-shop: ${args.name} has a bundle patch that could not be read: ${String(error)}` }
+      return { ok: false, detail: `dsh-plugin-shop: could not read the plugin configuration for ${args.name}: ${String(error)}` }
     }
     if (owned.length === 0) {
-      return { ok: false, detail: `dsh-plugin-shop: ${args.name} contributes no plugin entries, so there is nothing to enable or disable` }
+      return { ok: false, detail: `dsh-plugin-shop: ${args.name} has no plugin entries to enable or disable.` }
     }
     // A bundle the profile does not select is composed by no restart. dsh
     // 0.1.7's Plugins page deselects one with its bundle switch and keeps the
@@ -1004,7 +1004,7 @@ export class ShopGateway extends TypertRemoteService {
     // tree composed above the entry (see ownsEntryId).
     const live = (await this.listInventory()).filter(entry => ownsEntryId(ownedSet, entry.entryId))
     if (live.length === 0) {
-      return { ok: false, detail: `dsh-plugin-shop: ${args.name} is installed but its entries are not in the running plugin tree; restart dsh to compose them` }
+      return { ok: false, detail: `dsh-plugin-shop: ${args.name} is installed but has not been loaded. Restart dsh to load it.` }
     }
     // dsh 0.1.7+: switch every live entry through the service, by its LIVE
     // id, the same row the writer below would touch, applied in place
@@ -1096,9 +1096,9 @@ export class ShopGateway extends TypertRemoteService {
     if (manager === null) {
       return {
         ok: false,
-        detail: `dsh-plugin-shop: ${name} is installed but switched off at the bundle level: dsh.profile.bundles in`
-          + ` ${join(profileDir, 'package.json')} does not list it, so dsh composes none of it, and a restart will not change that.`
-          + ` This dsh has no pluginManager service to select it again: add "${name}" back to that list and restart dsh,`
+        detail: `dsh-plugin-shop: ${name} is installed but disabled. It is missing from dsh.profile.bundles in`
+          + ` ${join(profileDir, 'package.json')}, so restarting alone will not enable it.`
+          + ` This version of dsh cannot enable the bundle from the shop. Add "${name}" back to that list and restart dsh,`
           + ' or uninstall it and install it again from the shop.',
       }
     }
@@ -1110,7 +1110,7 @@ export class ShopGateway extends TypertRemoteService {
       // The service threw rather than answering: nothing says the bundle was
       // selected, so the switch stays off and the reason travels as a detail
       // rather than as a transport failure the client can only call "retry".
-      return { ok: false, detail: `dsh-plugin-shop: dsh could not select ${name} again${thrownTail(messageOf(error), isDesktopProfile(this.profile))}` }
+      return { ok: false, detail: `dsh-plugin-shop: dsh could not enable ${name} again${thrownTail(messageOf(error), isDesktopProfile(this.profile))}` }
     }
     const { change, failure } = this.readManagerAnswer(raw, { act: `select ${name} again`, request: `the selection of ${name}`, stays: 'off' })
     if (failure !== null) return { ok: false, detail: failure }
@@ -1150,7 +1150,7 @@ export class ShopGateway extends TypertRemoteService {
     if (change.application === 'overridden') {
       return {
         change,
-        failure: `dsh-plugin-shop: dsh saved ${words.request}, but a home or invocation patch, which outranks the profile's own, keeps it ${words.stays}.`,
+        failure: `dsh-plugin-shop: dsh saved ${words.request}, but a home or startup configuration overrides it. The plugin remains ${words.stays}.`,
       }
     }
     if (change.application === 'applied' || change.application === 'restart-required') {
@@ -1158,7 +1158,7 @@ export class ShopGateway extends TypertRemoteService {
     }
     return {
       change,
-      failure: `dsh-plugin-shop: dsh answered ${words.request} with "${change.application ?? 'nothing'}", which this shop does not know how to read.`,
+      failure: `dsh-plugin-shop: could not confirm ${words.request}. dsh returned an unrecognized status: "${change.application ?? 'nothing'}".`,
     }
   }
 
@@ -1646,8 +1646,8 @@ export class ShopGateway extends TypertRemoteService {
       dependencies: Object.keys(this.profileDependenciesOrNone() ?? {}),
     })
     if (clash !== null) {
-      return `dsh-plugin-shop: ${name} declares the loader entry id "${clash.id}", which ${clash.holder} already declares.`
-        + ' dsh refuses to load a plugin tree holding a duplicate entry id, so the profile would not start.' + undo
+      return `dsh-plugin-shop: ${name} and ${clash.holder} use the same plugin entry ID, "${clash.id}".`
+        + ' dsh cannot start this profile while both plugins are installed.' + undo
     }
     // The other way a landed bundle kills the next boot: a patch
     // declaration this dsh cannot read (design
@@ -1656,11 +1656,11 @@ export class ShopGateway extends TypertRemoteService {
     switch (patchDeclarationHazard(declared, harness.patchLists)) {
       case null: return null
       case 'list-unsupported':
-        return `dsh-plugin-shop: ${name} lists its bundle patch as several files, which dsh reads from 0.1.7 on;`
-          + ` this dsh${harness.dshVersion === null ? '' : ` (${harness.dshVersion})`} reads one and would not start with it installed.` + undo
+        return `dsh-plugin-shop: ${name} uses multiple configuration files, which require dsh 0.1.7 or later.`
+          + ` Your dsh${harness.dshVersion === null ? '' : ` (${harness.dshVersion})`} only supports one file and cannot start with this plugin installed.` + undo
       case 'malformed':
-        return `dsh-plugin-shop: ${name} declares its bundle patch as neither a file path nor a list of them,`
-          + ' which dsh refuses to load, so the profile would not start.' + undo
+        return `dsh-plugin-shop: ${name} has an invalid bundle patch declaration; it must be a file path or a list of paths.`
+          + ' dsh cannot start this profile with the plugin installed.' + undo
     }
   }
 
@@ -1787,7 +1787,7 @@ export class ShopGateway extends TypertRemoteService {
   @Remote('installStatus')
   installStatus(args: { installId: string }): ShopInstallStatusResult {
     const running = this.installs.get(args.installId)
-    if (running === undefined) return { found: false, state: 'failed', log: [], detail: `unknown installId: ${args.installId}` }
+    if (running === undefined) return { found: false, state: 'failed', log: [], detail: `The installation record (${args.installId}) is no longer available. Refresh the shop to check whether the plugin was installed.` }
     return { found: true, ...running.status() }
   }
 
@@ -2083,7 +2083,7 @@ export class ShopGateway extends TypertRemoteService {
     if (this.hasRunningCommand()) {
       return {
         ok: false,
-        detail: 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.',
+        detail: 'dsh-plugin-shop: an install is still running in this profile. Wait for it to finish before restarting so the configuration can be saved completely.',
       }
     }
     // The static refusals, in the order `staticRestartBlock` states
@@ -2115,7 +2115,7 @@ export class ShopGateway extends TypertRemoteService {
     } catch (error) {
       // A refused restart must not tear anything down; the detail names the
       // config or log problem in the shop's own words.
-      return { ok: false, detail: `dsh-plugin-shop: restart could not be started: ${(error as Error).message}` }
+      return { ok: false, detail: `dsh-plugin-shop: could not start the restart process: ${(error as Error).message}` }
     }
     // The response must reach the browser before this process exits; the
     // helper holds the child back until this pid is gone, so the port is

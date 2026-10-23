@@ -135,8 +135,8 @@ function pageOf(container: Element): HTMLElement {
 
 describe('the shop page (design 2026-10-16-shop-sidebar-page §4.2)', () => {
   it.each([
-    ['en', en, 'Plugin shop', 'Browse, install, and update plugins from the catalog.'],
-    ['zh', zh, '插件商店', '浏览、安装和更新目录中的插件。'],
+    ['en', en, 'Plugin shop', 'Browse, install, and update plugins.'],
+    ['zh', zh, '插件商店', '浏览、安装和更新插件。'],
   ] as const)('titles the page with an h1 and states its intro above the shop body, in %s', (_lang, dict, title, intro) => {
     const { container } = renderPage(dict, face(() => new Promise(() => {})))
     const heading = container.querySelector('[data-shop-page-title]')
