@@ -46,19 +46,16 @@ const RIFF = [0x52, 0x49, 0x46, 0x46]
 const WEBP = [0x57, 0x45, 0x42, 0x50]
 
 /**
- * How a file is known to be UTF-16, which is how XML 1.0 Appendix F tells it
- * from the rest. It starts with a byte order mark, in either order, which is no
- * part of its text and which `skip` steps over. Or it has no mark and starts
- * with the four bytes of `<?` in UTF-16, which open an XML declaration or any
- * instruction and are part of the text. A file with no mark that starts any
- * other way, `<svg/>` with no declaration before it, matches none of these:
- * Appendix F names no pattern for it.
+ * The byte order marks that make a file UTF-16, each with the decoder it
+ * selects. The mark is no part of the text, and the decode steps over it.
+ * UTF-16 with no mark is not UTF-16 here, in any form, the `<?` patterns that
+ * XML 1.0 Appendix F detects included: it drew in neither Chromium nor Firefox
+ * (design §5.4), so it is read like any other bytes, one character each, and
+ * has no root.
  */
-const UTF16_FORMS = [
-  { label: 'utf-16le', start: [0xff, 0xfe], skip: 2 },
-  { label: 'utf-16be', start: [0xfe, 0xff], skip: 2 },
-  { label: 'utf-16le', start: [0x3c, 0x00, 0x3f, 0x00], skip: 0 },
-  { label: 'utf-16be', start: [0x00, 0x3c, 0x00, 0x3f], skip: 0 },
+const UTF16_MARKS = [
+  { label: 'utf-16le', mark: [0xff, 0xfe] },
+  { label: 'utf-16be', mark: [0xfe, 0xff] },
 ] as const
 
 /**
@@ -67,15 +64,20 @@ const UTF16_FORMS = [
  * dsh chooses an icon's type by its extension and never sniffs, so a PNG named
  * `icon.svg` would only ever draw as a broken image there and as the default
  * artwork here. Refusing it costs nothing and tells the author why (design
- * §5.4). That holds only for bytes a browser could not draw as the type: the
- * refusal says the file does not hold what its extension promises, so one that
- * a browser does draw must never get it.
+ * §5.4). That holds only for bytes no browser draws as the type: the refusal
+ * says the file does not hold what its extension promises. For SVG, which
+ * browsers read in more than one encoding, design §5.4 gives what was measured
+ * and the check follows it.
  *
  * A type check and no more, and not a sanitiser: an SVG is defended by
- * reaching the page only as an image's `src` (§8.5). So each format is read
- * for its opening bytes and nothing past them. PNG is its eight-byte
- * signature, JPEG is {@link JPEG_START}, WebP is `RIFF`, a four-byte size and
- * `WEBP`, and SVG is a first element named `svg` ({@link startsWithSvgElement}).
+ * reaching the page only as an image's `src` (§8.5). PNG, JPEG and WebP are
+ * read for their opening bytes and nothing past them: PNG is its eight-byte
+ * signature, JPEG is {@link JPEG_START}, and WebP is `RIFF`, a four-byte size
+ * and `WEBP`. SVG is a first element named `svg`
+ * ({@link startsWithSvgElement}), found in a text built from the whole file
+ * ({@link svgText}), so the bytes must already be held to
+ * {@link MAX_CATALOG_ICON_BYTES}, as {@link checkIconBytes} holds them before
+ * it asks.
  */
 export function sniffIconBytes(bytes: Uint8Array, mediaType: IconMediaType): boolean {
   switch (mediaType) {
@@ -96,32 +98,35 @@ function hasBytesAt(bytes: Uint8Array, offset: number, expected: readonly number
 }
 
 /**
- * An SVG file's text, as far as its prolog and root element need it.
+ * An SVG file's text. Only its prolog and root element are looked at, but the
+ * text is built from every byte, by a decode or by a copy, so the bytes must
+ * already be held to {@link MAX_CATALOG_ICON_BYTES}, as {@link checkIconBytes}
+ * holds them before it asks.
  *
- * It is read in the encoding a browser would choose, because that is what
- * keeps a refusal true (design §5.4): an author told their file holds no SVG
- * data must have a file no browser draws. A file {@link UTF16_FORMS} knows as
- * UTF-16 is decoded the way a browser decodes it, with replacement: a lone
- * surrogate or a stray last byte becomes U+FFFD, which opens no element and
- * which a comment, an instruction or a literal skips, and the file is read on.
- * Replacement fails for no bytes, so nothing is caught here; the one label
- * that depends on the platform, `utf-16be`, needs the ICU every official Node
- * build carries. Any other bytes are read one character each, so that UTF-8,
- * ISO-8859-1 and the other ASCII-compatible encodings an XML declaration may
- * name all show the same ASCII prolog and root name. An author's own non-ASCII
- * characters land at U+0080 and above, which {@link isNameChar} accepts inside
- * a name and which the prolog skips inside a comment, an instruction or a
- * literal.
+ * It is read in the encodings that keep a refusal true (design §5.4): the check
+ * refuses only what no browser it was measured in draws, and accepts what some
+ * browser draws, because a false acceptance costs nothing and a false refusal
+ * publishes that the file holds no SVG data. A file that starts with a UTF-16
+ * byte order mark ({@link UTF16_MARKS}) is decoded with replacement, as a
+ * browser decodes it: a lone surrogate or a stray last byte becomes U+FFFD,
+ * which opens no element and which a comment, an instruction or a literal
+ * skips, and the file is read on. Replacement fails for no bytes, so nothing is
+ * caught here; the one label that depends on the platform, `utf-16be`, needs
+ * the ICU every official Node build carries. Any other bytes are read one
+ * character each, so that UTF-8, ISO-8859-1 and the other ASCII-compatible
+ * encodings an XML declaration may name all show the same ASCII prolog and root
+ * name. An author's own non-ASCII characters land at U+0080 and above, which
+ * {@link isNameChar} accepts inside a name and which the prolog skips inside a
+ * comment, an instruction or a literal. UTF-16 with no mark is among those other
+ * bytes, with a NUL between its characters, so it has no root.
  *
- * Nothing past the root element is read, so how the rest of the file is
- * encoded is not checked: a browser that cannot decode the image draws the
- * default artwork (design decision 3), and a false acceptance costs nothing.
- * Not read as UTF-16: a file with no mark that does not start with `<?`, and
- * UTF-32.
+ * The scan stops at the root element, so how the rest of the file is encoded is
+ * never checked: a browser that cannot decode the image draws the default
+ * artwork (design decision 3). UTF-32 is not read either.
  */
 function svgText(bytes: Uint8Array): string {
-  for (const { label, start, skip } of UTF16_FORMS) {
-    if (hasBytesAt(bytes, 0, start)) return new TextDecoder(label).decode(bytes.subarray(skip))
+  for (const { label, mark } of UTF16_MARKS) {
+    if (hasBytesAt(bytes, 0, mark)) return new TextDecoder(label).decode(bytes.subarray(mark.length))
   }
   return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('latin1')
 }

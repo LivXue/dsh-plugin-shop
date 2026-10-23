@@ -275,22 +275,22 @@ never a refusal: a refusal is the author's to fix, and a timeout is not
   here (§8.1), so refusing it costs nothing and tells the author why. The SVG
   check is a type check, not a sanitiser: the defence is §8.5's.
 
-  Refusing costs nothing only for bytes a browser cannot draw, because the
-  refusal tells the author the file does not hold SVG data. So an SVG is read
-  the way a browser reads one, not as UTF-8 text: a UTF-16 byte order mark, or
-  the UTF-16 form of `<?` (XML 1.0 Appendix F), decodes as UTF-16 the way a
-  browser decodes it, a lone surrogate or a stray byte becoming U+FFFD, and any
-  other bytes are read one character each, so UTF-8, ISO-8859-1 and the other
-  ASCII-compatible encodings all reach the root element. Nothing past the root
-  is read, so the encoding of the rest of the file is not validated; a file
-  accepted that a browser then fails to decode costs nothing, because its
-  `<img>` falls back to the default artwork (decision 3). None of three kinds
-  of file that browsers draw is refused: UTF-16 with a byte order mark
-  (Windows PowerShell 5's redirect writes it), an ISO-8859-1 file that says so
-  and holds a high byte, and a root written `svg:svg` and bound to the SVG
-  namespace. UTF-16 with no mark that opens otherwise, such as `<svg/>` with no
-  declaration, is not read, since Appendix F names no pattern for it; nor is
-  UTF-32.
+  The refusal is published as "does not hold SVG data", so the check refuses
+  only what no browser it was measured in draws, and accepts what some browser
+  draws: a false acceptance costs nothing, because an `<img>` that fails to
+  decode falls back to the default artwork (decision 3), while a false refusal
+  loses an icon and publishes a false reason. So an SVG is not read as UTF-8
+  text: a UTF-16 byte order mark selects UTF-16, decoded with replacement (a
+  lone surrogate or a stray byte becomes U+FFFD), and any other bytes are read
+  one character each, so UTF-8, ISO-8859-1 and the other ASCII-compatible
+  encodings all reach the root element. Nothing past the root is looked at, so
+  the encoding of the rest of the file is not validated. Measured on 2026-10-23
+  with SVG files in an `<img>`: UTF-16 with a byte order mark, and a root
+  written `svg:svg`, draw in Chromium and Firefox; an ISO-8859-1 file that
+  declares itself, with a byte past 0x7F, draws in Firefox only; UTF-16 without
+  a byte order mark, the `<?` forms that XML 1.0 Appendix F detects included,
+  draws in neither, and nor does UTF-32 with a byte order mark, so neither is
+  read.
 
 The checks are pure, and fixtures drive them.
 
