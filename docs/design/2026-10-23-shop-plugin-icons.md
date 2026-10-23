@@ -277,9 +277,10 @@ never a refusal: a refusal is the author's to fix, and a timeout is not
 
   Refusing costs nothing only for bytes a browser cannot draw, because the
   refusal tells the author the file does not hold SVG data. So an SVG is read
-  the way a browser reads one, not as UTF-8 text: a UTF-16 byte order mark
-  selects UTF-16, in either order, which must decode cleanly, and any other
-  bytes are read one character each, so UTF-8, ISO-8859-1 and the other
+  the way a browser reads one, not as UTF-8 text: a UTF-16 byte order mark, or
+  the UTF-16 form of `<?` (XML 1.0 Appendix F), decodes as UTF-16 the way a
+  browser decodes it, a lone surrogate or a stray byte becoming U+FFFD, and any
+  other bytes are read one character each, so UTF-8, ISO-8859-1 and the other
   ASCII-compatible encodings all reach the root element. Nothing past the root
   is read, so the encoding of the rest of the file is not validated; a file
   accepted that a browser then fails to decode costs nothing, because its
@@ -287,7 +288,9 @@ never a refusal: a refusal is the author's to fix, and a timeout is not
   of file that browsers draw is refused: UTF-16 with a byte order mark
   (Windows PowerShell 5's redirect writes it), an ISO-8859-1 file that says so
   and holds a high byte, and a root written `svg:svg` and bound to the SVG
-  namespace. UTF-16 without a byte order mark, and UTF-32, are not read.
+  namespace. UTF-16 with no mark that opens otherwise, such as `<svg/>` with no
+  declaration, is not read, since Appendix F names no pattern for it; nor is
+  UTF-32.
 
 The checks are pure, and fixtures drive them.
 
