@@ -231,13 +231,13 @@ Only keys no row knows are fetched for the first time.
   `fetchRobust` and `readCappedBody` at 32 KiB + 1. The declaration was read
   at the branch head (§4); if the path is missing at the commit, that is a
   refusal that names the commit, and the next commit is a new key.
-- **A release-rescued entry: the release tarball the harvest already
-  downloads** (`downloadReleaseAsset`, `openPackedManifest`), the member taken
-  in the same pass that reads its manifest, so it costs no request. The
-  harvest downloads that asset only when it reads the repository, so when the
-  bytes are needed again (§5.1) the icon step downloads the recorded asset
-  itself, through the same `downloadReleaseAsset` and its 300-second deadline,
-  and checks it against the entry's `tarball.sha256`.
+- **A release-rescued entry: the recorded release asset** (the entry's
+  `tarball.url`), which the icon step downloads itself through the harvest's
+  `downloadReleaseAsset` and its 300-second deadline, checks against the
+  entry's `tarball.sha256`, and unpacks under the same bounds as an npm
+  tarball. One request per new key: rescued entries are few, and handing bytes
+  over from the harvest's own read would couple the two steps for no
+  measurable saving.
 - **Only what the install would install.** pnpm installs a git dependency the
   way `npm pack` would pack it, so a GitHub package.json `files` list that
   leaves the icon out means dsh never sees it: refused, with a detail that
@@ -333,8 +333,12 @@ long before the budget binds.
 - The icons file joins `dataFileNames` in `pages-artifacts.ts`, so it reaches
   Pages and the npm package together, and its hash joins `catalogShas` in
   `npm-package.ts`, so an icons-only change still publishes to npm.
-- The generated `registry/schema/plugin-entry.schema.json` is regenerated
-  (`pnpm emit:schema`).
+- The generated `registry/schema/plugin-entry.schema.json` does not change:
+  it renders only the author's `dsh.catalog` section (`emit-schema.ts`), and
+  `icon` is the build's field, not the author's.
+- The registry's `Entry` and the shop's `entrySchema` gain `icon` in the same
+  pull request: `catalog-parity.test.ts` fails on a key the registry
+  publishes and the consumer does not declare.
 
 ## 7. The shop's host
 
