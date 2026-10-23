@@ -2423,7 +2423,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       if (gte(launchedDshVersion, '0.2.1-rc.1')) {
         const lines = await card.locator('[data-shop-log-line]').allTextContents()
         expect(lines, JSON.stringify(lines)).toContain(
-          "dsh-plugin-shop: dsh's plugin manager updates no installed package in place (already-installed); running `dsh plugin --profile web add dsh-shop-e2e-update@2.0.0` instead",
+          "dsh-plugin-shop: dsh's plugin manager cannot update this package directly (already-installed). Continuing with: `dsh plugin --profile web add dsh-shop-e2e-update@2.0.0`",
         )
       }
 
