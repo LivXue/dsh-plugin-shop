@@ -1,19 +1,33 @@
+import { isUtf8 } from 'node:buffer'
 import { describe, expect, it } from 'vitest'
 import { MAX_CATALOG_ICON_BYTES, checkIconBytes, iconDataUrl, sha256Hex, sniffIconBytes } from '../src/icon-bytes.ts'
 import { iconDetail, shownPath } from '../src/icon-declaration.ts'
 import type { IconDeclaration, IconMediaType } from '../src/icon-declaration.ts'
 
 const utf8 = (text: string): Uint8Array => new TextEncoder().encode(text)
+const latin1 = (text: string): Uint8Array => Buffer.from(text, 'latin1')
 const bytesOf = (...values: number[]): Uint8Array => Uint8Array.from(values)
 const ascii = (text: string): number[] => Array.from(text, (char) => char.charCodeAt(0))
 const riff = (form: string): Uint8Array => bytesOf(...ascii('RIFF'), 0x04, 0x00, 0x00, 0x00, ...ascii(form))
+
+/** U+FEFF, the byte order mark, built here so that no invisible character sits in this file. */
+const BOM = String.fromCharCode(0xfeff)
+/** UTF-16 as a file holds it, with the byte order mark that announces it. */
+const utf16le = (text: string): Buffer => Buffer.from(BOM + text, 'utf16le')
+const utf16be = (text: string): Buffer => Buffer.from(BOM + text, 'utf16le').swap16()
+/** UTF-16 that nothing announces. */
+const bareUtf16le = (text: string): Buffer => Buffer.from(text, 'utf16le')
+const bareUtf16be = (text: string): Buffer => Buffer.from(text, 'utf16le').swap16()
+
+const SVG_NS = 'http://www.w3.org/2000/svg'
+const SVG_ROOT = `<svg xmlns="${SVG_NS}"/>`
 
 // The least each sniff reads, with padding after it: as far as this check goes,
 // a signature is a file.
 const PNG = bytesOf(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00)
 const JPEG = bytesOf(0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10)
 const WEBP = riff('WEBP')
-const SVG = utf8('<svg xmlns="http://www.w3.org/2000/svg"/>')
+const SVG = utf8(SVG_ROOT)
 
 const SAMPLES: Record<IconMediaType, Uint8Array> = {
   'image/svg+xml': SVG,
@@ -31,6 +45,18 @@ const FILES: [mediaType: IconMediaType, path: string, typeName: string][] = [
   ['image/webp', 'icon.webp', 'WebP'],
 ]
 
+// SVG files outside plain ASCII or well-formed UTF-8: ISO-8859-1 with a high
+// byte, UTF-8 with text past ASCII, and bytes that are no UTF-8 after the prolog.
+const COPYRIGHT = String.fromCharCode(0xa9)
+const GRINNING_FACE = String.fromCodePoint(0x1f600)
+/** An ISO-8859-1 document that says so, with byte A9 in a comment and in its title. */
+const ISO_8859_1 = latin1(
+  `<?xml version="1.0" encoding="ISO-8859-1"?>\n<!-- ${COPYRIGHT} 2026 -->\n<svg xmlns="${SVG_NS}"><title>${COPYRIGHT} icon</title></svg>`,
+)
+const NON_ASCII_UTF8 = utf8(`<svg xmlns="${SVG_NS}"><title>图标</title></svg>`)
+/** Bytes C3 28 are no UTF-8, and this puts them in a comment ahead of the root. */
+const INVALID_UTF8_IN_A_COMMENT = Buffer.concat([utf8('<!-- '), bytesOf(0xc3, 0x28), utf8(` -->${SVG_ROOT}`)])
+
 function declare(path: string, mediaType: IconMediaType, source: IconDeclaration['source'] = 'icon'): IconDeclaration {
   return { source, path, mediaType }
 }
@@ -45,7 +71,7 @@ function padded(sample: Uint8Array, length: number): Uint8Array {
 /** An SVG document of exactly `length` bytes whose padding is a comment, so it
  * stays a document a browser draws. */
 function svgOfLength(length: number): Uint8Array {
-  const head = '<svg xmlns="http://www.w3.org/2000/svg"><!--'
+  const head = `<svg xmlns="${SVG_NS}"><!--`
   const tail = '--></svg>'
   const encoded = utf8(head + 'x'.repeat(length - head.length - tail.length) + tail)
   // The fixture's arithmetic: all of it is ASCII, so characters are bytes.
@@ -58,6 +84,20 @@ function refusal(bytes: Uint8Array, declaration: IconDeclaration): string {
   if (result.ok) throw new Error(`expected ${declaration.path} to be refused, and it was accepted`)
   return result.detail
 }
+
+describe('the fixtures', () => {
+  it('are in the encodings their names say', () => {
+    expect([...utf16le('<').subarray(0, 4)]).toEqual([0xff, 0xfe, 0x3c, 0x00])
+    expect([...utf16be('<').subarray(0, 4)]).toEqual([0xfe, 0xff, 0x00, 0x3c])
+    expect([...bareUtf16le('<')]).toEqual([0x3c, 0x00])
+    expect([...bareUtf16be('<')]).toEqual([0x00, 0x3c])
+    expect(ISO_8859_1.filter((byte) => byte === 0xa9)).toHaveLength(2)
+    expect(isUtf8(ISO_8859_1)).toBe(false)
+    expect(isUtf8(INVALID_UTF8_IN_A_COMMENT)).toBe(false)
+    expect(isUtf8(NON_ASCII_UTF8)).toBe(true)
+    expect(NON_ASCII_UTF8.some((byte) => byte >= 0x80)).toBe(true)
+  })
+})
 
 describe('sniffIconBytes: each format is its own type and no other', () => {
   it.each(MEDIA_TYPES.flatMap((actual) => MEDIA_TYPES.map((claimed): [IconMediaType, IconMediaType] => [actual, claimed])))(
@@ -92,7 +132,7 @@ describe('sniffIconBytes: the binary formats', () => {
   })
 })
 
-describe('sniffIconBytes: SVG', () => {
+describe('sniffIconBytes: SVG, what may come before the root', () => {
   // The shape Adobe Illustrator's SVG 1.1 export writes, its entity list
   // trimmed: a DOCTYPE with `>` inside it well before it ends. libxml2 and
   // expat both parse it, so refusing it would tell its author something untrue.
@@ -103,20 +143,24 @@ describe('sniffIconBytes: SVG', () => {
     '\t<!ENTITY ns_extend "http://ns.adobe.com/Extensibility/1.0/">',
     '\t<!ENTITY ns_ai "http://ns.adobe.com/AdobeIllustrator/10.0/">',
     ']>',
-    '<svg xmlns="http://www.w3.org/2000/svg" xmlns:x="&ns_extend;">',
+    `<svg xmlns="${SVG_NS}" xmlns:x="&ns_extend;"/>`,
   ].join('\n')
 
   it.each<[what: string, text: string]>([
     ['an svg element', '<svg>'],
     ['an svg element that closes at once', '<svg/>'],
     ['an svg element whose attributes follow a line break', '<svg\n viewBox="0 0 1 1">'],
-    ['a BOM, an XML declaration, a DOCTYPE and a comment before the element', '\uFEFF<?xml version="1.0"?>\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "x">\n<!-- c --><svg xmlns="http://www.w3.org/2000/svg"/>'],
+    ['a BOM, an XML declaration, a DOCTYPE and a comment before the element', `${BOM}<?xml version="1.0"?>\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "x">\n<!-- c --><svg xmlns="${SVG_NS}"/>`],
     ['white space before the element', ' \t\r\n<svg>'],
     ['processing instructions beyond the XML declaration', '<?xml version="1.0"?><?xml-stylesheet href="a.css"?><svg>'],
     ['comments and instructions, any number of them in any order', '<!-- a --><?p q?>\n<!-- b --><!DOCTYPE svg><!-- c --><?r?>\n<svg>'],
-    ['a second BOM, which the decoder leaves in the text where it strips the first', '\uFEFF\uFEFF<svg>'],
+    ['a second BOM, skipped like white space', `${BOM}${BOM}<svg>`],
+    ['a BOM after white space, in any order', ` ${BOM}<svg>`],
     ['a comment that holds an <svg> and a double hyphen, and ends at the first -->', '<!-- <svg> -- <g> --><svg>'],
-    ['a DOCTYPE whose quoted identifiers hold a ">"', '<!DOCTYPE svg PUBLIC "a>b" \'c>d\'><svg>'],
+    ['a comment that holds a ">"', '<!-- a > b --><svg>'],
+    ['a processing instruction that holds a ">"', '<?p a>b?><svg>'],
+    ['a DOCTYPE whose system literal holds a ">"', '<!DOCTYPE svg SYSTEM "c>d"><svg>'],
+    ['the same in single quotes', "<!DOCTYPE svg SYSTEM 'c>d'><svg>"],
     ['a DOCTYPE with an internal subset, as Illustrator wrote them', ILLUSTRATOR],
     // One trap each. Two apostrophes in one subset would close each other as a
     // quoted literal and hide that the comment, or the instruction, was never skipped.
@@ -133,7 +177,6 @@ describe('sniffIconBytes: SVG', () => {
 
   it.each<[what: string, text: string]>([
     ['an html element', '<html>'],
-    ['an element whose name merely starts with svg', '<svgx>'],
     ['an upper-case SVG element, since XML names are case-sensitive and SVG\'s root is svg', '<SVG>'],
     ['an empty file', ''],
     ['a start tag cut off after its name', '<svg'],
@@ -145,23 +188,126 @@ describe('sniffIconBytes: SVG', () => {
     ['an instruction that never ends', '<?xml <svg>'],
     ['a DOCTYPE with a quote that never closes', '<!DOCTYPE svg PUBLIC "x><svg>'],
     ['a DOCTYPE whose internal subset never closes', '<!DOCTYPE svg [ <!ENTITY a "b"> <svg>'],
+    // A prolog is not a document: no root is no SVG, however much comes before it.
+    ['an XML declaration and nothing after it', '<?xml version="1.0"?>'],
+    ['an XML declaration and white space after it', '<?xml version="1.0"?>\n'],
+    ['a comment and nothing after it', '<!-- c -->'],
+    ['a DOCTYPE and nothing after it', '<!DOCTYPE svg>'],
+    ['a byte order mark and nothing after it', BOM],
+    ['white space and nothing else', ' \n'],
   ])('does not read %s as SVG', (_what, text) => {
     expect(sniffIconBytes(utf8(text), 'image/svg+xml')).toBe(false)
   })
+})
+
+describe('sniffIconBytes: SVG, the name of the root element', () => {
+  it.each<[what: string, text: string]>([
+    ['svg:svg bound to the SVG namespace', `<svg:svg xmlns:svg="${SVG_NS}"/>`],
+    ['a one-letter prefix', `<s:svg xmlns:s="${SVG_NS}" width="1"/>`],
+    ['a prefix of every name-character class: both cases of letter, a digit, "_", "-" and "."', `<Ab-c.d_e1:svg xmlns:Ab-c.d_e1="${SVG_NS}"/>`],
+    ['a prefix outside ASCII, in UTF-8', `<图:svg xmlns:图="${SVG_NS}"/>`],
+    ['a prefixed root after a prolog', `<?xml version="1.0"?><!-- c --><s:svg xmlns:s="${SVG_NS}">`],
+    ['a prefixed root followed by a line break', '<s:svg\n  width="1">'],
+  ])('reads %s as SVG', (_what, text) => {
+    expect(sniffIconBytes(utf8(text), 'image/svg+xml')).toBe(true)
+  })
+
+  it('reads a prefix outside ASCII in ISO-8859-1', () => {
+    const e = String.fromCharCode(0xe9)
+    const bytes = latin1(`<?xml version="1.0" encoding="ISO-8859-1"?><${e}:svg xmlns:${e}="${SVG_NS}"/>`)
+    expect(isUtf8(bytes)).toBe(false)
+    expect(sniffIconBytes(bytes, 'image/svg+xml')).toBe(true)
+  })
+
+  it.each<[what: string, text: string]>([
+    ['svg followed by more name', '<svgx>'],
+    ['a name that ends in svg', '<xsvg>'],
+    ['the letters svg with no "<" before them', 'xsvg>'],
+    ['a prefixed root whose local name merely starts with svg', '<svg:svgx>'],
+    ['an empty prefix', '<:svg>'],
+    ['an empty local name', '<svg:>'],
+    ['an empty prefix and a second colon', '<svg::svg>'],
+    ['two prefixes', '<svg:svg:svg>'],
+    ['a prefix that ends where white space begins', '<a b:svg>'],
+    ['an upper-case local name', '<s:SVG>'],
+    ['white space between "<" and the name', '< svg>'],
+    ['a prefixed root cut off after its name', '<s:svg'],
+  ])('does not read %s as SVG', (_what, text) => {
+    expect(sniffIconBytes(utf8(text), 'image/svg+xml')).toBe(false)
+  })
+})
+
+// A refusal tells the author their file does not hold SVG data, so a file a
+// browser draws is never refused. A browser reads an SVG in the encoding its
+// bytes announce, and so does the sniff.
+describe('sniffIconBytes: SVG, the encodings a browser reads', () => {
+  const prolog = (declared: string): string => `<?xml version="1.0" encoding="${declared}"?><!-- ${GRINNING_FACE} --><!DOCTYPE svg>${SVG_ROOT}`
 
   it.each<[what: string, bytes: Uint8Array]>([
-    ['bytes that are not valid UTF-8', bytesOf(0xc3, 0x28)],
-    ['an svg element followed by bytes that are not valid UTF-8', bytesOf(...ascii('<svg>'), 0xc3, 0x28)],
-    ['an overlong encoding of a NUL', bytesOf(...ascii('<svg>'), 0xc0, 0x80)],
+    ['UTF-16 little-endian with its byte order mark', utf16le(SVG_ROOT)],
+    ['UTF-16 big-endian with its byte order mark', utf16be(SVG_ROOT)],
+    ['UTF-16 little-endian with a declaration, a comment past the BMP and a DOCTYPE', utf16le(prolog('UTF-16'))],
+    ['UTF-16 big-endian with the same', utf16be(prolog('UTF-16'))],
+    ['UTF-16 with a byte order mark after white space', utf16le(` ${BOM}${SVG_ROOT}`)],
+    ['UTF-16 with a prefixed root', utf16le(`<s:svg xmlns:s="${SVG_NS}"/>`)],
+    ['ISO-8859-1 that says so, holding byte A9 in a comment and in a title', ISO_8859_1],
+    ['UTF-8 holding text outside ASCII', NON_ASCII_UTF8],
+    ['UTF-8 with a byte order mark and text outside ASCII', Buffer.concat([bytesOf(0xef, 0xbb, 0xbf), NON_ASCII_UTF8])],
+    // Only the prolog and the root are read, so what comes after is nobody's to
+    // judge here: the browser draws or it does not, and the shop falls back.
+    ['bytes that are no UTF-8 inside a comment before the root', INVALID_UTF8_IN_A_COMMENT],
+    ['an svg element followed by bytes that are no UTF-8', bytesOf(...ascii('<svg>'), 0xc3, 0x28)],
+    ['an svg element followed by an overlong NUL', bytesOf(...ascii('<svg>'), 0xc0, 0x80)],
+    ['an svg element followed by a lone surrogate written as UTF-8', bytesOf(...ascii('<svg>'), 0xed, 0xa0, 0x80)],
+  ])('reads %s as SVG', (_what, bytes) => {
+    expect(sniffIconBytes(bytes, 'image/svg+xml')).toBe(true)
+  })
+
+  // A good root does not save UTF-16 that is ill-formed. A stray byte or a lone
+  // surrogate is what a lenient decode would replace, and then accept.
+  it.each<[what: string, bytes: Uint8Array]>([
+    ['UTF-16 little-endian with a stray byte after it', Buffer.concat([utf16le(SVG_ROOT), bytesOf(0x41)])],
+    ['UTF-16 big-endian with a stray byte after it', Buffer.concat([utf16be(SVG_ROOT), bytesOf(0x41)])],
+    ['a UTF-16 byte order mark followed by one odd byte', bytesOf(0xff, 0xfe, 0x3c)],
+    ['UTF-16 little-endian with a lone high surrogate after it', Buffer.concat([utf16le(SVG_ROOT), bytesOf(0x00, 0xd8)])],
+    ['UTF-16 big-endian with a lone high surrogate after it', Buffer.concat([utf16be(SVG_ROOT), bytesOf(0xd8, 0x00)])],
+    ['UTF-16 little-endian with a lone low surrogate before the root', Buffer.concat([utf16le('<!--'), bytesOf(0x00, 0xdc), Buffer.from(`-->${SVG_ROOT}`, 'utf16le')])],
   ])('does not read %s as SVG', (_what, bytes) => {
     expect(sniffIconBytes(bytes, 'image/svg+xml')).toBe(false)
   })
 
-  // The scan never goes back over what it has passed, so a prolog as long as an
-  // icon may be costs a pass, and one that is never closed is refused after one.
+  // Not read: a mark and no document, UTF-16 that nothing announces, and bytes that are no text.
+  it.each<[what: string, bytes: Uint8Array]>([
+    ['a UTF-16 little-endian byte order mark and nothing after it', bytesOf(0xff, 0xfe)],
+    ['a UTF-16 big-endian byte order mark and nothing after it', bytesOf(0xfe, 0xff)],
+    ['UTF-16 little-endian that nothing announces', bareUtf16le(SVG_ROOT)],
+    ['UTF-16 big-endian that nothing announces', bareUtf16be(SVG_ROOT)],
+    ['two bytes that are no text at all, C3 28', bytesOf(0xc3, 0x28)],
+  ])('does not read %s as SVG', (_what, bytes) => {
+    expect(sniffIconBytes(bytes, 'image/svg+xml')).toBe(false)
+  })
+
+  it('reads the bytes a view covers, and not the buffer it sits in', () => {
+    const text = utf8(`xx${SVG_ROOT}yy`)
+    expect(sniffIconBytes(text.subarray(2, 2 + SVG_ROOT.length), 'image/svg+xml')).toBe(true)
+    expect(sniffIconBytes(text.subarray(1, 2 + SVG_ROOT.length), 'image/svg+xml')).toBe(false)
+    const wide = Buffer.concat([bytesOf(0x41, 0x42), utf16le(SVG_ROOT)])
+    expect(sniffIconBytes(wide.subarray(2), 'image/svg+xml')).toBe(true)
+    expect(sniffIconBytes(wide, 'image/svg+xml')).toBe(false)
+  })
+})
+
+// None of these is read twice, so what an author's file can cost is a pass over it.
+describe('sniffIconBytes: SVG, hostile shapes at the length of an icon', () => {
   it('reads a prolog of as many comments as fit in an icon', () => {
     const text = `${'<!---->'.repeat(Math.floor(MAX_CATALOG_ICON_BYTES / '<!---->'.length))}<svg>`
     expect(sniffIconBytes(utf8(text), 'image/svg+xml')).toBe(true)
+  })
+
+  it('reads a UTF-16 prolog of comments over as many bytes as an icon may have', () => {
+    const file = utf16le(`${'<!---->'.repeat(Math.ceil(MAX_CATALOG_ICON_BYTES / 2 / '<!---->'.length))}<svg>`)
+    expect(file.length).toBeGreaterThanOrEqual(MAX_CATALOG_ICON_BYTES)
+    expect(sniffIconBytes(file, 'image/svg+xml')).toBe(true)
   })
 
   // Each filler holds nothing that would close its opener: no `-->`, no `?>`,
@@ -176,6 +322,17 @@ describe('sniffIconBytes: SVG', () => {
     const text = opener + filler.repeat(Math.ceil(MAX_CATALOG_ICON_BYTES / filler.length))
     expect(utf8(text).length).toBeGreaterThanOrEqual(MAX_CATALOG_ICON_BYTES)
     expect(sniffIconBytes(utf8(text), 'image/svg+xml')).toBe(false)
+  })
+
+  it.each<[what: string, text: string, expected: boolean]>([
+    ['an element name as long as an icon', `<${'a'.repeat(MAX_CATALOG_ICON_BYTES)}`, false],
+    ['a prefix as long as an icon, then svg', `<${'a'.repeat(MAX_CATALOG_ICON_BYTES)}:svg>`, true],
+    ['a name that is all colons', `<${':'.repeat(MAX_CATALOG_ICON_BYTES)}`, false],
+    ['a prefix and a colon, repeated to the length of an icon', `<${'a:'.repeat(MAX_CATALOG_ICON_BYTES / 2)}svg>`, false],
+    ['white space as long as an icon, then svg', `${' '.repeat(MAX_CATALOG_ICON_BYTES)}<svg>`, true],
+  ])('reads %s once', (_what, text, expected) => {
+    expect(utf8(text).length).toBeGreaterThanOrEqual(MAX_CATALOG_ICON_BYTES)
+    expect(sniffIconBytes(utf8(text), 'image/svg+xml')).toBe(expected)
   })
 })
 
@@ -225,6 +382,13 @@ describe('checkIconBytes', () => {
 
   it.each(FILES)('accepts a small %s file that holds what its extension says', (mediaType, path) => {
     expect(checkIconBytes(SAMPLES[mediaType], declare(path, mediaType))).toEqual({ ok: true })
+  })
+
+  // The sentence says the file holds no SVG data, so it is only ever said of a file no browser draws.
+  it('never tells the author of a UTF-16 or an ISO-8859-1 SVG that it holds no SVG data', () => {
+    expect(checkIconBytes(utf16le(SVG_ROOT), svg)).toEqual({ ok: true })
+    expect(checkIconBytes(utf16be(SVG_ROOT), svg)).toEqual({ ok: true })
+    expect(checkIconBytes(ISO_8859_1, svg)).toEqual({ ok: true })
   })
 
   it('refuses a file with nothing in it for what it is not, not for its size', () => {

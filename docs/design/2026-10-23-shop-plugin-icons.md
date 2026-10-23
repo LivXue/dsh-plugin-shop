@@ -266,12 +266,28 @@ never a refusal: a refusal is the author's to fix, and a timeout is not
 - At most 32 KiB (decision 9; dsh's bound for an icon a market index carries,
   §3.3). Past it the icon is refused with the bound in its detail (§10).
   dsh's 256 KiB for an installed package is moot below it.
-- Its bytes agree with its extension: the PNG signature, a JPEG SOI marker, a
-  RIFF/WEBP header, or for `.svg` UTF-8 text whose first element is `<svg`.
-  dsh does not sniff; a PNG named `.svg` would only ever draw as a broken image
-  there and the default here (§8.1), so refusing it costs nothing and tells
-  the author why. The SVG check is a type check, not a sanitiser: the
-  defence is §8.5's.
+- Its bytes agree with its extension: the PNG signature, a JPEG start-of-image
+  marker and the first byte of the marker after it (`FF D8 FF`), a RIFF/WEBP
+  header, or for `.svg` a document whose first element is `svg`, with a
+  namespace prefix or without one, after any white space, byte order marks,
+  comments, processing instructions and DOCTYPE. dsh does not sniff; a PNG
+  named `.svg` would only ever draw as a broken image there and the default
+  here (§8.1), so refusing it costs nothing and tells the author why. The SVG
+  check is a type check, not a sanitiser: the defence is §8.5's.
+
+  Refusing costs nothing only for bytes a browser cannot draw, because the
+  refusal tells the author the file does not hold SVG data. So an SVG is read
+  the way a browser reads one, not as UTF-8 text: a UTF-16 byte order mark
+  selects UTF-16, in either order, which must decode cleanly, and any other
+  bytes are read one character each, so UTF-8, ISO-8859-1 and the other
+  ASCII-compatible encodings all reach the root element. Nothing past the root
+  is read, so the encoding of the rest of the file is not validated; a file
+  accepted that a browser then fails to decode costs nothing, because its
+  `<img>` falls back to the default artwork (decision 3). None of three kinds
+  of file that browsers draw is refused: UTF-16 with a byte order mark
+  (Windows PowerShell 5's redirect writes it), an ISO-8859-1 file that says so
+  and holds a high byte, and a root written `svg:svg` and bound to the SVG
+  namespace. UTF-16 without a byte order mark, and UTF-32, are not read.
 
 The checks are pure, and fixtures drive them.
 
