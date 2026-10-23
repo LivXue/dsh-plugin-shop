@@ -17,12 +17,14 @@ import { posix } from 'node:path'
 
 /**
  * The conditions an `exports` map is matched against: the ones Node 26's ESM
- * resolver applies by default, which are `node` and `import`, `module-sync`
- * (it matched on 26.6.0) and `default`, the one that matches whatever is left.
- * Not `require`, `browser`, `types` or `development`: a map whose only usable
- * target sits behind one of those resolves nothing, and dsh sees nothing.
+ * resolver applies by default, which are `node`, `node-addons` (on unless Node
+ * runs with `--no-addons`), `import`, `module-sync` and `default`, the one that
+ * matches whatever is left. A scan of 40 condition names on 26.6.0 matched
+ * these five and no other. Not `require`, `browser`, `types` or `development`:
+ * a map whose only usable target sits behind one of those resolves nothing,
+ * and dsh sees nothing.
  */
-export const EXPORT_CONDITIONS: ReadonlySet<string> = new Set(['node', 'import', 'module-sync', 'default'])
+export const EXPORT_CONDITIONS: ReadonlySet<string> = new Set(['node', 'node-addons', 'import', 'module-sync', 'default'])
 
 /**
  * Where an `exports` map sends a subpath. `path` is relative to the package
@@ -35,6 +37,11 @@ export const EXPORT_CONDITIONS: ReadonlySet<string> = new Set(['node', 'import',
  * that the author exported an icon, while the same target under an exact
  * `./icon` key is the author's own statement. A package with no `exports`
  * field resolves `./package.json` as `exact`: there is no map to match against.
+ *
+ * What comes back stays inside the package: no segment of `path` is `.`, `..`
+ * or `node_modules`, however it is spelled, and none holds an escaped slash.
+ * Later code reads files and builds keys from it, and the map it came from is
+ * hostile input.
  */
 export interface ResolvedSubpath {
   path: string
@@ -54,8 +61,14 @@ const MAX_TARGET_DEPTH = 32
  * recovers from only one. An invalid target (no leading `./`, a refused
  * segment, a number) is skipped by the next member of an array exactly as a
  * `null` member is, so it is `null` here. The others (a condition object with
- * an array-index key, a `*` that matched a refused segment) end the whole
- * resolution whatever else the array holds. That is `FATAL`.
+ * an array-index key, a `*` that matched a refused segment, an escaped slash in
+ * the path that came out) end the whole resolution whatever else the array
+ * holds. That is `FATAL`.
+ *
+ * It is also what a path gets when it holds a segment the shop refuses though
+ * Node would have resolved it (a `..` composed by a star, which Node resolves
+ * outside the package): Node's array stops at that member, so no later member
+ * may stand in for the one it took.
  */
 const FATAL = Symbol('fatal')
 
@@ -77,11 +90,15 @@ type Resolved = string | null | undefined | typeof FATAL
  * 26.6.0's own resolver, not only the specification, because the two differ
  * in small ways and dsh asks the resolver (the test file lists them).
  *
+ * Deliberately stricter than Node: the path that comes out is checked again
+ * (see `resolveString`), so a star cannot compose a `..` or a `node_modules`
+ * that Node would resolve, outside the package for the first.
+ *
  * Deliberately not replicated: Node reads a target as a URL, so a `%XX`
- * escape, a `?query` or a `#fragment` in one is decoded, dropped or, for an
- * encoded slash, refused before the file is looked up. This reads it as a path
- * and keeps them as written. No icon path carries one, and they are not worth
- * a URL parser in a pure core.
+ * escape in one is decoded, and a `?query` or a `#fragment` dropped, before
+ * the file is looked up. This reads it as a path and keeps them as written,
+ * bar an escaped slash or backslash, which is refused as it is in Node. No
+ * icon path carries one, and they are not worth a URL parser in a pure core.
  *
  * @param exportsField - the manifest's `exports`, untrusted: any JSON value.
  */
@@ -173,10 +190,14 @@ function resolveTarget(target: unknown, match: string | null, depth: number): Re
   return null
 }
 
+/** An escaped slash or backslash: Node refuses a path that holds one. */
+const ESCAPED_SEPARATOR = /%2f|%5c/i
+
 /**
  * A string target as a path inside the package. It must start with `./` (a
  * bare specifier is allowed only in `imports`), and none of its segments, nor
- * those of what the star matched, may be one Node refuses.
+ * those of what the star matched, may be one Node refuses. Then the path that
+ * comes out is held to the same rule.
  */
 function resolveString(target: string, match: string | null): string | null | typeof FATAL {
   if (!target.startsWith('./')) return null
@@ -187,17 +208,29 @@ function resolveString(target: string, match: string | null): string | null | ty
   // Normalising the whole target, `./` included, is what keeps `.//x.svg` from
   // coming out as the absolute `/x.svg`. A backslash is a separator to Node,
   // whose URL reading turns it into a slash, so it is one here.
-  const path = posix.normalize(filled.replaceAll('\\', '/'))
-  return path === './' ? '' : path
+  const normalised = posix.normalize(filled.replaceAll('\\', '/'))
+  const path = normalised === './' ? '' : normalised
+  // The two halves were clean, but a star can compose what neither held. With
+  // a key such as `.*` the match starts with a slash, so a target segment
+  // `..*` fills in as `..`; with `./ic*n` the match is `o`, so `n*de_modules`
+  // fills in as `node_modules`. Node does not look again: it resolves
+  // `{ '.*': './..*' }` for `./icon` to a file outside the package. `exports`
+  // is hostile and `path` drives reads and keys further on, so the path that
+  // comes out is held to the rule the target was. It is `FATAL`, not skipped:
+  // Node takes this member, so none after it may stand in. An escaped slash or
+  // backslash goes the same way, as Node refuses it after choosing the member,
+  // and because it could hide a separator from the segment check.
+  if (refused(path) || ESCAPED_SEPARATOR.test(path)) return FATAL
+  return path
 }
 
 /**
  * Whether a path holds a segment Node refuses in a target: `.`, `..` or
  * `node_modules`, split on either kind of slash, in any case, and spelled out
- * or with percent escapes. Segments are read as written, before anything is
- * collapsed, so `a/../x.svg` is refused though it stays inside the package.
- * The check also keeps the normalised path from climbing out: there is no
- * `..` left for `posix.normalize` to leave at its front.
+ * or with percent escapes. Segments are read as they stand: a target written
+ * `a/../x.svg` is refused though it stays inside the package, because Node
+ * reads it before anything is collapsed. It is applied to a target as written,
+ * to what a star matched, and to the path that comes out.
  */
 function refused(path: string): boolean {
   return path.split(/[\\/]/).some((segment) => {

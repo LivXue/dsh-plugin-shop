@@ -76,7 +76,7 @@ Phase 2, the shop (pull request 2):
 
 **Interfaces:**
 - Produces:
-  - `export const EXPORT_CONDITIONS: ReadonlySet<string>`, holding `node`, `import`, `module-sync` and `default`: what Node 26's ESM resolver matches by default.
+  - `export const EXPORT_CONDITIONS: ReadonlySet<string>`, holding `node`, `node-addons`, `import`, `module-sync` and `default`: what Node 26's ESM resolver matches by default.
   - `export interface ResolvedSubpath { path: string; via: 'exact' | 'pattern' }`. `path` is normalised POSIX with no leading `./`.
   - `export function resolveExportsSubpath(exportsField: unknown, subpath: './package.json' | './icon'): ResolvedSubpath | null`
 
