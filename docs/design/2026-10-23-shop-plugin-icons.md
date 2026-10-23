@@ -23,13 +23,22 @@ installing it, shows a name in monospace and nothing else, so a plugin whose
 author drew an icon looks exactly like one whose author did not, and the
 reader who installs it then meets an icon in dsh they never saw in the shop.
 
-**Most plugins have none, so the absence has to look right too.** Every 20th
-npm line of `registry/snapshots/manifest.lock` was read from the registry
-(6,372 npm lines, 318 answered): 16 declare an icon (5.0%), 15 of them through
-a package.json `icon` naming an `.svg`, one through an `./icon` export. GitHub
-entries were not sampled. On the shelf's default order the first ten cards held
-one icon (`@openviking/dsh-memory-plugin`). The shelf is therefore mostly the
-default artwork, and §8 is designed for that page, not for the 5%.
+**Most plugins have none, so the absence has to look right too.** Every 4th
+npm line of the 2026-10-23 `registry/snapshots/manifest.lock` was read from
+the registry (1,984 manifests): 289 declare an icon (14.6%), 183 through a
+package.json `icon` alone, 78 through an `./icon` export alone, 28 through
+both. A first sample, on a lock two weeks older, read 16 of 318 (5.0%): the
+icons are spreading fast, mostly among new plugins. GitHub entries were not
+sampled. On the shelf's default order the first ten cards held one icon
+(`@openviking/dsh-memory-plugin`). The shelf is still mostly the default
+artwork, and §8 is designed for that page.
+
+**Most icons are tiny, a few are not.** 286 of those icons were measured
+(jsDelivr `HEAD`, 2026-10-23): median 321 bytes, p90 2.1 KiB, p99 181 KiB,
+largest 210 KiB, none past dsh's 256 KiB. 259 are SVG (836 bytes on average);
+22 PNG (61 KiB on average), 2 WebP and 2 JPEG are 9% of the icons and 86% of
+the bytes (1.66 of 1.93 MB). Two declarations dsh would refuse: an `icon` that
+is itself a `data:` URL, and a path ending `.icon`.
 
 ## 2. Decisions (LivXue, 2026-10-23)
 
@@ -62,14 +71,26 @@ default artwork, and §8 is designed for that page, not for the 5%.
 
 ### 3.1 Reading an icon (0.1.7-rc.2, 0.2.0-rc.2, 0.2.1-rc.2)
 
-`iconOf` in `dsh-app-boot` (`lib/types/package-meta.js`; read in full in
-0.2.1-rc.2, the same constant and function present in 0.1.7-rc.2 and
-0.2.0-rc.2):
+`readPluginMeta` and `iconOf` in `dsh-app-boot` (`lib/types/package-meta.js`).
+The versions differ, and the difference is large in practice (§1):
 
-- **Two sources, in order.** A package.json `icon` string; otherwise an
-  exported `<specifier>/icon` resource, resolved through Node's ESM resolver
-  without evaluating the package, and required to lie inside the package that
-  owns the specifier.
+- **The manifest is found through the package's `exports`.** Every version
+  resolves `<name>/package.json` with Node's resolver (`optionalResourcePath`),
+  so a package whose `exports` map does not expose `./package.json` has no
+  manifest as far as dsh is concerned, and its `icon` field is never read. A
+  package with no `exports` field resolves it.
+- **0.1.7-rc.2 and 0.2.0-rc.2** have `iconOf(value, manifestPath)`: the
+  package.json `icon` and nothing else.
+- **0.2.1-rc.2** adds a second source: when the manifest does not resolve, or
+  carries no `icon`, an exported `<specifier>/icon` resource, resolved the same
+  way without evaluating the package and required to lie inside the package
+  that owns the specifier. A resolvable manifest's `icon` wins over the export.
+- **A bad `icon` is an error, not a fall-through.** An `icon` that is present
+  but not a non-empty string throws (`must be a non-empty string`); dsh then
+  shows no icon at all, and never tries the export.
+- On the 289 icons of §1, read by Node's documented resolution of the two
+  subpaths with the default conditions: 0.1.7/0.2.0 would draw 207, 0.2.1
+  would draw 288, neither would draw 1.
 - **The `icon` path** must be relative: an absolute path, a Windows absolute
   path, or anything with a URL scheme (`/^[A-Za-z][A-Za-z\d+.-]*:/`) throws
   `icon must be a relative file path`. Resolved against the manifest's real
@@ -149,12 +170,26 @@ Each icon is keyed by exactly what it was read from:
 - a release-rescued GitHub entry: `release:<sha256 of the tarball>:<path>`
 
 A key never changes meaning: the same version, commit or tarball always holds
-the same bytes. So the build reuses the icons it published last: at start it
-reads the published `index.json` from the Pages URL, follows its `icons`
-pointer (§6) and checks the file's sha256, and every key found there is reused
-without a request. Only keys it has not seen (a new version, a new commit, a
-new declaration) are fetched. If the published file cannot be read (the first
-run, an outage), everything is fetched, under §5.3's budget.
+the same bytes, so an outcome read once holds forever. Two stores keep it, and
+neither is git history for third-party images (builder check, 2026-10-23: the
+published file alone could not remember a key it never published):
+
+- **`registry/icon-state.json`, committed with the daily snapshot** (it joins
+  the snapshot step's `git add` list in `daily.yml`, which `workflow.test.ts`
+  checks): one row per key with its outcome, either the sha256, media type and
+  size of the bytes, or the refusal with its detail, or "not read" with its
+  cause. No bytes. A refused or not-read key is never fetched again, and the
+  report's rows (§10) are rebuilt from these rows, not from a fresh fetch. A
+  row whose key no listing names any more is dropped.
+- **The bytes are the published icons file's** (§6): at start the build reads
+  the published `index.json` from the Pages URL, follows its `icons` pointer
+  and checks the file's sha256. A key whose recorded sha256 is in it is reused
+  without a request. One that is not (the first run, an outage, a deploy that
+  failed after the snapshot commit) is fetched again from its recorded source,
+  §5.2, under §5.3's budget, and must hash to the recorded sha256; one that no
+  longer does is re-read as new.
+
+Only keys no row knows are fetched for the first time.
 
 ### 5.2 Where the bytes come from
 
@@ -178,7 +213,17 @@ run, an outage), everything is fetched, under §5.3's budget.
   refusal that names the commit, and the next commit is a new key.
 - **A release-rescued entry: the release tarball the harvest already
   downloads** (`downloadReleaseAsset`, `openPackedManifest`), the member taken
-  in the same pass that reads its manifest, so it costs no request.
+  in the same pass that reads its manifest, so it costs no request. The
+  harvest downloads that asset only when it reads the repository, so when the
+  bytes are needed again (§5.1) the icon step downloads the recorded asset
+  itself, through the same `downloadReleaseAsset` and its 300-second deadline,
+  and checks it against the entry's `tarball.sha256`.
+- **Only what the install would install.** pnpm installs a git dependency the
+  way `npm pack` would pack it, so a GitHub package.json `files` list that
+  leaves the icon out means dsh never sees it: refused, with a detail that
+  names `files`. `.npmignore` is not read (a request per repository for a
+  rare case); an icon it excludes will be published and draw where dsh would
+  not.
 
 Every new fetching path goes through `http-body.ts`, and its module joins
 `SCANNED_SOURCES` in `github-client.test.ts` if it is not one already listed;
