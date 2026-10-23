@@ -563,7 +563,12 @@ export function diffRepoState(
     } else if (hasStaleDeclarations(recorded)) {
       // Only when nothing above applies: every full fetch re-projects the
       // manifest and stamps it, so a repository in both queues would be read
-      // twice for the same answer.
+      // twice for the same answer. That holds for a repository FETCHED, and the
+      // caller cuts `toFetch` at its budget: one it defers is not fetched, so
+      // the caller re-reads it from `toFetch` (harvestOnce), at its recorded
+      // commit, when its recorded candidates need it. So this exclusion keeps
+      // the queues disjoint for what is fetched, and does not keep a deferred
+      // repository from its re-read.
       toReread.push(repo)
     }
   }
