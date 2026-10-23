@@ -91,6 +91,9 @@ describe('the fixtures', () => {
     expect([...utf16be('<').subarray(0, 4)]).toEqual([0xfe, 0xff, 0x00, 0x3c])
     expect([...bareUtf16le('<')]).toEqual([0x3c, 0x00])
     expect([...bareUtf16be('<')]).toEqual([0x00, 0x3c])
+    // The four bytes of `<?` that XML 1.0 Appendix F reads as UTF-16 with no mark.
+    expect([...bareUtf16le('<?')]).toEqual([0x3c, 0x00, 0x3f, 0x00])
+    expect([...bareUtf16be('<?')]).toEqual([0x00, 0x3c, 0x00, 0x3f])
     expect(ISO_8859_1.filter((byte) => byte === 0xa9)).toHaveLength(2)
     expect(isUtf8(ISO_8859_1)).toBe(false)
     expect(isUtf8(INVALID_UTF8_IN_A_COMMENT)).toBe(false)
@@ -239,7 +242,7 @@ describe('sniffIconBytes: SVG, the name of the root element', () => {
 
 // A refusal tells the author their file does not hold SVG data, so a file a
 // browser draws is never refused. A browser reads an SVG in the encoding its
-// bytes announce, and so does the sniff.
+// bytes announce, and decodes UTF-16 with replacement, and so does the sniff.
 describe('sniffIconBytes: SVG, the encodings a browser reads', () => {
   const prolog = (declared: string): string => `<?xml version="1.0" encoding="${declared}"?><!-- ${GRINNING_FACE} --><!DOCTYPE svg>${SVG_ROOT}`
 
@@ -250,6 +253,22 @@ describe('sniffIconBytes: SVG, the encodings a browser reads', () => {
     ['UTF-16 big-endian with the same', utf16be(prolog('UTF-16'))],
     ['UTF-16 with a byte order mark after white space', utf16le(` ${BOM}${SVG_ROOT}`)],
     ['UTF-16 with a prefixed root', utf16le(`<s:svg xmlns:s="${SVG_NS}"/>`)],
+    // XML 1.0 Appendix F: with no mark, the UTF-16 form of `<?` is how a parser
+    // knows the file is UTF-16. It opens an XML declaration, or any instruction.
+    ['UTF-16 little-endian with no mark that opens with an XML declaration', bareUtf16le(prolog('UTF-16'))],
+    ['UTF-16 big-endian with no mark that opens with an XML declaration', bareUtf16be(prolog('UTF-16'))],
+    ['UTF-16 little-endian with no mark that opens with an instruction that is no declaration', bareUtf16le(`<?p q?>${SVG_ROOT}`)],
+    ['UTF-16 big-endian with no mark that opens with an instruction that is no declaration', bareUtf16be(`<?p q?>${SVG_ROOT}`)],
+    // A browser decodes UTF-16 with replacement: a stray last byte, or a lone
+    // surrogate, becomes U+FFFD and the file is read on. Each of these has its
+    // root where the replacement cannot reach it, after it or past a comment.
+    ['UTF-16 little-endian with a stray byte after the root, which a browser decodes to U+FFFD', Buffer.concat([utf16le(SVG_ROOT), bytesOf(0x41)])],
+    ['UTF-16 big-endian with a stray byte after the root, which a browser decodes to U+FFFD', Buffer.concat([utf16be(SVG_ROOT), bytesOf(0x41)])],
+    ['UTF-16 little-endian with a lone high surrogate after the root, which a browser decodes to U+FFFD', Buffer.concat([utf16le(SVG_ROOT), bytesOf(0x00, 0xd8)])],
+    ['UTF-16 big-endian with a lone high surrogate after the root, which a browser decodes to U+FFFD', Buffer.concat([utf16be(SVG_ROOT), bytesOf(0xd8, 0x00)])],
+    ['UTF-16 little-endian with a lone low surrogate in a comment before the root', Buffer.concat([utf16le('<!--'), bytesOf(0x00, 0xdc), Buffer.from(`-->${SVG_ROOT}`, 'utf16le')])],
+    ['UTF-16 with no mark and a stray byte after the root', Buffer.concat([bareUtf16le(prolog('UTF-16')), bytesOf(0x41)])],
+    ['UTF-16 with no mark and a lone surrogate after the root', Buffer.concat([bareUtf16le(prolog('UTF-16')), bytesOf(0x00, 0xd8)])],
     ['ISO-8859-1 that says so, holding byte A9 in a comment and in a title', ISO_8859_1],
     ['UTF-8 holding text outside ASCII', NON_ASCII_UTF8],
     ['UTF-8 with a byte order mark and text outside ASCII', Buffer.concat([bytesOf(0xef, 0xbb, 0xbf), NON_ASCII_UTF8])],
@@ -263,25 +282,28 @@ describe('sniffIconBytes: SVG, the encodings a browser reads', () => {
     expect(sniffIconBytes(bytes, 'image/svg+xml')).toBe(true)
   })
 
-  // A good root does not save UTF-16 that is ill-formed. A stray byte or a lone
-  // surrogate is what a lenient decode would replace, and then accept.
+  // Replacement decodes what is ill-formed and makes no root of it: a stray byte
+  // or a lone surrogate after a mark is U+FFFD, and U+FFFD opens no element.
+  // Nor does a UTF-16 file that announces itself and holds no root.
   it.each<[what: string, bytes: Uint8Array]>([
-    ['UTF-16 little-endian with a stray byte after it', Buffer.concat([utf16le(SVG_ROOT), bytesOf(0x41)])],
-    ['UTF-16 big-endian with a stray byte after it', Buffer.concat([utf16be(SVG_ROOT), bytesOf(0x41)])],
-    ['a UTF-16 byte order mark followed by one odd byte', bytesOf(0xff, 0xfe, 0x3c)],
-    ['UTF-16 little-endian with a lone high surrogate after it', Buffer.concat([utf16le(SVG_ROOT), bytesOf(0x00, 0xd8)])],
-    ['UTF-16 big-endian with a lone high surrogate after it', Buffer.concat([utf16be(SVG_ROOT), bytesOf(0xd8, 0x00)])],
-    ['UTF-16 little-endian with a lone low surrogate before the root', Buffer.concat([utf16le('<!--'), bytesOf(0x00, 0xdc), Buffer.from(`-->${SVG_ROOT}`, 'utf16le')])],
+    ['a UTF-16 byte order mark and one stray byte, which decode to no root', bytesOf(0xff, 0xfe, 0x3c)],
+    ['a UTF-16 byte order mark and a lone surrogate, which decode to no root', bytesOf(0xff, 0xfe, 0x00, 0xd8)],
+    ['a UTF-16 little-endian byte order mark and nothing after it', bytesOf(0xff, 0xfe)],
+    ['a UTF-16 big-endian byte order mark and nothing after it', bytesOf(0xfe, 0xff)],
+    ['UTF-16 little-endian with no mark that opens with an XML declaration and holds no root', bareUtf16le('<?xml version="1.0"?>')],
+    ['UTF-16 big-endian with no mark that opens with an XML declaration and holds no root', bareUtf16be('<?xml version="1.0"?>')],
   ])('does not read %s as SVG', (_what, bytes) => {
     expect(sniffIconBytes(bytes, 'image/svg+xml')).toBe(false)
   })
 
-  // Not read: a mark and no document, UTF-16 that nothing announces, and bytes that are no text.
+  // XML 1.0 Appendix F names the bytes of `<?` as the one start that tells UTF-16
+  // with no mark from the rest, so UTF-16 that begins otherwise is not read.
   it.each<[what: string, bytes: Uint8Array]>([
-    ['a UTF-16 little-endian byte order mark and nothing after it', bytesOf(0xff, 0xfe)],
-    ['a UTF-16 big-endian byte order mark and nothing after it', bytesOf(0xfe, 0xff)],
-    ['UTF-16 little-endian that nothing announces', bareUtf16le(SVG_ROOT)],
-    ['UTF-16 big-endian that nothing announces', bareUtf16be(SVG_ROOT)],
+    ['UTF-16 little-endian with no mark and no declaration, `<svg/>`', bareUtf16le(SVG_ROOT)],
+    ['UTF-16 big-endian with no mark and no declaration, `<svg/>`', bareUtf16be(SVG_ROOT)],
+    ['UTF-16 with no mark that opens with a comment', bareUtf16le(`<!-- c -->${SVG_ROOT}`)],
+    ['UTF-16 with no mark that opens with white space and then a declaration', bareUtf16le(` ${prolog('UTF-16')}`)],
+    ['the first three bytes of `<?` in UTF-16', bytesOf(0x3c, 0x00, 0x3f)],
     ['two bytes that are no text at all, C3 28', bytesOf(0xc3, 0x28)],
   ])('does not read %s as SVG', (_what, bytes) => {
     expect(sniffIconBytes(bytes, 'image/svg+xml')).toBe(false)
@@ -308,6 +330,27 @@ describe('sniffIconBytes: SVG, hostile shapes at the length of an icon', () => {
     const file = utf16le(`${'<!---->'.repeat(Math.ceil(MAX_CATALOG_ICON_BYTES / 2 / '<!---->'.length))}<svg>`)
     expect(file.length).toBeGreaterThanOrEqual(MAX_CATALOG_ICON_BYTES)
     expect(sniffIconBytes(file, 'image/svg+xml')).toBe(true)
+  })
+
+  it('reads the same with no mark, which a file that opens with `<?` may have', () => {
+    const file = bareUtf16le(`<?p?>${'<!---->'.repeat(Math.ceil(MAX_CATALOG_ICON_BYTES / 2 / '<!---->'.length))}<svg>`)
+    expect(file.length).toBeGreaterThanOrEqual(MAX_CATALOG_ICON_BYTES)
+    expect(sniffIconBytes(file, 'image/svg+xml')).toBe(true)
+  })
+
+  // Every other unit of the comment is a lone surrogate, which is replaced, and
+  // the root is still found after it.
+  it('reads a UTF-16 comment of lone surrogates over as many bytes as an icon may have, then svg', () => {
+    const unit = Buffer.concat([bytesOf(0x00, 0xd8), Buffer.from('a', 'utf16le')])
+    const comment = Buffer.concat(Array.from({ length: Math.ceil(MAX_CATALOG_ICON_BYTES / unit.length) }, () => unit))
+    const file = Buffer.concat([utf16le('<!--'), comment, Buffer.from(`-->${SVG_ROOT}`, 'utf16le')])
+    expect(file.length).toBeGreaterThanOrEqual(MAX_CATALOG_ICON_BYTES)
+    expect(sniffIconBytes(file, 'image/svg+xml')).toBe(true)
+  })
+
+  it('refuses UTF-16 that is nothing but lone surrogates, over as many bytes as an icon may have', () => {
+    const file = Buffer.concat([bytesOf(0xff, 0xfe), Buffer.alloc(MAX_CATALOG_ICON_BYTES, bytesOf(0x00, 0xd8))])
+    expect(sniffIconBytes(file, 'image/svg+xml')).toBe(false)
   })
 
   // Each filler holds nothing that would close its opener: no `-->`, no `?>`,
@@ -388,6 +431,8 @@ describe('checkIconBytes', () => {
   it('never tells the author of a UTF-16 or an ISO-8859-1 SVG that it holds no SVG data', () => {
     expect(checkIconBytes(utf16le(SVG_ROOT), svg)).toEqual({ ok: true })
     expect(checkIconBytes(utf16be(SVG_ROOT), svg)).toEqual({ ok: true })
+    expect(checkIconBytes(bareUtf16le(`<?xml version="1.0" encoding="UTF-16"?>${SVG_ROOT}`), svg)).toEqual({ ok: true })
+    expect(checkIconBytes(Buffer.concat([utf16le(SVG_ROOT), bytesOf(0x41)]), svg)).toEqual({ ok: true })
     expect(checkIconBytes(ISO_8859_1, svg)).toEqual({ ok: true })
   })
 

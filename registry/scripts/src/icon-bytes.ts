@@ -45,9 +45,21 @@ const JPEG_START = [0xff, 0xd8, 0xff]
 const RIFF = [0x52, 0x49, 0x46, 0x46]
 const WEBP = [0x57, 0x45, 0x42, 0x50]
 
-/** The two bytes a UTF-16 file starts with, which also say which byte of each character comes first. */
-const UTF16LE_MARK = [0xff, 0xfe]
-const UTF16BE_MARK = [0xfe, 0xff]
+/**
+ * How a file is known to be UTF-16, which is how XML 1.0 Appendix F tells it
+ * from the rest. It starts with a byte order mark, in either order, which is no
+ * part of its text and which `skip` steps over. Or it has no mark and starts
+ * with the four bytes of `<?` in UTF-16, which open an XML declaration or any
+ * instruction and are part of the text. A file with no mark that starts any
+ * other way, `<svg/>` with no declaration before it, matches none of these:
+ * Appendix F names no pattern for it.
+ */
+const UTF16_FORMS = [
+  { label: 'utf-16le', start: [0xff, 0xfe], skip: 2 },
+  { label: 'utf-16be', start: [0xfe, 0xff], skip: 2 },
+  { label: 'utf-16le', start: [0x3c, 0x00, 0x3f, 0x00], skip: 0 },
+  { label: 'utf-16be', start: [0x00, 0x3c, 0x00, 0x3f], skip: 0 },
+] as const
 
 /**
  * Whether the bytes are the kind of file `mediaType` names.
@@ -63,7 +75,7 @@ const UTF16BE_MARK = [0xfe, 0xff]
  * reaching the page only as an image's `src` (§8.5). So each format is read
  * for its opening bytes and nothing past them. PNG is its eight-byte
  * signature, JPEG is {@link JPEG_START}, WebP is `RIFF`, a four-byte size and
- * `WEBP`, and SVG is a first element named `svg` ({@link isSvg}).
+ * `WEBP`, and SVG is a first element named `svg` ({@link startsWithSvgElement}).
  */
 export function sniffIconBytes(bytes: Uint8Array, mediaType: IconMediaType): boolean {
   switch (mediaType) {
@@ -74,7 +86,7 @@ export function sniffIconBytes(bytes: Uint8Array, mediaType: IconMediaType): boo
     case 'image/webp':
       return hasBytesAt(bytes, 0, RIFF) && hasBytesAt(bytes, 8, WEBP)
     case 'image/svg+xml':
-      return isSvg(bytes)
+      return startsWithSvgElement(svgText(bytes))
   }
 }
 
@@ -83,46 +95,35 @@ function hasBytesAt(bytes: Uint8Array, offset: number, expected: readonly number
   return expected.every((byte, index) => bytes[offset + index] === byte)
 }
 
-function isSvg(bytes: Uint8Array): boolean {
-  const text = svgText(bytes)
-  return text !== null && startsWithSvgElement(text)
-}
-
 /**
- * An SVG file's text, as far as its prolog and root element need it, or `null`
- * for a file that announces UTF-16 and does not decode as UTF-16.
+ * An SVG file's text, as far as its prolog and root element need it.
  *
  * It is read in the encoding a browser would choose, because that is what
  * keeps a refusal true (design §5.4): an author told their file holds no SVG
- * data must have a file no browser draws. A UTF-16 byte order mark selects
- * UTF-16, in either order, and the text must decode cleanly. Any other bytes
- * are read one character each, so that UTF-8, ISO-8859-1 and the other
- * ASCII-compatible encodings an XML declaration may name all show the same
- * ASCII prolog and root name. An author's own non-ASCII characters land at
- * U+0080 and above, which {@link isNameChar} accepts inside a name and which
- * the prolog skips inside a comment, an instruction or a literal.
+ * data must have a file no browser draws. A file {@link UTF16_FORMS} knows as
+ * UTF-16 is decoded the way a browser decodes it, with replacement: a lone
+ * surrogate or a stray last byte becomes U+FFFD, which opens no element and
+ * which a comment, an instruction or a literal skips, and the file is read on.
+ * Replacement fails for no bytes, so nothing is caught here; the one label
+ * that depends on the platform, `utf-16be`, needs the ICU every official Node
+ * build carries. Any other bytes are read one character each, so that UTF-8,
+ * ISO-8859-1 and the other ASCII-compatible encodings an XML declaration may
+ * name all show the same ASCII prolog and root name. An author's own non-ASCII
+ * characters land at U+0080 and above, which {@link isNameChar} accepts inside
+ * a name and which the prolog skips inside a comment, an instruction or a
+ * literal.
  *
  * Nothing past the root element is read, so how the rest of the file is
  * encoded is not checked: a browser that cannot decode the image draws the
  * default artwork (design decision 3), and a false acceptance costs nothing.
- * Not read at all: UTF-16 without a byte order mark, and UTF-32.
+ * Not read as UTF-16: a file with no mark that does not start with `<?`, and
+ * UTF-32.
  */
-function svgText(bytes: Uint8Array): string | null {
-  if (hasBytesAt(bytes, 0, UTF16LE_MARK)) return decodeUtf16('utf-16le', bytes.subarray(UTF16LE_MARK.length))
-  if (hasBytesAt(bytes, 0, UTF16BE_MARK)) return decodeUtf16('utf-16be', bytes.subarray(UTF16BE_MARK.length))
-  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('latin1')
-}
-
-function decodeUtf16(label: 'utf-16le' | 'utf-16be', bytes: Uint8Array): string | null {
-  try {
-    return new TextDecoder(label, { fatal: true }).decode(bytes)
-  } catch {
-    // The decoder throws a TypeError for an odd trailing byte or a lone
-    // surrogate and for nothing else, given a Uint8Array and a label it knows.
-    // It is this check's answer: a file that announces UTF-16 and is not
-    // UTF-16 is no document a browser reads.
-    return null
+function svgText(bytes: Uint8Array): string {
+  for (const { label, start, skip } of UTF16_FORMS) {
+    if (hasBytesAt(bytes, 0, start)) return new TextDecoder(label).decode(bytes.subarray(skip))
   }
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('latin1')
 }
 
 /** XML's white space. */
