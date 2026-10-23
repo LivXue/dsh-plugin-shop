@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { MAX_CATALOG_ICON_BYTES, checkIconBytes, iconDataUrl, sha256Hex, sniffIconBytes } from '../src/icon-bytes.ts'
 import { iconDetail, shownPath } from '../src/icon-declaration.ts'
 import type { IconDeclaration, IconMediaType } from '../src/icon-declaration.ts'
+import { isIconDataUrl } from '../src/icons-assemble.ts'
 
 const utf8 = (text: string): Uint8Array => new TextEncoder().encode(text)
 const latin1 = (text: string): Uint8Array => Buffer.from(text, 'latin1')
@@ -498,13 +499,15 @@ describe('iconDataUrl', () => {
     expect(iconDataUrl(whole.subarray(2, 8), 'image/svg+xml')).toBe('data:image/svg+xml;base64,PHN2Zy8+')
   })
 
-  // Task 6 reads the icons file back by this grammar and no other: the type,
-  // `;base64,`, then the standard alphabet in groups of four, padded.
-  it('writes one grammar, for every type and for every length modulo three', () => {
+  // The icons file is read back by `isIconDataUrl` and by no other grammar, so
+  // what is written here must be what is read there, and the two are held to one
+  // definition. The lengths start at one: an empty file is no icon
+  // (`checkIconBytes` refuses it), so no empty payload is ever written, and the
+  // grammar asks for a payload.
+  it('writes what the icons file reads, for every type and for every length modulo three', () => {
     for (const mediaType of MEDIA_TYPES) {
-      for (let length = 0; length <= 9; length++) {
-        const url = iconDataUrl(new Uint8Array(length).fill(0xab), mediaType)
-        expect(url).toMatch(/^data:image\/(?:svg\+xml|png|jpeg|webp);base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/)
+      for (let length = 1; length <= 9; length++) {
+        expect(isIconDataUrl(iconDataUrl(new Uint8Array(length).fill(0xab), mediaType))).toBe(true)
       }
     }
   })
