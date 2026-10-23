@@ -268,9 +268,13 @@ A per-run budget bounds the new fetches, in the idiom of
 budget, their values measured on the first full run and kept with their
 arithmetic in the constant's comment, never restated elsewhere. A key past
 the budget is "not yet read": the entry publishes without an icon this build
-and is fetched on a later one. A transport failure is "not yet read" too,
-never a refusal: a refusal is the author's to fix, and a timeout is not
-(CLAUDE.md, the converse of `no-manifest`).
+and is fetched on a later one, unless the sha256 its record names already has
+its bytes in hand this build, from yesterday's file or from another key's
+fetch. A sha256 names its bytes whichever key they were read under, and a key
+names one immutable artifact (§5.1), so those bytes are that key's own icon
+too. A transport failure is "not yet read" too, never a refusal: a refusal is
+the author's to fix, and a timeout is not (CLAUDE.md, the converse of
+`no-manifest`); the same exception holds for it.
 
 ### 5.4 What a fetched icon must be
 

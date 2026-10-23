@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { MAX_CATALOG_ICON_BYTES, checkIconBytes, iconDataUrl, sha256Hex } from '../src/icon-bytes.ts'
 import { iconDetail, iconLabel, shownPath } from '../src/icon-declaration.ts'
@@ -47,6 +48,7 @@ const PNG = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 
 const COMMIT = sha256Hex(utf8('a commit')).slice(0, 40)
 const OTHER_COMMIT = sha256Hex(utf8('another commit')).slice(0, 40)
 const TARBALL_SHA = sha256Hex(utf8('a release asset'))
+const OTHER_TARBALL_SHA = sha256Hex(utf8('another release asset'))
 const RELEASE_URL = 'https://github.com/o/r/releases/download/v1.0.0/plugin.tgz'
 
 const integrityOf = (name: string, version = '1.0.0'): string => `sha512-${Buffer.from(`${name}@${version}`).toString('base64')}`
@@ -93,18 +95,26 @@ function rescuedEntry(repo: string, options: { name?: string; tag?: string; url?
   }
 }
 
-/** The candidate an npm entry was built from. An icon, when it declares one, brings its tarball URL. */
+/**
+ * The candidate an npm entry was built from. An icon, when it declares one,
+ * brings its tarball URL. A version in `overrides` moves the integrity and the
+ * tarball with it, as npm writes them for each version.
+ */
 function npmCandidate(name: string, icon?: StoredIconRead, overrides: Partial<Candidate> = {}): Candidate {
+  const version = overrides.version ?? '1.0.0'
   return {
-    name, version: '1.0.0', integrity: integrityOf(name), publishedAt: '2026-08-01T12:00:00.000Z',
+    name, version, integrity: integrityOf(name, version), publishedAt: '2026-08-01T12:00:00.000Z',
     repository: `https://github.com/you/${name}`, license: 'MIT', deprecated: false, hasBundle: true,
     catalog: { ...CATALOG, capabilities: [] }, description: 'x', keywords: [], peers: [],
-    ...(icon === undefined ? {} : { icon, distTarball: tarballOf(name) }),
+    ...(icon === undefined ? {} : { icon, distTarball: tarballOf(name, version) }),
     ...overrides,
   }
 }
 
-function repoCandidate(repo: string, options: { name?: string; subdir?: string; commit?: string; icon?: StoredIconRead; rescued?: boolean } = {}): RepoCandidate {
+function repoCandidate(
+  repo: string,
+  options: { name?: string; subdir?: string; commit?: string; icon?: StoredIconRead; rescued?: boolean; sha256?: string } = {},
+): RepoCandidate {
   const commit = options.commit ?? COMMIT
   return {
     name: options.name ?? `bundle-of-${repo.replace('/', '-')}`, repo, commit, version: commit,
@@ -113,7 +123,7 @@ function repoCandidate(repo: string, options: { name?: string; subdir?: string; 
     catalog: { ...CATALOG, capabilities: [] }, description: 'x',
     ...(options.subdir === undefined ? {} : { subdir: options.subdir }),
     ...(options.icon === undefined ? {} : { icon: options.icon }),
-    ...(options.rescued === true ? { release: { tag: 'v1.0.0', url: RELEASE_URL, sha256: TARBALL_SHA, assetVerified: true as const } } : {}),
+    ...(options.rescued === true ? { release: { tag: 'v1.0.0', url: RELEASE_URL, sha256: options.sha256 ?? TARBALL_SHA, assetVerified: true as const } } : {}),
   }
 }
 
@@ -188,7 +198,8 @@ const compareRows = (a: IconReportRow, b: IconReportRow): number =>
  * that runs a day through `runDay` asserts all of them without saying so.
  *
  * - Every declared subject is in exactly one bucket, so the counts add up, and
- *   each bucket that reports has one row for each subject in it.
+ *   each bucket that reports has one row for each subject in it: as many rows
+ *   of each kind as its buckets count, and no two rows for one identity.
  * - A subject counts as published only where its icon is in the file: the
  *   identity map, the file's `sources` and its `icons` agree, and nothing is in
  *   the file that no published subject names.
@@ -202,6 +213,11 @@ function expectSound(result: IconFold, subjects: readonly IconSubject[]): void {
   expect(counts.declared).toBe(subjects.filter(({ read }) => read.kind !== 'none').length)
   expect(counts.published + counts.withheldByHand + counts.withheldForSize + counts.refused + counts.notRead + counts.notYetRead).toBe(counts.declared)
   expect(result.rows).toHaveLength(counts.withheldByHand + counts.withheldForSize + counts.refused + counts.notRead)
+  const rowsOfKind = (kind: IconReportRow['kind']): number => result.rows.filter((row) => row.kind === kind).length
+  expect(rowsOfKind('withheld')).toBe(counts.withheldByHand + counts.withheldForSize)
+  expect(rowsOfKind('refused')).toBe(counts.refused)
+  expect(rowsOfKind('not-read')).toBe(counts.notRead)
+  expect(new Set(result.rows.map(({ identity }) => identity)).size).toBe(result.rows.length)
   expect(result.rows).toEqual([...result.rows].sort(compareRows))
   expect(result.byIdentity.size).toBe(counts.published)
   const published = subjects.filter(({ identity }) => result.byIdentity.has(identity))
@@ -327,11 +343,10 @@ describe('iconSubjects: the key and the target', () => {
     expect(JSON.stringify(subject.target)).not.toContain('v9.9.9')
   })
 
-  it('reads a git icon\'s commit from its candidate, never from the entry\'s version', () => {
-    // A git entry's version is its commit, so the two agree in a real catalog.
-    // This entry's is made to differ, so that the test says which one the key
-    // and the target are read from: the commit the declaration was read at.
-    const entry = { ...gitEntry('o/r'), version: 'v1.2.3' }
+  it('keys a git icon by the commit its entry is pinned to', () => {
+    // A rescued entry's version is a tag, which no key rests on (above). A git
+    // entry's is its commit, and the candidate it reads is the one at it.
+    const entry = gitEntry('o/r', { commit: OTHER_COMMIT })
     const subject = only(iconSubjects([entry], [], [repoCandidate('o/r', { commit: OTHER_COMMIT, icon: declared() })]))
     expect(subject.key).toBe(githubIconKey('o/r', OTHER_COMMIT, 'icon.svg'))
     expect(subject.target).toEqual({ kind: 'github', repo: 'o/r', commit: OTHER_COMMIT, path: 'icon.svg' })
@@ -415,9 +430,9 @@ describe('iconSubjects: which candidate an entry reads', () => {
     expect(subject).not.toHaveProperty('target')
   })
 
-  it('keeps the first of two candidates that share an identity', () => {
-    // Entries are unique by identity, so a second candidate under one can only
-    // be one the gate turned away; which of the two comes first is the harvest's.
+  it('keeps the first of two candidates of one artifact', () => {
+    // Two records of one version or commit are one artifact, and the first is
+    // read. They are given two icons here only to show which.
     const subjects = iconSubjects(
       [npmEntry('x'), gitEntry('o/r', { subdir: 'sub' })],
       [npmCandidate('x', declared('first.svg')), npmCandidate('x', declared('second.svg'))],
@@ -427,6 +442,53 @@ describe('iconSubjects: which candidate an entry reads', () => {
       ],
     )
     expect(subjects.map(({ read }) => read)).toEqual([declared('first.svg'), declared('first.svg')])
+  })
+
+  // The gate can turn a candidate away and list another of the same identity at
+  // another version, commit or asset. An entry reads the candidate of the
+  // artifact it lists, whichever comes first, and none when there is none: an
+  // icon read from another version's manifest would be another version's icon.
+  it('pairs an npm entry with the candidate of its own version, whichever comes first', () => {
+    const own = npmCandidate('x', declared('own.svg'))
+    const other = npmCandidate('x', declared('other.svg'), { version: '2.0.0' })
+    for (const candidates of [[own, other], [other, own]]) {
+      const subject = only(iconSubjects([npmEntry('x')], candidates, []))
+      expect(subject.key).toBe(npmIconKey('x', '1.0.0', 'own.svg'))
+      expect(subject.read).toEqual(declared('own.svg'))
+    }
+  })
+
+  it('pairs a git entry with the candidate at its own commit, whichever comes first', () => {
+    const own = repoCandidate('o/r', { icon: declared('own.svg') })
+    const other = repoCandidate('o/r', { commit: OTHER_COMMIT, icon: declared('other.svg') })
+    for (const candidates of [[own, other], [other, own]]) {
+      const subject = only(iconSubjects([gitEntry('o/r')], [], candidates))
+      expect(subject.key).toBe(githubIconKey('o/r', COMMIT, 'own.svg'))
+      expect(subject.read).toEqual(declared('own.svg'))
+    }
+  })
+
+  it('pairs a rescued entry with the candidate of its own asset, whichever comes first', () => {
+    const own = repoCandidate('o/r', { rescued: true, icon: declared('own.svg') })
+    const other = repoCandidate('o/r', { rescued: true, sha256: OTHER_TARBALL_SHA, icon: declared('other.svg') })
+    for (const candidates of [[own, other], [other, own]]) {
+      const subject = only(iconSubjects([rescuedEntry('o/r')], [], candidates))
+      expect(subject.key).toBe(releaseIconKey(TARBALL_SHA, 'own.svg'))
+      expect(subject.read).toEqual(declared('own.svg'))
+    }
+  })
+
+  it.each<[what: string, entry: Entry, candidates: RepoCandidate[]]>([
+    ['a git entry whose only candidate is at another commit', gitEntry('o/r'), [repoCandidate('o/r', { commit: OTHER_COMMIT, icon: declared() })]],
+    ['a rescued entry whose only candidate holds another asset', rescuedEntry('o/r'), [repoCandidate('o/r', { rescued: true, sha256: OTHER_TARBALL_SHA, icon: declared() })]],
+    ['a rescued entry whose only candidate was never rescued', rescuedEntry('o/r'), [repoCandidate('o/r', { icon: declared() })]],
+  ])('reads no icon for %s', (_what, entry, candidates) => {
+    expect(only(iconSubjects([entry], [], candidates)).read).toEqual({ kind: 'none' })
+  })
+
+  it('reads no icon for an npm entry whose only candidate is of another version', () => {
+    const subject = only(iconSubjects([npmEntry('x')], [npmCandidate('x', declared(), { version: '2.0.0' })], []))
+    expect(subject).toStrictEqual({ identity: 'npm:x', name: 'x', withheldKey: 'x', read: { kind: 'none' } })
   })
 
   it('makes one subject for each entry, in the order of the entries', () => {
@@ -840,6 +902,63 @@ describe('foldIconResults: reusing what an earlier build published', () => {
   })
 })
 
+describe('foldIconResults: bytes another key brought in', () => {
+  // A sha256 names its bytes whichever key they were read under, and a key names
+  // one immutable artifact, so the bytes a recorded key's row names are its own
+  // icon wherever they came from: yesterday's file, or another key's fetch this
+  // build. A key past the budget, or whose own fetch did not answer, therefore
+  // publishes when those bytes are in hand (design §5.3). Only those bytes: the
+  // sha256 the record names is what counts.
+  const x = npmSubject('x')
+  const y = npmSubject('y')
+  const bytes = svgOf('shared')
+  const sha256 = sha256Hex(bytes)
+
+  it('publishes a deferred key whose recorded bytes another key\'s fetch has just brought in', () => {
+    // y is recorded published and yesterday's file is lost, so y is asked for again,
+    // and the budget lets only x through. x's bytes hash to the sha256 y's row names.
+    const { plan, fold } = runDay([x, y], {
+      state: stateOf([keyOf(y), publishedRow(bytes)]),
+      published: null,
+      fetchBudget: 1,
+      results: resultsOf([keyOf(x), bytesResult(bytes)]),
+    })
+    expect(plan.fetch.map(({ key }) => key)).toEqual([keyOf(x)])
+    expect(plan.deferred).toEqual([keyOf(y)])
+    expect(fold.byIdentity).toEqual(new Map([['npm:x', sha256], ['npm:y', sha256]]))
+    expect(fold.file).toEqual({
+      icons: { [sha256]: iconDataUrl(bytes, 'image/svg+xml') },
+      sources: { [keyOf(x)]: sha256, [keyOf(y)]: sha256 },
+    })
+    expect(fold.counts).toEqual({ ...ZERO, declared: 2, published: 2 })
+    // y itself was not read, so its record is what it was.
+    expect(fold.nextState.get(keyOf(y))).toEqual(publishedRow(bytes))
+  })
+
+  it('publishes a key whose own fetch did not answer, the same way', () => {
+    const { fold } = runDay([x, y], {
+      state: stateOf([keyOf(y), publishedRow(bytes)]),
+      published: null,
+      results: resultsOf([keyOf(x), bytesResult(bytes)], [keyOf(y), { kind: 'not-yet-read', reason: 'a timeout' }]),
+    })
+    expect(fold.byIdentity).toEqual(new Map([['npm:x', sha256], ['npm:y', sha256]]))
+    expect(fold.counts).toEqual({ ...ZERO, declared: 2, published: 2 })
+  })
+
+  it('does not publish a deferred key for bytes that are not the ones its record names', () => {
+    const { plan, fold } = runDay([x, y], {
+      state: stateOf([keyOf(y), publishedRow(svgOf('what y held'))]),
+      published: null,
+      fetchBudget: 1,
+      results: resultsOf([keyOf(x), bytesResult(bytes)]),
+    })
+    expect(plan.deferred).toEqual([keyOf(y)])
+    expect(fold.byIdentity).toEqual(new Map([['npm:x', sha256]]))
+    expect(fold.counts).toEqual({ ...ZERO, declared: 2, published: 1, notYetRead: 1 })
+    expect(fold.nextState.get(keyOf(y))).toEqual(publishedRow(svgOf('what y held')))
+  })
+})
+
 describe('foldIconResults: one record for each key and one data URL for each sha256', () => {
   // `assembleIcons` throws on a sha256 with two data URLs and on a key with two
   // sha256s, because the file could state only one. Those throws are tripwires
@@ -1191,6 +1310,170 @@ describe('foldIconResults: every bucket at once', () => {
     expect([...fold.nextState.keys()].sort(compareStrings)).toEqual(
       ['a-published', 'b-reused', 'd-big', 'f-badbytes', 'g-gone'].map((name) => keyOf(subject(name))).sort(compareStrings),
     )
+  })
+})
+
+describe('foldIconResults: every day for one entry', () => {
+  // One entry through every combination of what its candidate says, whether a
+  // maintainer withheld it, whether it has anything to fetch it from, what the
+  // record holds, what the plan did with its key, what the fetch answered and
+  // whether the file budget turns every icon away: each day is checked against
+  // the rules of the design, written out afresh below and not read off the fold.
+  // The sweep at the end holds every fold sound; this holds each bucket right,
+  // which a bucket that is wrong but consistent would escape.
+  const AXES = {
+    /** What the candidate says of the icon. */
+    read: ['declared', 'refused'],
+    /** Whether `withheld-icons.yml` names the entry. */
+    withheld: [false, true],
+    /** Whether the candidate has what a fetch needs. */
+    target: [true, false],
+    /** What the committed record holds for the key, and whether yesterday's file holds the bytes. */
+    record: ['none', 'published-in-file', 'published-lost', 'published-elsewhere', 'refused', 'not-read'],
+    /** What the plan did with the key: asked for it, deferred it, or left it out of what the fold is handed. */
+    placement: ['fetched', 'deferred', 'unasked'],
+    /** What the fetch answered, if it did. */
+    answer: ['same-bytes', 'new-bytes', 'wrong-bytes', 'refused', 'not-read', 'not-yet-read', 'none'],
+    /** Whether the file budget turns every icon away. */
+    sized: [false, true],
+  } as const
+
+  type Scenario = { [Axis in keyof typeof AXES]: (typeof AXES)[Axis][number] }
+
+  /** Every combination of one value from each axis. */
+  function combinations<Axes extends Record<string, readonly unknown[]>>(axes: Axes): { [Axis in keyof Axes]: Axes[Axis][number] }[] {
+    const rows = Object.entries(axes).reduce<Record<string, unknown>[]>(
+      (partial, [axis, values]) => partial.flatMap((row) => values.map((value) => ({ ...row, [axis]: value }))),
+      [{}],
+    )
+    // Each row now holds one value of every axis.
+    return rows as { [Axis in keyof Axes]: Axes[Axis][number] }[]
+  }
+
+  const scenarios = combinations(AXES)
+  const A = svgOf('A')
+  const B = svgOf('B')
+  const ELSEWHERE = svgOf('elsewhere')
+  const REASON = 'a reason'
+  const READ_REFUSED = iconDetail.notString()
+  const WRONG = iconDetail.wrongBytes(iconLabel('icon'), shownPath('icon.svg'), 'SVG')
+  const FETCH_REFUSED = 'a refusal the fetch reported'
+  const FETCH_NOT_READ = 'a package the fetch could not read'
+  const RECORD_REFUSED = { outcome: 'refused', detail: 'a refusal recorded earlier' } satisfies IconOutcome
+  const RECORD_NOT_READ = { outcome: 'not-read', detail: 'a package recorded as not read' } satisfies IconOutcome
+
+  /** The row the record holds for the key, by the axis that says so. */
+  const RECORDS: Record<Scenario['record'], IconOutcome | undefined> = {
+    none: undefined,
+    'published-in-file': publishedRow(A),
+    'published-lost': publishedRow(A),
+    'published-elsewhere': publishedRow(A),
+    refused: RECORD_REFUSED,
+    'not-read': RECORD_NOT_READ,
+  }
+
+  /** What the fetch answered, by the axis that says so. */
+  const ANSWERS: Record<Scenario['answer'], IconFetchResult | undefined> = {
+    'same-bytes': bytesResult(A),
+    'new-bytes': bytesResult(B),
+    'wrong-bytes': bytesResult(PNG),
+    refused: { kind: 'refused', detail: FETCH_REFUSED },
+    'not-read': { kind: 'not-read', detail: FETCH_NOT_READ },
+    'not-yet-read': { kind: 'not-yet-read', reason: 'a timeout' },
+    none: undefined,
+  }
+
+  /** Where the one entry ends up: its bucket, its row if any, the icon it carries, and the record of its key. */
+  interface Verdict {
+    bucket: Exclude<keyof typeof ZERO, 'declared'>
+    row: [kind: IconReportRow['kind'], detail: string] | null
+    /** The bytes of the icon, for an entry that is published. */
+    bytes?: Uint8Array
+    state: IconOutcome | undefined
+  }
+
+  function verdictOf(scenario: Scenario): Verdict {
+    const recorded = RECORDS[scenario.record]
+    const withheldByHand = (state: IconOutcome | undefined): Verdict =>
+      ({ bucket: 'withheldByHand', row: ['withheld', iconDetail.withheldByHand(REASON)], state })
+    // A refused read has no key, so no record: it is refused, or withheld when a maintainer said so.
+    if (scenario.read === 'refused') {
+      return scenario.withheld ? withheldByHand(undefined) : { bucket: 'refused', row: ['refused', READ_REFUSED], state: undefined }
+    }
+    // A withheld entry is withheld whatever else is true of it, and its record stays.
+    if (scenario.withheld) return withheldByHand(recorded)
+    // With nothing to fetch it from it is no icon this build, and its record stays.
+    if (!scenario.target) return { bucket: 'notYetRead', row: null, state: recorded }
+    // A refusal and a package past the caps are recorded once, and reported from the record.
+    if (scenario.record === 'refused') return { bucket: 'refused', row: ['refused', RECORD_REFUSED.detail], state: recorded }
+    if (scenario.record === 'not-read') return { bucket: 'notRead', row: ['not-read', RECORD_NOT_READ.detail], state: recorded }
+    // An icon in hand is published, unless the file budget turns it away.
+    const icon = (bytes: Uint8Array, state: IconOutcome): Verdict => scenario.sized
+      ? { bucket: 'withheldForSize', row: ['withheld', iconDetail.withheldForSize()], state }
+      : { bucket: 'published', row: null, bytes, state }
+    // Yesterday's file holds the bytes the record names: no fetch is made, whatever was answered.
+    if (scenario.record === 'published-in-file') return icon(A, publishedRow(A))
+    // Otherwise the key is unknown, or its bytes are gone, and the plan asks for it:
+    // an answer decides it, and no answer leaves it for the next build.
+    const answered = scenario.placement === 'fetched' && scenario.answer !== 'none' && scenario.answer !== 'not-yet-read'
+    if (!answered) return { bucket: 'notYetRead', row: null, state: recorded }
+    switch (scenario.answer) {
+      case 'same-bytes': return icon(A, publishedRow(A))
+      case 'new-bytes': return icon(B, publishedRow(B))
+      case 'wrong-bytes': return { bucket: 'refused', row: ['refused', WRONG], state: { outcome: 'refused', detail: WRONG } }
+      case 'refused': return { bucket: 'refused', row: ['refused', FETCH_REFUSED], state: { outcome: 'refused', detail: FETCH_REFUSED } }
+      case 'not-read': return { bucket: 'notRead', row: ['not-read', FETCH_NOT_READ], state: { outcome: 'not-read', detail: FETCH_NOT_READ } }
+      default: throw new Error(`the answer ${scenario.answer} was taken for no answer above`)
+    }
+  }
+
+  /** What differs between the fold of one day and the verdict on it, in words. */
+  function problemsOf(scenario: Scenario): string[] {
+    const candidate = scenario.read === 'declared' ? declared() : refusedRead(READ_REFUSED)
+    const subject = only(iconSubjects([npmEntry('x')], [npmCandidate('x', candidate, scenario.target ? {} : { distTarball: undefined })], []))
+    const { key } = subject
+    const recorded = RECORDS[scenario.record]
+    const answer = ANSWERS[scenario.answer]
+    const state = new Map<IconKey, IconOutcome>(key !== undefined && recorded !== undefined ? [[key, recorded]] : [])
+    const results = new Map<IconKey, IconFetchResult>(key !== undefined && answer !== undefined ? [[key, answer]] : [])
+    const published = key === undefined ? null
+      : scenario.record === 'published-in-file' ? fileOf([[key, A]])
+        : scenario.record === 'published-elsewhere' ? fileOf([[npmKey('elsewhere'), ELSEWHERE]])
+          : null
+    const withheld = scenario.withheld ? withheldOf(['x', REASON]) : new Map<string, { reason: string }>()
+    const planned = planIconWork([subject], state, published, withheld, scenario.placement === 'deferred' ? 0 : PLENTY)
+    const handed = scenario.placement === 'unasked' ? { ...planned, fetch: planned.fetch.filter((work) => work.key !== key) } : planned
+    const fold = foldIconResults([subject], handed, results, state, published, withheld, scenario.sized ? 0 : undefined)
+
+    const want = verdictOf(scenario)
+    const problems: string[] = []
+    const expectEqual = (what: string, got: unknown, wanted: unknown): void => {
+      if (!isDeepStrictEqual(got, wanted)) problems.push(`${what} is ${JSON.stringify(got)}, not ${JSON.stringify(wanted)}`)
+    }
+    expectEqual('the counts', fold.counts, { ...ZERO, declared: 1, [want.bucket]: 1 })
+    expectEqual('the rows', fold.rows.map(({ kind, detail }) => [kind, detail]), want.row === null ? [] : [want.row])
+    expectEqual('the row identities', fold.rows.map(({ identity }) => identity), want.row === null ? [] : ['npm:x'])
+    expectEqual('the identity map', [...fold.byIdentity], want.bytes === undefined ? [] : [['npm:x', sha256Hex(want.bytes)]])
+    expectEqual('the file', fold.file, want.bytes === undefined || key === undefined ? null : fileOf([[key, want.bytes]]))
+    expectEqual('the record', [...fold.nextState], key === undefined || want.state === undefined ? [] : [[key, want.state]])
+    if (fold.file !== null) expectEqual('the file read back', parseIconsFile(serializeIcons(fold.file).json), fold.file)
+    return problems
+  }
+
+  it('is as many distinct days as the axes hold, reaching every bucket and kind of row', () => {
+    expect(scenarios).toHaveLength(Object.values(AXES).reduce((days, values) => days * values.length, 1))
+    expect(new Set(scenarios.map((scenario) => JSON.stringify(scenario))).size).toBe(scenarios.length)
+    const verdicts = scenarios.map(verdictOf)
+    expect(new Set(verdicts.map(({ bucket }) => bucket))).toEqual(new Set(Object.keys(ZERO).filter((bucket) => bucket !== 'declared')))
+    expect(new Set(verdicts.flatMap(({ row }) => (row === null ? [] : [row[0]])))).toEqual(new Set(['refused', 'not-read', 'withheld']))
+  })
+
+  it('puts the entry in the right bucket, with the right row, icon and record, on every day', () => {
+    const failures = scenarios.flatMap((scenario) => {
+      const problems = problemsOf(scenario)
+      return problems.length === 0 ? [] : [{ scenario, problems }]
+    })
+    expect(failures).toEqual([])
   })
 })
 
