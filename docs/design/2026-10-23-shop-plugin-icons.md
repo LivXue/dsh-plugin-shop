@@ -37,8 +37,9 @@ artwork, and §8 is designed for that page.
 (jsDelivr `HEAD`, 2026-10-23): median 321 bytes, p90 2.1 KiB, p99 181 KiB,
 largest 210 KiB, none past dsh's 256 KiB. 259 are SVG (836 bytes on average);
 22 PNG (61 KiB on average), 2 WebP and 2 JPEG are 9% of the icons and 86% of
-the bytes (1.66 of 1.93 MB). Two declarations dsh would refuse: an `icon` that
-is itself a `data:` URL, and a path ending `.icon`.
+the bytes (1.66 of 1.93 MB). 17 are larger than 32 KiB, the catalog's bound
+(decision 9). Two declarations dsh would refuse: an `icon` that is itself a
+`data:` URL, and a path ending `.icon`.
 
 ## 2. Decisions (LivXue, 2026-10-23)
 
@@ -56,9 +57,13 @@ is itself a `data:` URL, and a path ending `.icon`.
    artwork drawn at 24px with `object-fit: contain`. No backplate, in either
    theme, as on dsh's own page; the cost is stated in §8.4. Chosen from four
    options shot on dsh 0.2.1-rc.2 with shop 0.9.0 (§13).
-5. **dsh's rules, not ours.** SVG, PNG, JPEG or WebP, chosen by extension; at
-   most 256 KiB; drawn only as an image, never as inline markup (§3.1). An
-   icon dsh would refuse is one the shop does not show.
+5. **dsh 0.2.1's reading rule.** The shop shows the icon dsh 0.2.1-rc.2 would
+   draw for the package (§3.1, §4): the manifest found through `exports`, its
+   `icon` first, the `./icon` export otherwise, a bad `icon` fatal; SVG, PNG,
+   JPEG or WebP, chosen by extension; drawn only as an image, never as inline
+   markup. Chosen over 0.1.7/0.2.0's narrower rule (288 of the 289 sampled
+   icons against 207), knowing that on those harnesses an icon declared only
+   through `./icon` shows in the shop and not on their own Plugins page.
 6. **An icon never blocks a listing.** A bad declaration or file leaves the
    entry listed with the default artwork, and the build report says why, in
    words its author can act on (§10).
@@ -66,6 +71,11 @@ is itself a `data:` URL, and a path ending `.icon`.
    reaches the shop with the next build.
 8. **Withholding by hand.** A maintainer can withhold one plugin's icon with a
    row in a review file, the way `denied.yml` withholds a listing (§9).
+9. **At most 32 KiB per icon in the catalog**: dsh's own bound for an icon a
+   market index carries (`MAX_INLINE_ICON_BYTES`, §3.3), not the 256 KiB dsh
+   reads from an installed package. 269 of the 286 measured icons fit, and the
+   bytes to carry drop by 85% (§6.2). A larger icon draws the default, and its
+   report row tells the author the bound (§10).
 
 ## 3. What dsh does
 
@@ -149,14 +159,24 @@ request.
 
 One pure function turns a manifest into either a declaration (the source it
 came from, a normalised POSIX path, a media type) or a refusal with its
-detail (§10). It applies §3.1 in order: `icon` if it is a string; otherwise
-`exports["./icon"]` when that is a string, or an object whose `import` or
-`default` member is a string, in that order. That is a subset of Node's
-resolution, and a deeper conditional object is refused with a detail that
-names the supported forms; everything else in §3.1 (relative, no scheme, not
-leaving the package, the four extensions) is checked here, before any byte is
-fetched. A declaration that is absent is not a refusal: the entry simply has
-no icon.
+detail (§10). It follows dsh 0.2.1-rc.2 (§3.1, decision 5), for npm and
+GitHub alike:
+
+1. Resolve the subpath `./package.json` through the manifest's `exports` the
+   way Node's `PACKAGE_EXPORTS_RESOLVE` does: the exact key, else the longest
+   matching `*` pattern; string, array and condition-object targets; the
+   conditions Node's ESM resolver applies by default. A manifest with no
+   `exports` resolves it.
+2. If it resolves to the manifest itself and `icon` is present, `icon` must be
+   a non-empty string; anything else is refused (dsh: "must be a non-empty
+   string") and the export is not tried, exactly as dsh does not try it.
+3. Otherwise, the `./icon` export, resolved the same way.
+4. Neither: no icon, and no refusal.
+
+Then the rest of §3.1 is checked, before any byte is fetched: relative, no
+scheme (an `icon` that is itself a `data:` URL is refused here), not leaving
+the package, one of the four extensions. The resolution is pure and
+fixture-driven (§12), and the e2e compares its answer with dsh's own page.
 
 ## 5. Fetching the bytes
 
@@ -208,7 +228,7 @@ Only keys no row knows are fetched for the first time.
   refused: its author did nothing wrong.
 - **A git-installed GitHub entry: the file at the pinned commit**,
   `raw.githubusercontent.com/<owner>/<slug>/<commit>/<path>`, through
-  `fetchRobust` and `readCappedBody` at 256 KiB + 1. The declaration was read
+  `fetchRobust` and `readCappedBody` at 32 KiB + 1. The declaration was read
   at the branch head (§4); if the path is missing at the commit, that is a
   refusal that names the commit, and the next commit is a new key.
 - **A release-rescued entry: the release tarball the harvest already
@@ -243,7 +263,9 @@ never a refusal: a refusal is the author's to fix, and a timeout is not
 
 ### 5.4 What a fetched icon must be
 
-- At most 256 KiB, dsh's bound (§3.1).
+- At most 32 KiB (decision 9; dsh's bound for an icon a market index carries,
+  §3.3). Past it the icon is refused with the bound in its detail (§10).
+  dsh's 256 KiB for an installed package is moot below it.
 - Its bytes agree with its extension: the PNG signature, a JPEG SOI marker, a
   RIFF/WEBP header, or for `.svg` UTF-8 text whose first element is `<svg`.
   dsh does not sniff; a PNG named `.svg` would only ever draw as a broken image
@@ -287,14 +309,20 @@ stars sidecar's handling and published the same way:
 The npm transport downloads the whole `dsh-plugin-shop-catalog` package and
 caps it at `MAX_PACKAGE_BYTES` (32 MiB compressed) and `MAX_INFLATED_BYTES`
 (64 MiB inflated) in `npm-origin.ts`. On 2026-10-23 the published plugins file
-was 17,889,435 bytes and the stars sidecar 615,785. 500 icons at the full
-256 KiB would be 125 MiB and break both caps, so the icons file has a budget:
-`ICONS_FILE_BUDGET_BYTES` = 16 MiB serialised, which keeps the package inside
-both caps with the plugins file doubling. Past the budget, icons are kept
+was 17,889,435 bytes and the stars sidecar 615,785.
+
+At decision 9's bound, the 269 measured icons that fit weigh 283,336 bytes
+(1,053 on average), against 1,927,367 for all 286. The sample is a quarter of
+the npm entries, so the npm half of the icons file is about 1.1 MB of bytes,
+1.5 MB as base64 and under 2 MB with the JSON around it, against roughly
+10 MB had the bound been dsh's 256 KiB.
+
+`ICONS_FILE_BUDGET_BYTES` = 16 MiB serialised stays as a backstop: it keeps
+the package inside both caps with the plugins file doubling, and at the
+measured average it holds about ten thousand icons. Past it, icons are kept
 smallest first (ties by key) and the rest are reported as withheld for size
-(§10). On the measured sizes, 16 sampled icons of 281 bytes to 3.1 KiB, the
-budget holds thousands of icons and should never bind; the report prints the
-file's size every build, so its growth is seen before it does.
+(§10). The report prints the file's size every build, so its growth is seen
+long before the budget binds.
 
 ### 6.3 Versions and transports
 
@@ -410,27 +438,39 @@ hand (§9), withheld for size (§6.2), refused, not read (a package past §5.2's
 caps), not yet read (§5.3), and the icons file's size. Then one row per
 refused, withheld or not-read icon, with an author-readable detail in the
 idiom of the rejection table: "icon ./assets/logo.gif is not
-SVG, PNG, JPEG or WebP", "icon ./icon.png is 301 KiB; dsh shows at most
-256 KiB", "icon ../shared/icon.svg leaves the package", "icon ./icon.svg is
-not in the published package". These rows are not rejections: the entry is
+SVG, PNG, JPEG or WebP", "icon ./icon.png is 61 KiB; the shop shows icons of
+at most 32 KiB", "icon must be a non-empty string", "icon data:image/svg+xml…
+is not a file path in the package", "icon ../shared/icon.svg leaves the
+package", "icon ./icon.svg is not in the published package". These rows are
+not rejections: the entry is
 listed, the new code space is the icon section's own, and none of it touches
 the rejection codes the published report already carries.
 
 ## 11. For authors
 
-`docs/schema.md` and `docs/schema.zh.md` gain an icon section: how to declare
-one (the two sources of §3.1), the rules (dsh's), that `files` must include the
-file when the package lists files, that the shop shows it after the next daily
-build, and how to make it read on both themes: fixed colours, or a
-`prefers-color-scheme` rule inside the SVG, never `currentColor` alone.
+`docs/schema.md` and `docs/schema.zh.md` gain an icon section:
+
+- how to declare one: a package.json `icon` (and, when the package has an
+  `exports` map, `./package.json` in it, or dsh never reads the field), or an
+  `./icon` export, which dsh reads from 0.2.1 on;
+- the rules: SVG, PNG, JPEG or WebP by extension, a relative path inside the
+  package, in `files` when the package lists files, and at most 32 KiB for the
+  shop (dsh's own Plugins page takes up to 256 KiB);
+- that the shop shows it after the next daily build;
+- how to make it read on both themes: fixed colours, or a
+  `prefers-color-scheme` rule inside the SVG, never `currentColor` alone.
 
 ## 12. Testing and rollout
 
 - **Pure core**: reading the declaration from an npm manifest and from a
-  repository's package.json (both sources, a conditional `./icon` export,
-  absent, malformed); the path rules (absolute, scheme, `..`, normalised
-  forms); the type by extension, and the bytes agreeing with it; the size
-  bound at 256 KiB exactly and one byte over; the icons file's bytes
+  repository's package.json: no `exports`; `exports` exposing
+  `./package.json` by exact key, by a `*` pattern, through conditions and
+  through an array; `exports` hiding it, with and without an `./icon` export;
+  `icon` and `./icon` both present; an `icon` that is not a non-empty string
+  (refused, the export not tried); absent; the path rules (absolute, scheme,
+  `data:`, `..`, normalised forms); the type by extension, and the bytes
+  agreeing with it; the size bound at 32 KiB exactly and one byte over; a
+  recorded outcome reused without a fetch; the icons file's bytes
   deterministic for the same input and free of `builtAt`; a withheld row
   removes the icon and is reported; a duplicate row throws.
 - **Shell**: every download bounded by `http-body.ts` and every inflate
@@ -445,7 +485,10 @@ build, and how to make it read on both themes: fixed colours, or a
   CSS pins the tile's 32px, the 24px artwork and the border token.
 - **e2e**: a fixture plugin in the e2e's local registry declares an icon and
   its card's image hashes to the fixture's bytes; another declares none and
-  draws the default.
+  draws the default. On dsh 0.2.1, a fixture whose `exports` hides
+  `./package.json` and exports `./icon`, once installed, draws the same bytes
+  on dsh's own Plugins page as on its shop card: the check that §4's
+  resolution is dsh's.
 
 Rollout, in two pull requests:
 
