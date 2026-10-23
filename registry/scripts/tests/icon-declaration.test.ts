@@ -42,7 +42,8 @@ describe('resolveExportsSubpath', () => {
 // table does not reach. Every expected value was read off Node 26.6.0's own
 // resolver (`import.meta.resolve` over a fixture package holding that
 // `exports`), not off the specification's pseudocode: the two differ in small
-// ways, and the shop has to agree with the resolver dsh asks.
+// ways, and the shop has to agree with the resolver dsh asks. The one table
+// that does not agree with it, on purpose, says so where it starts.
 
 describe('resolveExportsSubpath: choosing a key', () => {
   it.each<Row>([
@@ -97,8 +98,8 @@ describe('resolveExportsSubpath: resolving a target', () => {
   })
 
   it('matches the conditions Node 26 matches by default, and no others', () => {
-    expect(EXPORT_CONDITIONS).toEqual(new Set(['node', 'import', 'module-sync', 'default']))
-    for (const condition of ['node', 'import', 'module-sync']) {
+    expect(EXPORT_CONDITIONS).toEqual(new Set(['node', 'node-addons', 'import', 'module-sync', 'default']))
+    for (const condition of ['node', 'node-addons', 'import', 'module-sync']) {
       expect(resolveExportsSubpath({ './icon': { [condition]: './hit.svg', default: './miss.svg' } }, './icon'))
         .toEqual({ path: 'hit.svg', via: 'exact' })
     }
@@ -118,12 +119,49 @@ describe('resolveExportsSubpath: paths Node refuses', () => {
     ['a node_modules segment refuses the target, in any case', { './icon': './Node_Modules/x.svg' }, './icon', null],
     ['a segment spelled with percent escapes is refused like the plain one', { './icon': './%2e%2e/x.svg' }, './icon', null],
     ['an escaped node_modules is refused too', { './icon': './%4eode_modules/x.svg' }, './icon', null],
+    ['escapes are read whichever case their hex digits are in', { './icon': './%2E%2e/x.svg' }, './icon', null],
     ['node_modules and dots inside a longer segment are not refused', { './icon': './node_modules_x/..x/.y/icon.svg' }, './icon', { path: 'node_modules_x/..x/.y/icon.svg', via: 'exact' }],
     ['a backslash separates segments, so it cannot hide a ".." either', { './icon': './a\\..\\x.svg' }, './icon', null],
     ['a backslash comes out as a slash', { './icon': './a\\x.svg' }, './icon', { path: 'a/x.svg', via: 'exact' }],
     ['empty segments collapse into one separator, and never leave a leading slash', { './icon': './/a//x.svg' }, './icon', { path: 'a/x.svg', via: 'exact' }],
     ['a target naming the package directory resolves to the empty path', { './icon': './' }, './icon', { path: '', via: 'exact' }],
     ['a "." segment in what a star matched refuses the target', { './package*json': './x/*' }, './package.json', null],
+    // Node refuses an escaped slash or backslash after it has chosen the
+    // member, so an array does not move on to the next one.
+    ['an escaped slash ends the array: the member Node chose was refused, so no later one stands in', { './icon': ['./a%2Fb.svg', './b.svg'] }, './icon', null],
+  ])('%s', (_what, exportsField, subpath, expected) => {
+    expect(resolveExportsSubpath(exportsField, subpath)).toEqual(expected)
+  })
+
+  it.each(['%2F', '%2f', '%5C', '%5c'])('refuses a target holding the escaped separator %s', (escape) => {
+    expect(resolveExportsSubpath({ './icon': `./a${escape}b.svg` }, './icon')).toBeNull()
+  })
+})
+
+// The rows above are Node's answers. Most of the ones below are not, and are
+// meant not to be. Node checks the segments of a target and of what its star
+// matched, separately, and then substitutes without looking again. With a key
+// such as `.*` the star's match starts with a slash, so a target segment like
+// `..*` is clean as written and becomes `..` once filled in: Node resolves
+// `{ '.*': './..*' }` to a file outside the package. `exports` is hostile
+// input and `path` drives reads and keys further on, so the shop holds the
+// path that comes out to the rule it holds the target to, and refuses where
+// Node resolves. The one row that is Node's answer too is marked as the
+// contrast.
+
+describe('resolveExportsSubpath: the path that comes out', () => {
+  it.each<Row>([
+    ['a star can compose a ".." that climbs out of the package, and the path is refused', { '.*': './..*' }, './icon', null],
+    ['the composed ".." is refused wherever the target goes on from it', { '.*': './..*/x.svg' }, './icon', null],
+    ['a star can compose a node_modules segment, which is refused', { './ic*n': './n*de_modules/x.svg' }, './icon', null],
+    ['a star can compose a percent-escaped ".." too', { '.*': './%2e%2e*' }, './icon', null],
+    ['and an escaped node_modules', { './ic*n': './%4e*de_modules/x.svg' }, './icon', null],
+    ['a star can compose an escaped separator out of two clean halves', { './i*on': './..%5*' }, './icon', null],
+    ['a member refused after its star was filled in ends the array: no later member stands in', { '.*': ['./..*', './x*'] }, './icon', null],
+    // The contrast: a composed `..` that is cancelled by a directory before it
+    // leaves nothing to refuse, and Node resolves it to the same file.
+    ['a composed ".." that stays inside the package normalises away and is not refused', { '.*': './a/..*' }, './icon', { path: 'icon', via: 'pattern' }],
+    ['a composed escaped ".." is refused though it would stay inside: it is spelled as a segment to refuse', { '.*': './a/%2e%2e*' }, './icon', null],
   ])('%s', (_what, exportsField, subpath, expected) => {
     expect(resolveExportsSubpath(exportsField, subpath)).toEqual(expected)
   })
