@@ -16,9 +16,9 @@
  */
 
 import { canEverList } from './repo-gate.ts'
-import type { IconMediaType } from './icon-declaration.ts'
+import type { IconDeclaration, IconMediaType } from './icon-declaration.ts'
 import { UNBUILT_FIELD_MAX_LENGTH } from './release-asset.ts'
-import type { RepoCandidate } from './types.ts'
+import type { RepoCandidate, StoredIconRead } from './types.ts'
 
 /**
  * The version of the rule that writes a repository candidate's declaration
@@ -27,8 +27,10 @@ import type { RepoCandidate } from './types.ts'
  *
  * Bump it whenever `peerNamesOf`, `compatibilityOf` or `dshPeersOf`
  * (npm-client.ts), or `readIconDeclaration` or `fileListIncludes`
- * (icon-declaration.ts), changes what it returns (a refusal's sentence, from
- * `iconDetail`, is part of what is recorded), whenever the declarations writer
+ * (icon-declaration.ts), changes what it returns, whenever a sentence in
+ * `iconDetail` that a candidate records is reworded (`notInFiles` is the
+ * writer's own, so no reader's return value includes it, and a carried record
+ * keeps the words it was written with), whenever the declarations writer
  * (`writeDeclarations`, github-client.ts) starts or stops recording a field,
  * or whenever WHERE a candidate's declarations are read from changes: a
  * release-rescued root reading its tarball's manifest instead of HEAD's was
@@ -310,14 +312,35 @@ const ICON_MEDIA_TYPES: Record<IconMediaType, true> = {
 }
 
 /**
+ * The sources `readIconDeclaration` writes, a record for the reason
+ * {@link ICON_MEDIA_TYPES} is: a third source added to {@link IconDeclaration}
+ * stops compiling here, where a hand-copied `'icon' | 'export'` would let one
+ * build store it and the next build's parse refuse it.
+ */
+const ICON_SOURCES: Record<IconDeclaration['source'], true> = {
+  icon: true,
+  export: true,
+}
+
+/**
+ * Whether `value` is one of the members an exhaustive table such as
+ * {@link ICON_SOURCES} lists, as that table's own union. Own keys only:
+ * `constructor` and `__proto__` are not members.
+ */
+function isListed<Member extends string>(table: Readonly<Record<Member, true>>, value: unknown): value is Member {
+  return typeof value === 'string' && Object.hasOwn(table, value)
+}
+
+/**
  * The shape a carried `icon` has: `readIconDeclaration`'s `declared` or
- * `refused`, and nothing else (design 2026-10-23-shop-plugin-icons §4).
- * `declared` is exactly `{ kind, declaration }`, and `declaration` exactly
- * `{ source, path, mediaType }`: `source` one of dsh's two, `path` a non-empty
- * string, `mediaType` one of the four the reader writes. `refused` is exactly
- * `{ kind, detail }` with a string `detail`. `none` is refused, like every
- * kind the reader never answers: the writer removes the key instead of
- * storing it.
+ * `refused`, and nothing else (design 2026-10-23-shop-plugin-icons §4), which
+ * is {@link StoredIconRead}, and this is its guard. `declared` is exactly
+ * `{ kind, declaration }`, and `declaration` exactly `{ source, path,
+ * mediaType }`: `source` one of dsh's two, `path` a non-empty string,
+ * `mediaType` one of the four the reader writes. `refused` is exactly `{ kind,
+ * detail }` with a string `detail`. `none` is refused, like every kind the
+ * reader never answers: the writer removes the key instead of storing it, and
+ * the type has no member for it.
  *
  * Exact key sets, as {@link isCompatibilityRecord} asks for, because a `path`
  * becomes a key and a request and a `detail` is published under the author's
@@ -327,7 +350,7 @@ const ICON_MEDIA_TYPES: Record<IconMediaType, true> = {
  * a rule tightened later must not turn every row written under the old one
  * into a build that cannot start.
  */
-function isIconRecord(value: unknown): boolean {
+function isIconRecord(value: unknown): value is StoredIconRead {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const record = value as Record<string, unknown>
   if (record.kind === 'refused') return hasExactKeys(record, ['kind', 'detail']) && typeof record.detail === 'string'
@@ -336,9 +359,9 @@ function isIconRecord(value: unknown): boolean {
   if (typeof declaration !== 'object' || declaration === null || Array.isArray(declaration)) return false
   const { source, path, mediaType } = declaration as { source?: unknown; path?: unknown; mediaType?: unknown }
   return hasExactKeys(declaration as Record<string, unknown>, ['source', 'path', 'mediaType'])
-    && (source === 'icon' || source === 'export')
+    && isListed(ICON_SOURCES, source)
     && typeof path === 'string' && path !== ''
-    && typeof mediaType === 'string' && Object.hasOwn(ICON_MEDIA_TYPES, mediaType)
+    && isListed(ICON_MEDIA_TYPES, mediaType)
 }
 
 /** Whether a plain object's own keys are exactly `keys`, in any order. */

@@ -3108,12 +3108,14 @@ describe('harvestRepos', () => {
       return { fetchImpl, requested, authorizations }
     }
 
-    it('writes exactly peers, compatibility and the stamp when no harness peer is declared, from the manifest at the recorded commit and subdir', async () => {
+    it('writes exactly peers, compatibility and the stamp when no harness peer and no icon is declared, from the manifest at the recorded commit and subdir', async () => {
       // A root whose recorded compatibility the manifest no longer declares
       // (removed), and a subpackage whose manifest declares one (set). Two
       // distinct commits, neither the branch, so the URLs prove which one
       // was read: the entry installs the recorded commit, and the branch may
-      // have moved since.
+      // have moved since. Neither manifest declares an icon, which is the only
+      // reason the record gains no `icon` key: the icon re-read has its own
+      // block below.
       const root = unstamped('a/root', commitA, { compatibility: { dsh: '>=0.1.5' } })
       const sub = unstamped('b/mono', commitB, { name: 'the-plugin', subdir: 'packages/p' })
       const state: RepoState = {

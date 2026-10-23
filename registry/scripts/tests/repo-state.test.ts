@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { DECLARATIONS_RULE, applyArchivedFlags, applyForkFlags, diffRepoState, layerArchivedFlags, layerForkFlags, needsDeclarationsReread, nextRepoState, parseRepoState, repoGoneDetail, serializeRepoState, staleFailureRepos } from '../src/repo-state.ts'
 import type { RepoState, RepoStateEntry } from '../src/repo-state.ts'
-import type { RepoCandidate } from '../src/types.ts'
+import type { Candidate, RepoCandidate } from '../src/types.ts'
 import { dshPeersOf } from '../src/npm-client.ts'
 import { readIconDeclaration } from '../src/icon-declaration.ts'
 
@@ -214,8 +214,8 @@ describe('repo-state', () => {
     // re-read too. In-memory on purpose: the point here is the diff's
     // predicate, not the file's grammar, which the parse cases below pin.
     // (This said the older stamp was 0, which only an in-memory fixture can
-    // hold, while the rule was 1; since rule 2 it is 1, the stamp every
-    // committed record carries.)
+    // hold, while the rule was 1. It is now the previous rule's own stamp,
+    // whichever rule that is: the one a bump sends back through the re-read.)
     for (const other of [DECLARATIONS_RULE - 1, DECLARATIONS_RULE + 1]) {
       const stale: RepoState = { 'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [stamped('a/one', other)] } }
       const { toFetch, toReread } = diffRepoState(stale, unchanged)
@@ -938,6 +938,23 @@ describe('a carried declarations record is checked on the way in', () => {
       }
     })
 
+    it('has no place for the none read in the type of either candidate, and the parse refuses it besides', () => {
+      // The two directives are compile-time assertions: `pnpm typecheck` fails
+      // with "Unused '@ts-expect-error' directive" the day either field is
+      // widened back to the reader's `IconRead`. `none` is the reader's answer
+      // for a manifest that declares nothing, which a candidate records as an
+      // absent key, so whatever plans or fetches icons from a record never has
+      // to handle it.
+      // @ts-expect-error not a StoredIconRead
+      const npmIcon: Candidate['icon'] = { kind: 'none' }
+      // @ts-expect-error not a StoredIconRead
+      const repoIcon: RepoCandidate['icon'] = { kind: 'none' }
+      // What the types keep out of a record the parse keeps out of the file.
+      for (const icon of [npmIcon, repoIcon]) {
+        expect(() => parseRepoState(rowWith({ icon }))).toThrow(message)
+      }
+    })
+
     it('leaves a record without an icon without one, never inventing the none read', () => {
       // Every committed record is in this state until the rule-3 re-read gets
       // to it, and absent is not a wrong shape.
@@ -946,6 +963,9 @@ describe('a carried declarations record is checked on the way in', () => {
 
     it('keeps a carried candidate\'s icon through serialization and the next state', () => {
       const refusedIcon = readIconDeclaration({ icon: 7 })
+      // The reader's answer, narrowed to what a record can hold: `IconRead`
+      // itself no longer fits `RepoCandidate.icon`, which is the point.
+      if (refusedIcon.kind !== 'refused') throw new Error('the fixture manifest declares an icon that is not a string, which is refused')
       const recorded: RepoState = {
         'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [{ ...candidate('a/one'), icon: declaredIcon }] },
         'b/two': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [{ ...candidate('b/two'), icon: refusedIcon }] },
@@ -980,6 +1000,10 @@ describe('a carried declarations record is checked on the way in', () => {
       ['declared with a path that is not a string', { kind: 'declared', declaration: { ...ok, path: 7 } }],
       ['declared with no path', { kind: 'declared', declaration: { source: ok.source, mediaType: ok.mediaType } }],
       ['declared with a media type of no kind the reader writes', { kind: 'declared', declaration: { ...ok, mediaType: 'image/gif' } }],
+      // Own keys only: an index read or an `in` test on the member tables
+      // would answer for `Object.prototype`.
+      ['declared with a media type that is only a name on Object.prototype', { kind: 'declared', declaration: { ...ok, mediaType: 'constructor' } }],
+      ['declared from a source that is only a name on Object.prototype', { kind: 'declared', declaration: { ...ok, source: 'toString' } }],
       ['declared with no media type', { kind: 'declared', declaration: { source: ok.source, path: ok.path } }],
       // Both are published or built into keys by whatever reads them, so a key
       // the harvest never wrote would go out under the author's name.

@@ -60,20 +60,25 @@ import type { UnbuiltFinding } from './types.ts'
  * `compatibility`, `dshPeers`, `manifestVersion` and `icon` must come from the
  * archive's own package.json rather than the default-branch HEAD it was
  * projected from (a live scan found 7 of 220 rescued repositories whose
- * installed peers differ). But those readers are the one reader each for both
- * channels, and they live in the network module this pure one may not import;
- * so the values cross the boundary raw, and the shell reads them with the same
- * functions it reads every other manifest with. `version` is no exception:
- * whether it is usable is decided there, beside `dshPeersOf` (design
+ * installed peers differ). The first four cross the boundary raw because
+ * `peerNamesOf`, `compatibilityOf` and `dshPeersOf` are the one reader each for
+ * both channels and live in the network module this pure one may not import,
+ * so the shell reads them with the same functions it reads every other
+ * manifest with. `version` is no exception: whether it is usable is decided
+ * there, beside `dshPeersOf` (design
  * 2026-09-28-bundle-components-and-github-peers, section 6.1).
  *
- * `icon` and `exports` travel as a pair, because dsh finds both the manifest
- * and an exported icon through `exports` and the field means nothing read
- * without it (design 2026-10-23-shop-plugin-icons §4). `files` is the manifest
- * field a git install applies that is deliberately NOT here: a packed archive
- * has already applied its own, so what it holds is the truth, and a list
- * handed over beside it would make the writer refuse an icon the archive
- * ships, in a sentence about git installs that a tarball install never
+ * `icon` crosses raw for a different reason: `readIconDeclaration` is pure and
+ * could be called here. The writer takes it raw because it applies a rule on
+ * top of the read that differs by channel, `files` for a git install and never
+ * for an archive (below), and one place applying it keeps the two channels
+ * from drifting. `icon` and `exports` travel as a pair, because dsh finds both
+ * the manifest and an exported icon through `exports` and the field means
+ * nothing read without it (design 2026-10-23-shop-plugin-icons §4). `files` is
+ * the manifest field a git install applies that is deliberately NOT here: a
+ * packed archive has already applied its own, so what it holds is the truth,
+ * and a list handed over beside it would make the writer refuse an icon the
+ * archive ships, in a sentence about git installs that a tarball install never
  * reaches. A path the archive lacks is the icon step's `notInRelease`.
  */
 export interface PackedDeclarations {
