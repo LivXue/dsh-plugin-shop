@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { MAX_CATALOG_ICON_BYTES, checkIconBytes, iconDataUrl, sha256Hex } from '../src/icon-bytes.ts'
 import { iconDetail, iconLabel, shownPath } from '../src/icon-declaration.ts'
 import type { IconDeclaration, IconMediaType } from '../src/icon-declaration.ts'
-import { foldIconResults, iconSubjects, planIconWork } from '../src/icon-plan.ts'
-import type { IconFetchResult, IconFetchTarget, IconFold, IconPlan, IconReportRow, IconSubject } from '../src/icon-plan.ts'
+import { foldIconResults, iconSubjects, planIconWork, renderIconSection } from '../src/icon-plan.ts'
+import type { IconCounts, IconFetchResult, IconFetchTarget, IconFold, IconPlan, IconReportRow, IconSubject } from '../src/icon-plan.ts'
 import { githubIconKey, npmIconKey, parseIconState, releaseIconKey, serializeIconState } from '../src/icon-state.ts'
 import type { IconKey, IconOutcome } from '../src/icon-state.ts'
 import { compareStrings } from '../src/identity.ts'
@@ -1642,5 +1642,57 @@ describe('whatever a day brings', () => {
       runDay(subjects, { ...day, fileBudget: size - 1 })
       runDay(subjects, { ...day, fileBudget: Math.floor(size / 2) })
     }
+  })
+})
+
+describe('renderIconSection: the icon section', () => {
+  const counts: IconCounts = { declared: 3, published: 1, withheldByHand: 0, withheldForSize: 0, refused: 1, notRead: 0, notYetRead: 1 }
+  const refusedRow = (name: string, detail: string): IconReportRow => ({ name, identity: `npm:${name}`, kind: 'refused', detail })
+
+  it('renders the counts, the icons file size and a table row for each icon left out', () => {
+    const rows = [refusedRow('x|y', iconDetail.notString())]
+    expect(renderIconSection({ counts, rows }, 1234)).toBe(
+      '## Icons\n' +
+      '\n' +
+      'Declared 3: published 1, withheld by hand 0, withheld for size 0, refused 1, not read 0, not yet read 1. Icons file: 1234 bytes.\n' +
+      '\n' +
+      '| Plugin | Icon |\n' +
+      '|---|---|\n' +
+      `| x\\|y | ${iconDetail.notString()} |\n`,
+    )
+  })
+
+  it('says the icons file is none when the build publishes none', () => {
+    const rows = [refusedRow('x|y', iconDetail.notString())]
+    expect(renderIconSection({ counts, rows }, null)).toBe(
+      '## Icons\n' +
+      '\n' +
+      'Declared 3: published 1, withheld by hand 0, withheld for size 0, refused 1, not read 0, not yet read 1. Icons file: none.\n' +
+      '\n' +
+      '| Plugin | Icon |\n' +
+      '|---|---|\n' +
+      `| x\\|y | ${iconDetail.notString()} |\n`,
+    )
+  })
+
+  it('has no table when no icon is left out', () => {
+    expect(renderIconSection({ counts: { ...ZERO, declared: 2, published: 2 }, rows: [] }, 1234)).toBe(
+      '## Icons\n' +
+      '\n' +
+      'Declared 2: published 2, withheld by hand 0, withheld for size 0, refused 0, not read 0, not yet read 0. Icons file: 1234 bytes.\n',
+    )
+  })
+
+  it('escapes a newline and a pipe in a row\'s detail, so the row stays on one line', () => {
+    const rows = [refusedRow('p', 'icon is\nbroken | badly')]
+    expect(renderIconSection({ counts: { ...ZERO, declared: 1, refused: 1 }, rows }, null)).toBe(
+      '## Icons\n' +
+      '\n' +
+      'Declared 1: published 0, withheld by hand 0, withheld for size 0, refused 1, not read 0, not yet read 0. Icons file: none.\n' +
+      '\n' +
+      '| Plugin | Icon |\n' +
+      '|---|---|\n' +
+      '| p | icon is broken \\| badly |\n',
+    )
   })
 })

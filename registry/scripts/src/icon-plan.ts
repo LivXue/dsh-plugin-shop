@@ -30,6 +30,7 @@
  *
  * @module icon-plan
  */
+import { escapeCell } from './emit.ts'
 import { checkIconBytes, iconDataUrl, sha256Hex } from './icon-bytes.ts'
 import { iconDetail } from './icon-declaration.ts'
 import type { IconDeclaration, IconRead } from './icon-declaration.ts'
@@ -540,4 +541,31 @@ export function foldIconResults(
     rows: rows.sort(compareRows),
     counts,
   }
+}
+
+/**
+ * The report's icon section (design 2026-10-23-shop-plugin-icons §10): one line
+ * of counts and the size of the icons file, then one row for each icon a reader
+ * of the catalog does not see, and why. With no such row there is no table, so
+ * a catalog whose icons all land carries no empty one.
+ *
+ * Both cells go through `escapeCell`: a row's name and detail come from what a
+ * package or a repository declared, and a `|` or a newline in one would break
+ * the row its author reads. The rows are printed in the order the fold gave
+ * them, which is the report's order already. Numbers are plain digits, whatever
+ * the locale, so the section reads the same on every machine.
+ * @param fold - the rows and counts of {@link foldIconResults}.
+ * @param fileBytes - the size of the icons file the build publishes, or `null` when it publishes none.
+ */
+export function renderIconSection(fold: Pick<IconFold, 'rows' | 'counts'>, fileBytes: number | null): string {
+  const { counts, rows } = fold
+  const summary = `Declared ${counts.declared}: published ${counts.published}, withheld by hand ${counts.withheldByHand}, withheld for size ${counts.withheldForSize}, refused ${counts.refused}, not read ${counts.notRead}, not yet read ${counts.notYetRead}.`
+  const file = fileBytes === null ? 'Icons file: none.' : `Icons file: ${fileBytes} bytes.`
+  const lines = [
+    '## Icons',
+    '',
+    `${summary} ${file}`,
+    ...(rows.length > 0 ? ['', '| Plugin | Icon |', '|---|---|', ...rows.map((row) => `| ${escapeCell(row.name)} | ${escapeCell(row.detail)} |`)] : []),
+  ]
+  return `${lines.join('\n')}\n`
 }
