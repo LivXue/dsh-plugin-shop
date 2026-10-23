@@ -9,11 +9,17 @@
  * starts with one about `exports`: which file the map hands to
  * `./package.json` and to `./icon`. That is {@link resolveExportsSubpath}.
  *
+ * On it sit {@link readIconDeclaration}, which turns a manifest into the icon
+ * dsh would try to read, or into the reason it would not;
+ * {@link fileListIncludes}, which asks whether a git install would carry the
+ * file at all; and {@link iconDetail}, the one place the sentences an author
+ * reads about their icon are written, the later fetch's among them.
+ *
  * Pure: no clock, no network, no filesystem, no environment, and no locale.
  *
  * @module icon-declaration
  */
-import { posix } from 'node:path'
+import { posix, win32 } from 'node:path'
 
 /**
  * The conditions an `exports` map is matched against: the ones Node 26's ESM
@@ -245,4 +251,432 @@ function refused(path: string): boolean {
 function isArrayIndex(key: string): boolean {
   const index = Number(key)
   return `${index}` === key && index >= 0 && index < 2 ** 32 - 1
+}
+
+/**
+ * The type dsh draws an icon as. dsh chooses it by the file's extension,
+ * lower-cased, and by nothing else: the bytes are never sniffed
+ * (`ICON_MEDIA_TYPES` in dsh-app-boot).
+ */
+export type IconMediaType = 'image/svg+xml' | 'image/png' | 'image/jpeg' | 'image/webp'
+
+const MEDIA_TYPES: ReadonlyMap<string, IconMediaType> = new Map<string, IconMediaType>([
+  ['.svg', 'image/svg+xml'],
+  ['.png', 'image/png'],
+  ['.jpg', 'image/jpeg'],
+  ['.jpeg', 'image/jpeg'],
+  ['.webp', 'image/webp'],
+])
+
+/**
+ * An icon a manifest declares, as dsh 0.2.1 would try to read it.
+ *
+ * `source` is which of dsh's two sources it came from, and the details quote
+ * it ({@link iconLabel}). `path` is relative to the directory the manifest
+ * sits in (the package root, or a subpackage's own directory), POSIX-separated
+ * and normalised, with no leading `./` and no `..` segment: it stays inside
+ * the package. It keeps the case it was written in, as the file system does,
+ * while `mediaType` was chosen from its lower-cased extension.
+ *
+ * `path` is still hostile text. It is bounded by {@link MAX_ICON_PATH_LENGTH}
+ * and otherwise anything a file name may hold: a control character, a `%`, a
+ * `?` or a `#`. It is a name, not a URL, so whatever builds a URL from it must
+ * encode it, and whatever prints it must quote it ({@link shownPath}).
+ */
+export interface IconDeclaration {
+  source: 'icon' | 'export'
+  path: string
+  mediaType: IconMediaType
+}
+
+/**
+ * What a manifest says about its icon. `none` is nothing dsh would read as an
+ * icon. `refused` is a declaration dsh would not accept, with the sentence its
+ * author is told. `declared` is one dsh would try to read: the manifest is
+ * checked as far as a manifest alone can be, so whether the file exists, is
+ * small enough and holds what its extension says is for the fetch.
+ */
+export type IconRead =
+  | { kind: 'none' }
+  | { kind: 'declared'; declaration: IconDeclaration }
+  | { kind: 'refused'; detail: string }
+
+/**
+ * The longest icon path read. No file system dsh runs on opens a path past
+ * 4096 characters (Linux's PATH_MAX; macOS stops at 1024 and Windows at 260),
+ * so a package that declares a longer one has no icon dsh can draw.
+ *
+ * The bound is there for the shop's sake, though: a path becomes a key in a
+ * committed file and a lookup in an archive, and a manifest may be a megabyte,
+ * which a hostile one would spend on a single path. A path past it is read as
+ * no icon rather than refused, because no refusal in {@link iconDetail} would
+ * be true of it and an author never writes one.
+ */
+export const MAX_ICON_PATH_LENGTH = 4096
+
+/**
+ * How many characters of an author's path a sentence shows, the quotes and the
+ * ellipsis included.
+ */
+const SHOWN_PATH_MAX = 80
+
+/**
+ * How a detail names the declaration it is about: dsh's two sources, as their
+ * author would name them. `package.json "icon"` is the one the field-only
+ * details in {@link iconDetail} hard-wire.
+ */
+export function iconLabel(source: IconDeclaration['source']): string {
+  return source === 'icon' ? 'package.json "icon"' : 'the "./icon" export'
+}
+
+/**
+ * An author's path as a sentence quotes it: as a JSON string, which escapes
+ * quotes, backslashes and every control character, so no newline or stray
+ * quote of theirs survives into a published line; and cut to 80 characters
+ * (79 and an ellipsis) so a manifest cannot make a row as long as it likes.
+ * It is the one place any of an author's text enters a detail.
+ *
+ * The cut is by character, not by UTF-16 unit: a cut inside a surrogate pair
+ * leaves an ill-formed string, which whatever writes the report turns into
+ * U+FFFD. Only the head of the value is read, because 80 characters never need
+ * more of a value that may be megabytes: 162 units hold at least 81 characters,
+ * enough to know it is past the bound, and the 79 it keeps are inside them.
+ */
+export function shownPath(value: string): string {
+  const quoted = JSON.stringify(value.slice(0, 2 * (SHOWN_PATH_MAX + 1)))
+  if (quoted.length <= SHOWN_PATH_MAX) return quoted
+  const characters = Array.from(quoted)
+  if (characters.length <= SHOWN_PATH_MAX) return quoted
+  return `${characters.slice(0, SHOWN_PATH_MAX - 1).join('')}…`
+}
+
+/**
+ * The sentences the build report and the catalog publish about an icon, one
+ * function for each way an icon ends up without one (design 2026-10-23 §10).
+ * Their reader is the author the icon belongs to, who has to act on them
+ * (CLAUDE.md, "Every rejection carries an author-readable `detail`"), so each
+ * says what dsh or the shop did and, where there is something to change, what.
+ *
+ * `label` is {@link iconLabel} of a declaration's source. `shown` is
+ * {@link shownPath} of a path, which is an author's own text and so quoted and
+ * cut: of the field's path as it was written where the declaration was refused
+ * before a path existed, and of the declaration's normalised path from there
+ * on. The four field-only details name `package.json "icon"` themselves,
+ * because nothing else can have a value they are about.
+ *
+ * The sizes in the copy are the limits' values written out. This module sits
+ * below the ones that own the limits and cannot import them.
+ */
+export const iconDetail = {
+  notString: (): string => 'package.json "icon" must be a non-empty string; dsh shows no icon for this package.',
+  notRelative: (shown: string): string =>
+    `package.json "icon" ${shown} must be a relative file path inside the package; dsh shows no icon for this package.`,
+  leavesPackage: (shown: string): string =>
+    `package.json "icon" ${shown} leaves the package directory; dsh shows no icon for this package.`,
+  badType: (label: string, shown: string): string =>
+    `${label} ${shown} is not an SVG, PNG, JPEG or WebP file name; dsh chooses an icon's type by its extension.`,
+  fieldUnreachable: (): string =>
+    'package.json "icon" is never read: the package\'s "exports" does not expose "./package.json", so dsh cannot see the field. Add "./package.json": "./package.json" to "exports", or export "./icon".',
+  notInFiles: (label: string, shown: string): string =>
+    `${label} ${shown} is not in package.json "files", so a git install leaves it out and dsh never sees it.`,
+  notInPackage: (label: string, shown: string, name: string, version: string): string =>
+    `${label} ${shown} is not in the published package ${name}@${version}.`,
+  notAtCommit: (label: string, shown: string, repo: string, commit: string): string =>
+    `${label} ${shown} is not in ${repo} at commit ${commit.slice(0, 7)}.`,
+  notInRelease: (label: string, shown: string): string =>
+    `${label} ${shown} is not in the release asset this entry installs.`,
+  // `bytes` is null where the read stopped at the bound and never learned the
+  // size. Otherwise it is rounded up to the tenth of a KiB, so a file over the
+  // bound never reads as exactly 32.0 KiB.
+  tooLarge: (label: string, shown: string, bytes: number | null): string =>
+    bytes === null
+      ? `${label} ${shown} is larger than 32 KiB; the shop shows icons of at most 32 KiB.`
+      : `${label} ${shown} is ${(Math.ceil(bytes / 102.4) / 10).toFixed(1)} KiB; the shop shows icons of at most 32 KiB.`,
+  // `typeName` is SVG, PNG, JPEG or WebP: the type the extension promised.
+  wrongBytes: (label: string, shown: string, typeName: string): string =>
+    `${label} ${shown} does not hold ${typeName} data, although its extension says it does.`,
+  packageTooLarge: (name: string, version: string): string =>
+    `the published package ${name}@${version} is larger than the 32 MiB the catalog build downloads, so its icon was not read.`,
+  packageUnpacksTooLarge: (name: string, version: string): string =>
+    `the published package ${name}@${version} unpacks to more than the 64 MiB the catalog build reads, so its icon was not read.`,
+  releaseTooLarge: (): string =>
+    'the release asset is larger than the 32 MiB the catalog build downloads, so its icon was not read.',
+  withheldByHand: (reason: string): string => `withheld by registry/withheld-icons.yml: ${reason}`,
+  withheldForSize: (): string =>
+    'withheld: the icons file reached its 16 MiB budget, and the largest icons give way first.',
+}
+
+/**
+ * What the manifest declares as its icon, by dsh 0.2.1's rule (design §3.1 and
+ * §4; `readPluginMeta` and `iconOf` in dsh-app-boot):
+ *
+ * 1. dsh reads the manifest through `exports`. The field counts only where
+ *    `./package.json` resolves to the manifest itself. A map that hands that
+ *    subpath another file (`dist/package.json`, say) makes dsh read that
+ *    file, which the shop does not hold, and this manifest's field is not what
+ *    dsh reads.
+ * 2. Where it does and `icon` is present, `icon` decides, and nothing else is
+ *    tried. A bad one is refused, not skipped, as dsh throws on it.
+ * 3. Otherwise, the `./icon` export.
+ * 4. A package that declares an `icon` dsh never reads, and exports none, has
+ *    an icon it will never draw. Its author is told why. Nothing else is no
+ *    icon, and no refusal.
+ *
+ * The path rules apply to both sources, which dsh does not do: for the field
+ * they are dsh's own, and for the export they are defence in depth over what
+ * {@link resolveExportsSubpath} already answers with. See {@link readIconExport}.
+ *
+ * @param manifest - a package.json, untrusted: any JSON value.
+ */
+export function readIconDeclaration(manifest: unknown): IconRead {
+  // dsh reads a package.json that is an object, and draws nothing for any other.
+  if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) return { kind: 'none' }
+  const fields = manifest as Record<string, unknown>
+  const manifestAt = resolveExportsSubpath(fields.exports, './package.json')
+  const readsManifest = manifestAt !== null && manifestAt.path === 'package.json'
+  // dsh takes an absent field, `undefined` to it, for none, and anything else,
+  // null included, for a declaration.
+  if (readsManifest && fields.icon !== undefined) return readIconField(fields.icon)
+  const exported = readIconExport(fields.exports)
+  if (exported !== undefined) return exported
+  // A field that is present here is one dsh never read: a readable one has
+  // returned above.
+  return fields.icon === undefined ? { kind: 'none' } : refuseWith(iconDetail.fieldUnreachable())
+}
+
+function refuseWith(detail: string): IconRead {
+  return { kind: 'refused', detail }
+}
+
+/**
+ * dsh's `iconOf` for the manifest's `icon` field, in its order: a non-empty
+ * string (`textOf` refuses whitespace too), a relative path with no URL scheme,
+ * a path that stays inside the manifest's directory, a known extension.
+ */
+function readIconField(value: unknown): IconRead {
+  if (typeof value !== 'string' || value.trim() === '') return refuseWith(iconDetail.notString())
+  if (!isRelativePath(value)) return refuseWith(iconDetail.notRelative(shownPath(value)))
+  // After the relative test, so that a `data:` URL, which authors do write and
+  // which can be long, is still refused and told why.
+  if (value.length > MAX_ICON_PATH_LENGTH) return { kind: 'none' }
+  const path = pathInsidePackage(value)
+  if (path === null) return refuseWith(iconDetail.leavesPackage(shownPath(value)))
+  const mediaType = mediaTypeOf(path)
+  if (mediaType === undefined) return refuseWith(iconDetail.badType(iconLabel('icon'), shownPath(path)))
+  return { kind: 'declared', declaration: { source: 'icon', path, mediaType } }
+}
+
+/**
+ * The `./icon` export as a declaration or a refusal, or `undefined` where the
+ * map exports no icon.
+ *
+ * What the map answers with already stays inside the package, so the path
+ * rules can fault it only in ways no real package has (a name such as
+ * `C:/icon.svg`, which dsh would open as a file of that name), and they are
+ * applied anyway, as defence in depth. One that fails them is no export rather
+ * than a refusal: the refusals for the field quote `package.json "icon"`, a
+ * field the author of an export did not write, and none of them is true of an
+ * export.
+ *
+ * What `via` records decides a file the rules accept but the extension does
+ * not. Under an exact `./icon` key it is the author's own statement and
+ * refused. A pattern such as `"./*": "./dist/*.js"` hands every subpath a
+ * file, and one landing on `dist/icon.js` only says the map is open, so it is
+ * no export at all.
+ */
+function readIconExport(exportsField: unknown): IconRead | undefined {
+  const exported = resolveExportsSubpath(exportsField, './icon')
+  if (exported === null || exported.path.length > MAX_ICON_PATH_LENGTH || !isRelativePath(exported.path)) return undefined
+  const path = pathInsidePackage(exported.path)
+  if (path === null) return undefined
+  const mediaType = mediaTypeOf(path)
+  if (mediaType === undefined) {
+    return exported.via === 'exact' ? refuseWith(iconDetail.badType(iconLabel('export'), shownPath(path))) : undefined
+  }
+  return { kind: 'declared', declaration: { source: 'export', path, mediaType } }
+}
+
+/**
+ * dsh's test for an `icon` that is not a relative path: anything that starts
+ * with a URL scheme, which is how a `data:` URL fails and how a drive letter
+ * does, or an absolute path of either kind of platform.
+ */
+const URL_SCHEME = /^[A-Za-z][A-Za-z\d+.-]*:/u
+
+function isRelativePath(value: string): boolean {
+  return !posix.isAbsolute(value) && !win32.isAbsolute(value) && !URL_SCHEME.test(value)
+}
+
+/**
+ * The path as dsh's `resolve(root, icon)` would reach it, relative to `root`,
+ * or `null` where it ends outside: normalised, a leading `./` gone with the
+ * rest of the dots. `resolve` also drops a trailing slash, which
+ * `posix.normalize` keeps, and `logo.svg/` is the file `logo.svg` to dsh. A
+ * backslash is a file name character, as it is on the platforms dsh runs on
+ * other than Windows.
+ */
+function pathInsidePackage(value: string): string | null {
+  const normalised = posix.normalize(value)
+  const path = normalised.endsWith('/') ? normalised.slice(0, -1) : normalised
+  return path === '..' || path.startsWith('../') ? null : path
+}
+
+function mediaTypeOf(path: string): IconMediaType | undefined {
+  return MEDIA_TYPES.get(posix.extname(path).toLowerCase())
+}
+
+/**
+ * More entries than any real `files` list holds, and longer than any real
+ * entry, so that past either the list is not read. With a path of at most
+ * {@link MAX_ICON_PATH_LENGTH} they bound a match at some 256 * 256 * 4096
+ * steps; `files` is hostile input and a manifest may be a megabyte of it.
+ */
+const MAX_FILES_ENTRIES = 256
+const MAX_FILES_ENTRY_LENGTH = 256
+
+/**
+ * Glob syntax beyond `*` and `**`: the `?`, character classes, braces,
+ * extglobs and escapes of npm's minimatch, which the shop does not evaluate.
+ */
+const UNREAD_GLOB_SYNTAX = /[?[\]{}()\\]/
+
+/**
+ * Whether a git install of a package whose package.json lists `files` as given
+ * carries the file at `path`, a declaration's path relative to that
+ * package.json.
+ *
+ * pnpm installs a git dependency the way `npm pack` would pack it (design
+ * §5.2), and with a `files` list npm packs what the list names, so an icon the
+ * list leaves out is one dsh never sees. The rule is npm-packlist's, as its
+ * answers show (the tests list them):
+ *
+ * - Entries are read in order, the last one that matches deciding, and an
+ *   entry that starts with `!` excludes.
+ * - An entry matches the path it names and, if it names a directory, every
+ *   path under it. Every entry is anchored at the package root, and a leading
+ *   `./` or `/` is that root.
+ * - Otherwise the entry is a glob: `*` stays within a path segment and `**`
+ *   crosses them. A glob matches only the paths it names, never a directory
+ *   that holds them, except that npm reads a final `*` segment, `dir/*` or
+ *   alone, as `**`.
+ * - Case does not matter: npm matches its patterns without regard to it, which
+ *   is why `*.svg` packs `Icon.SVG`. (A name spelled in the wrong case is a
+ *   directory on a case-insensitive file system and a mere pattern on a
+ *   case-sensitive one, so no refusal can rest on it either.)
+ *
+ * Two corners of npm's are not modelled, and both show only in lists that mix
+ * such entries. A slash-less pattern (`*.png`) also matches inside any
+ * directory another entry makes npm enter, where here it is anchored at the
+ * root, so the shop can refuse an icon that npm packs. And an entry that names
+ * an existing file outranks the others whatever their order, where here the
+ * last entry decides.
+ *
+ * Three things leave the file included, because a refusal is published to an
+ * author and has to be true:
+ *
+ * - A `files` that is not an array of strings restricts nothing.
+ * - An entry this does not read cannot say what it matches: one that uses glob
+ *   syntax beyond `*` and `**`, or names nothing. It includes, and as a `!`
+ *   entry it excludes nothing, so the worst a wrong guess does is draw an icon
+ *   a git install lacks, which §5.2 already accepts for `.npmignore`.
+ * - A list or entry past the bounds above is not read, nor is a path past
+ *   {@link MAX_ICON_PATH_LENGTH}. Matching is not done by a regular expression
+ *   built from the entry, whose worst case is exponential, but by walking both
+ *   with a bounded backtrack: at worst the product of their lengths.
+ *
+ * @param files - the manifest's `files`, untrusted: any JSON value.
+ * @param path - normalised and POSIX-separated, as an {@link IconDeclaration}'s.
+ */
+export function fileListIncludes(files: unknown, path: string): boolean {
+  if (!Array.isArray(files) || files.length > MAX_FILES_ENTRIES || path.length > MAX_ICON_PATH_LENGTH) return true
+  if (!files.every((entry) => typeof entry === 'string')) return true
+  const segments = path.toLowerCase().split('/')
+  let included = false
+  for (const entry of files as readonly string[]) {
+    const excludes = entry.startsWith('!')
+    const matched = entryMatches(excludes ? entry.slice(1) : entry, segments)
+    // An entry that cannot be read (`undefined`) counts as a match for an
+    // include and as no match for an exclude.
+    if (matched ?? !excludes) included = !excludes
+  }
+  return included
+}
+
+/**
+ * Whether one `files` entry, without its `!`, matches a path, or `undefined`
+ * where the entry is one this does not read.
+ */
+function entryMatches(entry: string, path: readonly string[]): boolean | undefined {
+  if (entry.length > MAX_FILES_ENTRY_LENGTH || UNREAD_GLOB_SYNTAX.test(entry)) return undefined
+  // Empty segments (`a//b`, a trailing or a leading slash) are no segments, and
+  // a leading `.` is the package root. `path` is lower-cased by the caller.
+  const parts = entry.toLowerCase().split('/').filter((part) => part !== '')
+  if (parts[0] === '.') parts.shift()
+  if (parts.length === 0) return undefined
+  if (!entry.includes('*')) {
+    // A plain name: the file itself, or a directory that holds it.
+    return parts.length <= path.length && parts.every((part, index) => part === path[index])
+  }
+  // npm packs everything below `dir/*`, not only the children of `dir`, and
+  // everything for a lone `*`, an include or a `!`.
+  if (parts[parts.length - 1] === '*') parts[parts.length - 1] = '**'
+  return globMatches(parts, path)
+}
+
+/**
+ * Whether glob segments match path segments, a `**` segment standing for any
+ * number of them, none included. Walks both once, and where a segment fails
+ * goes back only to the latest `**`: at worst the product of the lengths, with
+ * nothing exponential in it however the entry is written.
+ */
+function globMatches(pattern: readonly string[], path: readonly string[]): boolean {
+  let at = 0
+  let from = 0
+  let globstar = -1
+  let resume = 0
+  while (from < path.length) {
+    const part = pattern[at]
+    if (part === '**') {
+      globstar = at++
+      resume = from
+    } else if (part !== undefined && nameMatches(part, path[from] ?? '')) {
+      at++
+      from++
+    } else if (globstar !== -1) {
+      at = globstar + 1
+      from = ++resume
+    } else {
+      return false
+    }
+  }
+  while (pattern[at] === '**') at++
+  return at === pattern.length
+}
+
+/**
+ * Whether a glob segment matches a path segment: `*` for any run of
+ * characters, none included, and every other character for itself. The same
+ * walk as {@link globMatches}, one level down.
+ */
+function nameMatches(pattern: string, name: string): boolean {
+  let at = 0
+  let from = 0
+  let star = -1
+  let resume = 0
+  while (from < name.length) {
+    if (pattern[at] === '*') {
+      star = at++
+      resume = from
+    } else if (pattern[at] === name[from]) {
+      at++
+      from++
+    } else if (star !== -1) {
+      at = star + 1
+      from = ++resume
+    } else {
+      return false
+    }
+  }
+  while (pattern[at] === '*') at++
+  return at === pattern.length
 }
