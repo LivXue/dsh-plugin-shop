@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   EXPORT_CONDITIONS,
+  ICON_MEDIA_TYPES,
   MAX_ICON_PATH_LENGTH,
   fileListIncludes,
   iconDetail,
@@ -511,6 +512,21 @@ describe('iconLabel', () => {
   it('names the field and the export the way the details quote them', () => {
     expect(iconLabel('icon')).toBe('package.json "icon"')
     expect(iconLabel('export')).toBe('the "./icon" export')
+  })
+})
+
+describe('ICON_MEDIA_TYPES', () => {
+  it('holds exactly the four media types, and every one the reader writes for an extension it knows', () => {
+    expect(Object.keys(ICON_MEDIA_TYPES).sort()).toEqual(['image/jpeg', 'image/png', 'image/svg+xml', 'image/webp'])
+    // The reader's own output, so a type it learned to write that the table
+    // lacks would fail here, where a record guarding stored rows would refuse
+    // it on the build after the one that wrote it.
+    const written = ['icon.svg', 'icon.png', 'icon.jpg', 'icon.jpeg', 'icon.webp'].map((path) => {
+      const read = readIconDeclaration({ icon: path })
+      if (read.kind !== 'declared') throw new Error(`expected ${path} to be declared, read ${read.kind}`)
+      return read.declaration.mediaType
+    })
+    expect([...new Set(written)].sort()).toEqual(Object.keys(ICON_MEDIA_TYPES).sort())
   })
 })
 
