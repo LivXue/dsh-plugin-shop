@@ -45,22 +45,25 @@ const JPEG_START = [0xff, 0xd8, 0xff]
 const RIFF = [0x52, 0x49, 0x46, 0x46]
 const WEBP = [0x57, 0x45, 0x42, 0x50]
 
+/** The two bytes a UTF-16 file starts with, which also say which byte of each character comes first. */
+const UTF16LE_MARK = [0xff, 0xfe]
+const UTF16BE_MARK = [0xfe, 0xff]
+
 /**
  * Whether the bytes are the kind of file `mediaType` names.
  *
  * dsh chooses an icon's type by its extension and never sniffs, so a PNG named
  * `icon.svg` would only ever draw as a broken image there and as the default
  * artwork here. Refusing it costs nothing and tells the author why (design
- * §5.4).
+ * §5.4). That holds only for bytes a browser could not draw as the type: the
+ * refusal says the file does not hold what its extension promises, so one that
+ * a browser does draw must never get it.
  *
  * A type check and no more, and not a sanitiser: an SVG is defended by
  * reaching the page only as an image's `src` (§8.5). So each format is read
- * for its opening bytes and nothing past them, except an SVG's text, which
- * must be UTF-8 throughout. PNG is its eight-byte signature, JPEG is
- * {@link JPEG_START}, and WebP is `RIFF`, a four-byte size and `WEBP`. For an
- * SVG, see {@link startsWithSvgElement}. The whole of an SVG is decoded, so
- * this is for bytes already held to {@link MAX_CATALOG_ICON_BYTES}, as
- * {@link checkIconBytes} holds them.
+ * for its opening bytes and nothing past them. PNG is its eight-byte
+ * signature, JPEG is {@link JPEG_START}, WebP is `RIFF`, a four-byte size and
+ * `WEBP`, and SVG is a first element named `svg` ({@link isSvg}).
  */
 export function sniffIconBytes(bytes: Uint8Array, mediaType: IconMediaType): boolean {
   switch (mediaType) {
@@ -71,7 +74,7 @@ export function sniffIconBytes(bytes: Uint8Array, mediaType: IconMediaType): boo
     case 'image/webp':
       return hasBytesAt(bytes, 0, RIFF) && hasBytesAt(bytes, 8, WEBP)
     case 'image/svg+xml':
-      return isSvgText(bytes)
+      return isSvg(bytes)
   }
 }
 
@@ -80,18 +83,46 @@ function hasBytesAt(bytes: Uint8Array, offset: number, expected: readonly number
   return expected.every((byte, index) => bytes[offset + index] === byte)
 }
 
-function isSvgText(bytes: Uint8Array): boolean {
-  let text: string
+function isSvg(bytes: Uint8Array): boolean {
+  const text = svgText(bytes)
+  return text !== null && startsWithSvgElement(text)
+}
+
+/**
+ * An SVG file's text, as far as its prolog and root element need it, or `null`
+ * for a file that announces UTF-16 and does not decode as UTF-16.
+ *
+ * It is read in the encoding a browser would choose, because that is what
+ * keeps a refusal true (design §5.4): an author told their file holds no SVG
+ * data must have a file no browser draws. A UTF-16 byte order mark selects
+ * UTF-16, in either order, and the text must decode cleanly. Any other bytes
+ * are read one character each, so that UTF-8, ISO-8859-1 and the other
+ * ASCII-compatible encodings an XML declaration may name all show the same
+ * ASCII prolog and root name. An author's own non-ASCII characters land at
+ * U+0080 and above, which {@link isNameChar} accepts inside a name and which
+ * the prolog skips inside a comment, an instruction or a literal.
+ *
+ * Nothing past the root element is read, so how the rest of the file is
+ * encoded is not checked: a browser that cannot decode the image draws the
+ * default artwork (design decision 3), and a false acceptance costs nothing.
+ * Not read at all: UTF-16 without a byte order mark, and UTF-32.
+ */
+function svgText(bytes: Uint8Array): string | null {
+  if (hasBytesAt(bytes, 0, UTF16LE_MARK)) return decodeUtf16('utf-16le', bytes.subarray(UTF16LE_MARK.length))
+  if (hasBytesAt(bytes, 0, UTF16BE_MARK)) return decodeUtf16('utf-16be', bytes.subarray(UTF16BE_MARK.length))
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('latin1')
+}
+
+function decodeUtf16(label: 'utf-16le' | 'utf-16be', bytes: Uint8Array): string | null {
   try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    return new TextDecoder(label, { fatal: true }).decode(bytes)
   } catch {
-    // The decoder throws a TypeError for a byte sequence that is not UTF-8 and
-    // for nothing else, given a Uint8Array. It is this check's answer: the
-    // design reads an `.svg` as UTF-8 text (§5.4), the encoding XML assumes
-    // for a file that declares none.
-    return false
+    // The decoder throws a TypeError for an odd trailing byte or a lone
+    // surrogate and for nothing else, given a Uint8Array and a label it knows.
+    // It is this check's answer: a file that announces UTF-16 and is not
+    // UTF-16 is no document a browser reads.
+    return null
   }
-  return startsWithSvgElement(text)
 }
 
 /** XML's white space. */
@@ -99,53 +130,118 @@ function isSpace(code: number): boolean {
   return code === 0x20 || code === 0x09 || code === 0x0a || code === 0x0d
 }
 
-/** U+FEFF: the decoder strips the one at the start of the bytes and leaves any other. */
+/** U+FEFF: how a byte order mark reads in text that was decoded, past the one the decoder strips from the start. */
 const BYTE_ORDER_MARK = 0xfeff
+
+/** UTF-8's byte order mark, `EF BB BF`, as the three characters it reads as in text read byte for byte. */
+const UTF8_BYTE_ORDER_MARK = String.fromCharCode(0xef, 0xbb, 0xbf)
+
+/** What opens and what closes a comment and a processing instruction. */
+const COMMENT = { open: '<!--', close: '-->' }
+const PROCESSING_INSTRUCTION = { open: '<?', close: '?>' }
+const BRACKETED = [COMMENT, PROCESSING_INSTRUCTION]
 
 /** The keyword that opens a document type declaration. */
 const DOCTYPE = '<!DOCTYPE'
 
 /**
- * Whether the first element of an SVG document's text is `<svg`, in lower
- * case, followed by white space, `/` or `>` so that `<svgx>` is no match.
- * Before it may come any number of white space, byte order marks, processing
- * instructions (the XML declaration among them), comments and DOCTYPEs, in any
- * order.
+ * Whether the first element of an SVG document's text is an `svg`, with a
+ * namespace prefix or without one ({@link opensSvgElement}). Before it may
+ * come any number of white space, byte order marks, processing instructions
+ * (the XML declaration among them), comments and DOCTYPEs, in any order.
  *
  * That is looser than XML, which wants the declaration first with nothing
  * before it, one byte order mark and at most one DOCTYPE, and it is meant to
  * be. A false refusal tells an author something untrue about their file; a
  * false acceptance only draws the default artwork, where the browser fails to
- * decode the image (design decision 3). It is stricter only where design §5.4
- * is: the text is UTF-8, and the first element is spelled `<svg`, so a root
- * with a namespace prefix is not one.
+ * decode the image (design decision 3).
  *
  * Every step moves forward and none is repeated, so the cost is one pass over
- * the text however a hostile file spells it. Nothing here is a regular
- * expression over the author's text, whose worst case need not be linear.
+ * the text however a hostile file spells it. No regular expression is applied
+ * to the author's text.
  */
 function startsWithSvgElement(text: string): boolean {
   let at = 0
   for (;;) {
-    const code = text.charCodeAt(at)
-    if (isSpace(code) || code === BYTE_ORDER_MARK) {
-      at += 1
+    const blank = blankLength(text, at)
+    if (blank > 0) {
+      at += blank
       continue
     }
-    let next: number
-    if (text.startsWith('<?', at)) next = indexAfter(text, '?>', at + 2)
-    else if (text.startsWith('<!--', at)) next = indexAfter(text, '-->', at + 4)
-    else if (text.startsWith(DOCTYPE, at)) next = indexAfterDoctype(text, at + DOCTYPE.length)
-    else return /^<svg[ \t\r\n/>]/.test(text.slice(at, at + 5))
-    if (next === -1) return false
-    at = next
+    let past = indexAfterBracketed(text, at)
+    if (past === undefined && text.startsWith(DOCTYPE, at)) past = indexAfterDoctype(text, at + DOCTYPE.length)
+    if (past === undefined) return opensSvgElement(text, at)
+    if (past === -1) return false
+    at = past
   }
+}
+
+/** How many characters of white space or of a byte order mark start at `at`: one, three for UTF-8's mark read byte for byte, or none. */
+function blankLength(text: string, at: number): number {
+  const code = text.charCodeAt(at)
+  if (isSpace(code) || code === BYTE_ORDER_MARK) return 1
+  return text.startsWith(UTF8_BYTE_ORDER_MARK, at) ? UTF8_BYTE_ORDER_MARK.length : 0
+}
+
+/**
+ * Whether an element named `svg`, or `prefix:svg` with a prefix of at least one
+ * name character, opens at `at`: the `<`, the name, and then white space, `/` or
+ * `>`, so that `<svgx>`, `<svg:svgx>` and `<:svg>` are no match. A prefix is how
+ * an XML document binds SVG to its namespace with `xmlns:prefix`, and browsers
+ * draw it; the binding itself is not checked.
+ */
+function opensSvgElement(text: string, at: number): boolean {
+  if (text.charAt(at) !== '<') return false
+  const first = endOfName(text, at + 1)
+  const prefixed = text.charAt(first) === ':' && first > at + 1
+  const localStart = prefixed ? first + 1 : at + 1
+  const localEnd = prefixed ? endOfName(text, localStart) : first
+  if (localEnd - localStart !== 'svg'.length || !text.startsWith('svg', localStart)) return false
+  const after = text.charAt(localEnd)
+  return after === '/' || after === '>' || isSpace(text.charCodeAt(localEnd))
+}
+
+/** The index of the first character at or after `from` that is no name character: the end of a name, a prefix included up to its colon. */
+function endOfName(text: string, from: number): number {
+  let at = from
+  while (at < text.length && isNameChar(text.charCodeAt(at))) at += 1
+  return at
+}
+
+/**
+ * A character a name may hold here: an ASCII letter or digit, `_`, `-`, `.`, and
+ * any character from U+0080 on. XML allows fewer of those, which is a false
+ * acceptance and no more. The last class is there because text read byte for
+ * byte shows an author's non-ASCII prefix as bytes from 0x80 up.
+ */
+function isNameChar(code: number): boolean {
+  return (
+    (code >= 0x30 && code <= 0x39) ||
+    (code >= 0x41 && code <= 0x5a) ||
+    (code >= 0x61 && code <= 0x7a) ||
+    code === 0x5f ||
+    code === 0x2d ||
+    code === 0x2e ||
+    code >= 0x80
+  )
 }
 
 /** The index just past the first `terminator` at or after `from`, or -1 where there is none. */
 function indexAfter(text: string, terminator: string, from: number): number {
   const found = text.indexOf(terminator, from)
   return found === -1 ? -1 : found + terminator.length
+}
+
+/**
+ * The index just past the comment or processing instruction that opens at
+ * `at`, -1 where it never closes, or `undefined` where neither opens there.
+ * The one place either is defined, for the prolog and for a DOCTYPE's insides.
+ */
+function indexAfterBracketed(text: string, at: number): number | undefined {
+  for (const { open, close } of BRACKETED) {
+    if (text.startsWith(open, at)) return indexAfter(text, close, at + open.length)
+  }
+  return undefined
 }
 
 /**
@@ -181,12 +277,9 @@ function indexOutsideLiterals(text: string, from: number, stops: string): number
   while (at < text.length) {
     const char = text.charAt(at)
     if (stops.includes(char)) return at
-    let next = at + 1
-    if (char === '"' || char === "'") next = indexAfter(text, char, at + 1)
-    else if (text.startsWith('<!--', at)) next = indexAfter(text, '-->', at + 4)
-    else if (text.startsWith('<?', at)) next = indexAfter(text, '?>', at + 2)
-    if (next === -1) return -1
-    at = next
+    const past = char === '"' || char === "'" ? indexAfter(text, char, at + 1) : indexAfterBracketed(text, at)
+    if (past === -1) return -1
+    at = past ?? at + 1
   }
   return -1
 }
@@ -204,10 +297,15 @@ const TYPE_NAMES: Readonly<Record<IconMediaType, string>> = {
  * its author is told where they may not: at most {@link MAX_CATALOG_ICON_BYTES},
  * and the kind of file the extension says ({@link sniffIconBytes}).
  *
+ * `bytes` must be the whole file, because its length is the size the sentence
+ * prints. A read that stopped at the cap, and so never learned the size,
+ * reports `iconDetail.tooLarge(label, shown, null)` instead, without coming
+ * here.
+ *
  * The size is judged first. It is a comparison, and bytes the catalog would not
- * carry are not worth decoding to learn what they hold. The path in a sentence
- * is the declaration's normalised one, quoted by {@link shownPath} because it
- * is an author's text.
+ * carry are not worth reading for what they hold. The path in a sentence is the
+ * declaration's normalised one, quoted by {@link shownPath} because it is an
+ * author's text.
  */
 export function checkIconBytes(
   bytes: Uint8Array,
