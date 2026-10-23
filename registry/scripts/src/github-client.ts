@@ -27,7 +27,8 @@ import { treeBlobPaths, treeInstallSize } from './tree-size.ts'
 import { declaredPatchFiles, MAX_PATCH_BYTES, type PackedDeclarations, readPackedDeclarations, treePathOf, unbuiltFinding, verifyReleaseAsset } from './release-asset.ts'
 
 const GITHUB_API = 'https://api.github.com'
-const RAW_GITHUB = 'https://raw.githubusercontent.com'
+/** Where raw file contents at a commit are served: manifests and patch files for the harvest, an icon for the icon step (`icon-fetch.ts`). */
+export const RAW_GITHUB = 'https://raw.githubusercontent.com'
 
 /**
  * A name taken from a repository, written into the path of a URL: every
@@ -119,6 +120,12 @@ export const HARVEST_TOPICS: readonly string[] = ['dsh-plugin', 'deepseek-harnes
  * decision WE make about an asset that answered, not a transport failure, so
  * the probe answers "no release" for it rather than throwing — and it must
  * refuse the body rather than OOM the build.
+ *
+ * The icon step downloads under the same bound, a release asset and the npm
+ * tarball it reads an icon from alike (`icon-fetch.ts`), and states it as "32 MiB"
+ * in the sentences an author reads (`iconDetail.packageTooLarge` and
+ * `releaseTooLarge`); the test that holds those sentences to this constant fails
+ * until both have moved.
  */
 export const MAX_TARBALL_BYTES = 32 * 1024 * 1024
 
@@ -308,8 +315,11 @@ function bearer(token: string | undefined): RequestInit | undefined {
  * returned rather than thrown, and is retried inside that call unless the
  * caller asks for the first answer ({@link StatusRetry}). Either way a throw
  * is retried: at four 30 s deadlines that costs at most 134 s with backoff.
+ *
+ * Exported for the icon step, which reads a raw file at a commit the way
+ * the harvest does (`icon-fetch.ts`).
  */
-async function fetchRobust(
+export async function fetchRobust(
   url: string,
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
@@ -1073,16 +1083,18 @@ type AssetDownload =
  * Download one release asset under the tarball deadline and body cap, as many
  * attempts as `statusRetry` allows.
  *
- * Shared by the rescue probe and the declarations re-read, so the one path
- * that reads up to 32 MB is bounded one way wherever it runs. Each caller
- * decides what a non-`bytes` outcome means: the probe reads both as "no
- * release"; the re-read reads both, like bytes that miss the pin, as the
- * recorded asset being gone, and unverifies the rescue for a full re-probe.
+ * Shared by the rescue probe, the declarations re-read and the icon step
+ * (`icon-fetch.ts`), so the one path that reads up to 32 MB is bounded one way
+ * wherever it runs. Each caller decides what a non-`bytes` outcome means: the
+ * probe reads both as "no release"; the re-read reads both, like bytes that
+ * miss the pin, as the recorded asset being gone, and unverifies the rescue for
+ * a full re-probe; the icon step reads a 404 as an asset it has not read yet
+ * and one past the cap as an icon it cannot read.
  *
  * It sends no token, to any URL, and there is no parameter to pass one: a
  * public release asset needs none, and the one rule that keeps the job's
- * GITHUB_TOKEN off every asset request lives here rather than at two call
- * sites. The re-read's URL comes from a file a pull request can edit, and
+ * GITHUB_TOKEN off every asset request lives here rather than at each call
+ * site. The re-read's URL comes from a file a pull request can edit, and
  * even the probe's — GitHub's own `browser_download_url` — redirects to a
  * separate asset host. Only requests to api.github.com and
  * raw.githubusercontent.com carry the token.
@@ -1112,13 +1124,14 @@ type AssetDownload =
  * because it decides whether a changed repository's rescue is listed. The
  * re-read takes the first answer, so that one download in flight when its
  * time budget runs out is bounded by this deadline alone: it is what makes
- * that constant's arithmetic hold.
+ * that constant's arithmetic hold. The icon step takes it too, for the same
+ * reason (`ICON_FETCH_TIME_BUDGET_MS_DEFAULT`).
  * @param url - the asset URL, as the releases API or the checked recorded pin gives it.
  * @throws on any status but an ok one or a 404 (with the ladder, a 5xx after
  *   fetchWithRetry's retries), a request that throws, a body that fails
  *   mid-read, or a deadline.
  */
-async function downloadReleaseAsset(
+export async function downloadReleaseAsset(
   url: string,
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
@@ -2715,11 +2728,15 @@ interface RereadTransport {
  * same host written fully qualified. No port and no credentials, because the
  * probe's URL never carries either. Owner and name compare case-insensitively
  * against the state key, as GitHub resolves them.
+ *
+ * Exported for the icon step, which downloads the asset a rescued entry
+ * publishes as its `tarball.url`: the same recorded URL, from the same file,
+ * and so held to the same check (`icon-fetch.ts`).
  * @param raw - the recorded URL, untrusted.
  * @param owner - the state key's owner.
  * @param slug - the state key's repository name.
  */
-function recordedReleaseUrl(raw: string, owner: string, slug: string): URL | null {
+export function recordedReleaseUrl(raw: string, owner: string, slug: string): URL | null {
   let url: URL
   try {
     url = new URL(raw)

@@ -5332,6 +5332,9 @@ const SCANNED_SOURCES: readonly { file: string; source: string }[] = [
   { file: 'github-client.ts', source: githubClientSource },
   { file: 'npm-client.ts', source: srcOf('npm-client.ts') },
   { file: 'npm-feed.ts', source: srcOf('npm-feed.ts') },
+  // The icon step reads tarballs, raw files and the published icons file, all
+  // third-party bytes, and only through `readCappedBody`.
+  { file: 'icon-fetch.ts', source: srcOf('icon-fetch.ts') },
   { file: 'http-body.ts', source: srcOf('http-body.ts') },
 ]
 

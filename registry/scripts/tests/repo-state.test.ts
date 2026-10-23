@@ -938,6 +938,28 @@ describe('a carried declarations record is checked on the way in', () => {
       }
     })
 
+    it('accepts a path whose file names only look like directions', () => {
+      // The rule is about whole segments. A name holding dots, a percent
+      // escape, a backslash or a control character is a file name, and
+      // `readIconDeclaration` writes such paths: refusing one would stop the
+      // build over a record it made itself.
+      const paths = [
+        '..icon.svg',
+        'icon..svg',
+        'a..b/icon.svg',
+        '.../icon.svg',
+        'assets/.hidden/icon.svg',
+        '%2e%2e/icon.svg',
+        'a\\..\\b.svg',
+        'tab\there/new\nline.svg',
+        'a b/图标.svg',
+      ]
+      for (const path of paths) {
+        const icon = { kind: 'declared', declaration: { ...ok, path } }
+        expect(parseRepoState(rowWith({ icon }))['a/one']?.candidates[0]?.icon, JSON.stringify(path)).toEqual(icon)
+      }
+    })
+
     it('has no place for the none read in the type of either candidate, and the parse refuses it besides', () => {
       // The two directives are compile-time assertions: `pnpm typecheck` fails
       // with "Unused '@ts-expect-error' directive" the day either field is
@@ -997,6 +1019,19 @@ describe('a carried declarations record is checked on the way in', () => {
       ['declared from a source that is neither dsh\'s', { kind: 'declared', declaration: { ...ok, source: 'field' } }],
       ['declared with no source', { kind: 'declared', declaration: { path: ok.path, mediaType: ok.mediaType } }],
       ['declared with an empty path', { kind: 'declared', declaration: { ...ok, path: '' } }],
+      // A path is what a fetch builds a URL from, one encoded segment at a time,
+      // and encoding leaves `.` and `..` alone: a URL parser reads them as
+      // directions, and an empty segment as a different path. `readIconDeclaration`
+      // normalises every path it writes, so a record holding one is a shape this
+      // build never made, whatever the fetch would do with it.
+      ['declared with a path that holds a dot segment', { kind: 'declared', declaration: { ...ok, path: 'assets/./icon.svg' } }],
+      ['declared with a path that starts with a dot segment', { kind: 'declared', declaration: { ...ok, path: './icon.svg' } }],
+      ['declared with a path that holds a dot-dot segment', { kind: 'declared', declaration: { ...ok, path: 'assets/../icon.svg' } }],
+      ['declared with a path that climbs out of the package', { kind: 'declared', declaration: { ...ok, path: '../icon.svg' } }],
+      ['declared with a path that is a dot-dot alone', { kind: 'declared', declaration: { ...ok, path: '..' } }],
+      ['declared with a path that holds an empty segment', { kind: 'declared', declaration: { ...ok, path: 'assets//icon.svg' } }],
+      ['declared with a path that starts at the root', { kind: 'declared', declaration: { ...ok, path: '/icon.svg' } }],
+      ['declared with a path that ends in a slash', { kind: 'declared', declaration: { ...ok, path: 'assets/' } }],
       ['declared with a path that is not a string', { kind: 'declared', declaration: { ...ok, path: 7 } }],
       ['declared with no path', { kind: 'declared', declaration: { source: ok.source, mediaType: ok.mediaType } }],
       ['declared with a media type of no kind the reader writes', { kind: 'declared', declaration: { ...ok, mediaType: 'image/gif' } }],
