@@ -1538,7 +1538,7 @@ describe('ShopTab', () => {
   it('labels a stale catalog with its builtAt, and the one reload control refreshes it', async () => {
     const { injected, catalog } = bench({ ...snapshot(), stale: true })
     renderTab(injected)
-    await waitFor(() => expect(screen.getByText('showing 2026-08-25')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Showing the catalog from 2026-08-25')).toBeTruthy())
     // The badge is status; the action is the single reload control beside the
     // build date. There must be exactly one — the stale block used to carry
     // its own identical Refresh button, which left two on screen doing the
@@ -1676,7 +1676,7 @@ describe('ShopTab', () => {
     fireEvent.click(screen.getByText('dsh-hello-plugin'))
     // The version row is gone from the detail: the card's badge line already
     // carries it — the reviewed line is the only version text left there.
-    expect(screen.getByText('reviewed v1.0.0 / current v1.2.0 unreviewed')).toBeTruthy()
+    expect(screen.getByText('Reviewed: v1.0.0 · Current version v1.2.0 has not been reviewed')).toBeTruthy()
     expect(screen.getByText(en.repository)).toBeTruthy()
     expect(screen.getByText('https://github.com/you/hello-plugin')).toBeTruthy()
     expect(screen.getByText(en.license)).toBeTruthy()
@@ -1700,7 +1700,7 @@ describe('ShopTab', () => {
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText('dsh-hello-plugin'))
-    expect(screen.getByText('reviewed aaaaaaa / current v0.29.10 unreviewed')).toBeTruthy()
+    expect(screen.getByText('Reviewed: aaaaaaa · Current version v0.29.10 has not been reviewed')).toBeTruthy()
   })
 
   it('details a repo-entry verified-stale review by its commit pin', async () => {
@@ -1714,7 +1714,7 @@ describe('ShopTab', () => {
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText('dsh-hello-plugin'))
-    expect(screen.getByText('reviewed ccccccc / current bbbbbbb unreviewed')).toBeTruthy()
+    expect(screen.getByText('Reviewed: ccccccc · Current version bbbbbbb has not been reviewed')).toBeTruthy()
   })
 
   it('renders a https repository as a link that opens safely in a new tab', async () => {
@@ -1770,7 +1770,7 @@ describe('ShopTab', () => {
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-tool-a')).toBeTruthy())
 
-    fireEvent.click(screen.getByRole('button', { name: /^Tool \d+$/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Tools \d+$/ }))
     expect(screen.getByText('dsh-tool-a')).toBeTruthy()
     expect(screen.queryByText('dsh-ui-a')).toBeNull()
 
@@ -1792,7 +1792,7 @@ describe('ShopTab', () => {
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-tool-alpha')).toBeTruthy())
 
-    fireEvent.click(screen.getByRole('button', { name: /^Tool \d+$/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Tools \d+$/ }))
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'alpha' } })
     expect(screen.getByText('dsh-tool-alpha')).toBeTruthy()
     expect(screen.queryByText('dsh-tool-beta')).toBeNull()
@@ -1805,14 +1805,14 @@ describe('ShopTab', () => {
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     const all = screen.getByRole('button', { name: /^All \d+$/ })
     expect(all.getAttribute('aria-pressed')).toBe('true')
-    const tool = screen.getByRole('button', { name: /^Tool \d+$/ })
+    const tool = screen.getByRole('button', { name: /^Tools \d+$/ })
     expect(tool.getAttribute('aria-pressed')).toBe('false')
     fireEvent.click(tool)
     expect(tool.getAttribute('aria-pressed')).toBe('true')
     expect(all.getAttribute('aria-pressed')).toBe('false')
   })
 
-  it('heads the update rows "Updatable", which the Installed filter does not say', () => {
+  it('heads the update rows "Updates available", which the Installed filter does not say', () => {
     // The heading sits over rows filtered to `outdated`, a strict subset of
     // what the Installed filter and the installed card label name — and both
     // read off `installed`. Until 2026-09-16 the heading was that same string
@@ -1825,8 +1825,8 @@ describe('ShopTab', () => {
     // Every DOM gate in this file reads the heading out of the dictionary it
     // would be checking, so this is the only assertion in the suite that ever
     // sees the literal.
-    expect(en.updatableSection).toBe('Updatable')
-    expect(zh.updatableSection).toBe('可更新')
+    expect(en.updatableSection).toBe('Updates available')
+    expect(zh.updatableSection).toBe('有可用更新')
   })
 
   // Key pairs allowed to hold one string, written as `key = key → "value"`.
@@ -1870,12 +1870,12 @@ describe('ShopTab', () => {
     const { injected, installed } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     renderTab(injected)
     await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
-    expect(screen.getByText('installed v1.0.0')).toBeTruthy()
-    expect(screen.getByText('latest v1.2.0')).toBeTruthy()
+    expect(screen.getByText('Installed v1.0.0')).toBeTruthy()
+    expect(screen.getByText('Latest version v1.2.0')).toBeTruthy()
     expect(installed).toHaveBeenCalled()
   })
 
-  it('gives the Updatable section an accessible name', async () => {
+  it('gives the Updates available section an accessible name', async () => {
     // A bare <section> maps to `generic`, not `region`: with no accessible
     // name landmark navigation skips the update rows entirely, and this <h2>
     // — the tab's only heading, rendered last, below the whole shelf — reads
@@ -1907,7 +1907,7 @@ describe('ShopTab', () => {
   it('toggles an outdated install with setEnabled and shows the hot-apply note', async () => {
     const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Installed v1.0.0')).toBeTruthy())
     // Both the shelf card and the installed-section row carry a switch; this
     // test drives the section's.
     const toggle = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-toggle]')!
@@ -1920,7 +1920,7 @@ describe('ShopTab', () => {
     const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     setEnabled.mockResolvedValue({ ok: true, activation: 'reload' })
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Installed v1.0.0')).toBeTruthy())
     const toggle = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-toggle]')!
     fireEvent.click(toggle)
     await waitFor(() => expect(setEnabled).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', enabled: false }))
@@ -1936,7 +1936,7 @@ describe('ShopTab', () => {
     const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     setEnabled.mockResolvedValue({ ok: true, activation: 'live' })
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Installed v1.0.0')).toBeTruthy())
     const toggle = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-toggle]')!
     fireEvent.click(toggle)
     await waitFor(() => expect(setEnabled).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', enabled: false }))
@@ -1948,7 +1948,7 @@ describe('ShopTab', () => {
     const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     setEnabled.mockResolvedValue({ ok: true, activation: 'restart' })
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Installed v1.0.0')).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
     fireEvent.click(row.querySelector('[data-shop-toggle]')!)
     await waitFor(() => expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
@@ -1963,7 +1963,7 @@ describe('ShopTab', () => {
     setEnabled.mockResolvedValue({ ok: true, activation: 'restart' })
     version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'systemd' })
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Installed v1.0.0')).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
     fireEvent.click(row.querySelector('[data-shop-toggle]')!)
     await waitFor(() => expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
@@ -1977,7 +1977,7 @@ describe('ShopTab', () => {
     const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     setEnabled.mockResolvedValueOnce({ ok: true, activation: 'restart' }).mockResolvedValueOnce({ ok: true, activation: 'live' })
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Installed v1.0.0')).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
     fireEvent.click(row.querySelector('[data-shop-toggle]')!)
     await waitFor(() => expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
@@ -1995,7 +1995,7 @@ describe('ShopTab', () => {
     const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     setEnabled.mockResolvedValueOnce({ ok: true, activation: 'restart' }).mockResolvedValueOnce({ ok: true, activation: 'reload' })
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Installed v1.0.0')).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
     fireEvent.click(row.querySelector('[data-shop-toggle]')!)
     await waitFor(() => expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
@@ -2013,7 +2013,7 @@ describe('ShopTab', () => {
     const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     setEnabled.mockResolvedValueOnce({ ok: true, activation: 'restart' }).mockResolvedValueOnce({ ok: false, detail: 'dsh-plugin-shop: dsh refused to switch dsh-hello-plugin (unknown-plugin).' })
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Installed v1.0.0')).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
     fireEvent.click(row.querySelector('[data-shop-toggle]')!)
     await waitFor(() => expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
@@ -2023,14 +2023,14 @@ describe('ShopTab', () => {
     expect(row.querySelector('[data-shop-restart]')).toBeTruthy()
   })
 
-  it('owes a restart only on the switch that was toggled: the Updatable row\'s, not the card\'s', async () => {
-    // An outdated plugin draws two switches, its card's and its Updatable
+  it('owes a restart only on the switch that was toggled: the Updates available row\'s, not the card\'s', async () => {
+    // An outdated plugin draws two switches, its card's and its Updates available
     // row's, and each owes only what was done to it: the page store's owed
     // map is keyed by the switch's surface as well as the plugin's identity.
     const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     setEnabled.mockResolvedValue({ ok: true, activation: 'restart' })
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Installed v1.0.0')).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
     const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')!
     expect(card.querySelector('[data-shop-toggle]')).toBeTruthy()
@@ -2039,11 +2039,11 @@ describe('ShopTab', () => {
     expect(card.querySelector('[data-shop-toggle-restart]')).toBeNull()
   })
 
-  it('owes a restart only on the switch that was toggled: the card\'s, not the Updatable row\'s', async () => {
+  it('owes a restart only on the switch that was toggled: the card\'s, not the Updates available row\'s', async () => {
     const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     setEnabled.mockResolvedValue({ ok: true, activation: 'restart' })
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Installed v1.0.0')).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
     const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')!
     expect(row.querySelector('[data-shop-toggle]')).toBeTruthy()
@@ -2064,7 +2064,7 @@ describe('ShopTab', () => {
   it('updates an outdated install to the latest version directly when verified', async () => {
     const { injected, install } = bench(snapshot({ tier: 'verified' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Installed v1.0.0')).toBeTruthy())
     // The card and the installed-section row both carry an update button; this
     // test drives the section's.
     fireEvent.click(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-update]')!)
@@ -2074,7 +2074,7 @@ describe('ShopTab', () => {
   it('starts a community-tier update on the first click, acknowledging as it goes', async () => {
     const { injected, install } = bench(snapshot({ tier: 'community' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Installed v1.0.0')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-update]')!)
     await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm', repo: undefined, subdir: undefined }))
   })
@@ -2089,7 +2089,7 @@ describe('ShopTab', () => {
     expect(card?.querySelector('[data-shop-update]')).toBeNull()
     // The card still carries the uninstall control.
     expect(card?.querySelector('[data-shop-uninstall]')).not.toBeNull()
-    // A current install has no row in the Updatable section.
+    // A current install has no row in the Updates available section.
     expect(container.querySelector('[data-shop-outdated]')).toBeNull()
   })
 
@@ -2116,7 +2116,7 @@ describe('ShopTab', () => {
   it('shows the update button instead of an install button on the card of an install behind the catalog', async () => {
     const { injected, install } = bench(snapshot({ tier: 'verified' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Installed v1.0.0')).toBeTruthy())
     const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')
     expect(card?.querySelector('[data-shop-installed]')).toBeNull()
     expect(card?.querySelector('[data-shop-install]')).toBeNull()
@@ -2168,7 +2168,7 @@ describe('ShopTab', () => {
   it('starts the card update on one click for a community install', async () => {
     const { injected, install } = bench(snapshot({ tier: 'community' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Installed v1.0.0')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-update]')!)
     await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm', repo: undefined, subdir: undefined }))
   })
@@ -2292,7 +2292,7 @@ describe('ShopTab', () => {
     await waitFor(() => expect(screen.getByText('dsh-tool-ok')).toBeTruthy())
 
     fireEvent.click(container.querySelector('[data-shop-hide-incompatible]') as HTMLElement)
-    fireEvent.click(screen.getByRole('button', { name: /^Tool \d+$/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Tools \d+$/ }))
     expect(screen.getByText('dsh-tool-ok')).toBeTruthy()
     expect(screen.queryByText('dsh-tool-broken')).toBeNull()
     expect(screen.queryByText('dsh-ui-broken')).toBeNull()
@@ -2616,7 +2616,7 @@ describe('ShopTab shelf orders', () => {
     // The Installed view reads the ordered catalog directly (`matched`), so it
     // must follow the toggle exactly as the shelf does. The installed rows'
     // `installed` equals the catalog version, so neither is outdated and
-    // neither moves into the Updatable section.
+    // neither moves into the Updates available section.
     const { injected } = bench(datedCatalog(), [
       { name: 'dsh-old', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true },
       { name: 'dsh-new-b', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true },
@@ -3144,7 +3144,7 @@ describe('ShopTab shop-like filtering', () => {
     expect(screen.queryByText('dsh-plugin-shop-2')).toBeNull()
   })
 
-  it('keeps an outdated shop-like plugin manageable in the Updatable section', async () => {
+  it('keeps an outdated shop-like plugin manageable in the Updates available section', async () => {
     const { injected } = bench(twoPlugins(), [{ name: 'dsh-plugin-shop-2', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: true }])
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
@@ -3153,7 +3153,7 @@ describe('ShopTab shop-like filtering', () => {
 
   it('keeps a CURRENT shop-like plugin manageable in the Installed view', async () => {
     // What the fixture above cannot see. With `outdated: true` the plugin has
-    // an Updatable row, so that assertion holds whether or not the shelf
+    // an Updates available row, so that assertion holds whether or not the shelf
     // withholds its card. Up to date the row is gone, the card is the only
     // place its enable switch and its uninstall button live — and the
     // shop-like exclusion used to take the card too, leaving a plugin sitting
@@ -3164,7 +3164,7 @@ describe('ShopTab shop-like filtering', () => {
     // Not advertised: the default shelf still withholds it.
     expect(screen.queryByText('dsh-plugin-shop-2')).toBeNull()
     // Not hidden: the Installed view carries the card, the card carries the
-    // controls, and no Updatable row exists to stand in for either.
+    // controls, and no Updates available row exists to stand in for either.
     fireEvent.click(container.querySelector('[data-shop-category-installed]')!)
     await waitFor(() => expect(screen.getByText('dsh-plugin-shop-2')).toBeTruthy())
     expect(container.querySelector('[data-shop-entry="dsh-plugin-shop-2"] [data-shop-uninstall]')).not.toBeNull()
@@ -3418,8 +3418,8 @@ describe('ShopTab version labels (market borrowings §11)', () => {
     await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
     // The latest side used to print the whole forty-character commit after a
     // `v`, and the installed side a `v` before seven of its characters.
-    expect(screen.getByText('installed aaaaaaa')).toBeTruthy()
-    expect(screen.getByText('latest bbbbbbb')).toBeTruthy()
+    expect(screen.getByText('Installed aaaaaaa')).toBeTruthy()
+    expect(screen.getByText('Latest version bbbbbbb')).toBeTruthy()
   })
 
   it('shows both tags of an outdated release row as tagged', async () => {
@@ -3429,8 +3429,8 @@ describe('ShopTab version labels (market borrowings §11)', () => {
     )
     renderTab(injected)
     await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
-    expect(screen.getByText('installed v0.29.9')).toBeTruthy()
-    expect(screen.getByText('latest v0.29.10')).toBeTruthy()
+    expect(screen.getByText('Installed v0.29.9')).toBeTruthy()
+    expect(screen.getByText('Latest version v0.29.10')).toBeTruthy()
   })
 })
 
@@ -4047,7 +4047,7 @@ describe('ShopTab uninstall flow recovery', () => {
       .mockResolvedValue([{ ...outdated, source: 'npm', installed: '1.2.0', outdated: false }])
     const { container } = renderTab(injected)
     // Waits on the element the next step clicks, which exists exactly once.
-    // Not on the name: the row is outdated, so the Updatable section prints
+    // Not on the name: the row is outdated, so the Updates available section prints
     // it too, and a wait on the text found two elements once both had
     // rendered. It passed only when it happened to land between the two
     // commits.
@@ -4185,7 +4185,7 @@ describe('ShopTab card through an uninstall (2026-10-22)', () => {
     expect(card()?.querySelector('[data-shop-restart-notice]')).toBeTruthy()
   })
 
-  it('holds the Update button and the switch while an uninstall runs, on the card and on its Updatable row', async () => {
+  it('holds the Update button and the switch while an uninstall runs, on the card and on its Updates available row', async () => {
     const { injected, installStatus } = bench(snapshot({ tier: 'verified' }), [{ ...current, installed: '1.0.0', outdated: true }])
     installStatus.mockResolvedValue({ found: true, state: 'running', log: [] })
     const { container } = renderTab(injected)
@@ -4756,7 +4756,7 @@ describe('ShopTab when dsh restarts under it', () => {
     setEnabled.mockResolvedValue({ ok: true, activation: 'restart' })
     const { restarted } = restartable(injected)
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Installed v1.0.0')).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
     fireEvent.click(row.querySelector('[data-shop-toggle]')!)
     await waitFor(() => expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
@@ -4772,7 +4772,7 @@ describe('ShopTab when dsh restarts under it', () => {
     setEnabled.mockResolvedValue({ ok: true, activation: 'reload' })
     const { restarted } = restartable(injected)
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Installed v1.0.0')).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
     fireEvent.click(row.querySelector('[data-shop-toggle]')!)
     await waitFor(() => expect(row.querySelector('[data-shop-reload]')).toBeTruthy())
@@ -5042,12 +5042,12 @@ describe('ShopTab red fold', () => {
     expect(card.querySelector('[data-shop-fold]'), 'no toggle to offer').toBeNull()
   })
 
-  it('folds the Updatable row\'s refusal as a unit of its own', async () => {
+  it('folds the Updates available row\'s refusal as a unit of its own', async () => {
     const { injected } = bench(peersVerdict('dsh plugin --profile web allow-version x@1 --dsh-version 0.1 --accept-risk'), [
       { name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true },
     ])
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('Updatable')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Updates available')).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
     await waitFor(() => expect(row.querySelector('[data-shop-fold]')).toBeTruthy(), { timeout: 3000 })
     // One toggle per surface: the row's folds the row's refusal, never the
@@ -5062,7 +5062,7 @@ describe('ShopTab red fold', () => {
       { name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true },
     ])
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('Updatable')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Updates available')).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
     await waitFor(() => expect(row.querySelector('[data-shop-fold]')).toBeTruthy(), { timeout: 3000 })
     const toggle = row.querySelector('[data-shop-fold]') as HTMLButtonElement

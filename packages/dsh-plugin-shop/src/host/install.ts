@@ -82,7 +82,7 @@ export function validateInstall(
 ): ValidateResult {
   const denied = snapshot.denied.find(d => d.name === args.name)
   if (denied !== undefined) {
-    return { ok: false, code: 'denied', detail: `dsh-plugin-shop: ${args.name} is denied: ${denied.detail}` }
+    return { ok: false, code: 'denied', detail: `dsh-plugin-shop: installation of ${args.name} is blocked: ${denied.detail}` }
   }
 
   let entry: CatalogEntry | undefined
@@ -94,7 +94,7 @@ export function validateInstall(
       return {
         ok: false,
         code: 'ambiguous-identity',
-        detail: `dsh-plugin-shop: the catalog holds ${named.length} entries named ${args.name}, and this request does not say which one; refresh the shop and try again`,
+        detail: `dsh-plugin-shop: the catalog has ${named.length} plugins named ${args.name}. Refresh the shop and select the one you want to install.`,
       }
     }
     entry = named[0]
@@ -110,7 +110,7 @@ export function validateInstall(
     return { ok: false, code: 'not-in-catalog', detail: `dsh-plugin-shop: ${args.name} is not in the catalog` }
   }
   if (entry.version !== args.version) {
-    return { ok: false, code: 'version-mismatch', detail: `dsh-plugin-shop: ${args.name}@${args.version} is not the cataloged version (${entry.version})` }
+    return { ok: false, code: 'version-mismatch', detail: `dsh-plugin-shop: you requested ${args.name}@${args.version}, but the catalog lists ${entry.version}. Refresh the shop and try again.` }
   }
   // Ahead of the acknowledgement gate, so a request that cannot proceed never
   // asks the reader to accept a plugin's privileges first. The shipped client
@@ -129,20 +129,20 @@ export function validateInstall(
       // must not overwrite something it cannot identify, and saying which
       // string is in the way is the only honest thing left to say about it.
       const what = verdict === 'unknown'
-        ? `dsh-plugin-shop: ${args.name} is already installed from ${holder}, which the shop cannot identify as any catalog entry.`
+        ? `dsh-plugin-shop: ${args.name} is already installed from ${holder}. The shop could not match it to a catalog entry.`
         : `dsh-plugin-shop: ${args.name} is already installed from ${holder}.`
       return {
         ok: false,
         code: 'name-taken',
-        detail: `${what} A profile holds one dependency per name, so installing this one would overwrite it`
-          + ' and the plugin you have would be gone. Uninstall it first if you mean to switch.',
+        detail: `${what} Installing this plugin would replace it, since a profile can hold only one plugin of each name.`
+          + ' To switch, uninstall the existing plugin first.',
       }
     }
   }
   if (entry.tier !== 'verified' && !args.acknowledged) {
     const detail = entry.tier === 'verified-stale'
-      ? `dsh-plugin-shop: ${args.name} is verified-stale: a newer version than the review is current and has not been reviewed; acknowledgement is required`
-      : `dsh-plugin-shop: ${args.name} is ${entry.tier}-tier and has not been reviewed; acknowledgement is required`
+      ? `dsh-plugin-shop: a different version of ${args.name} was reviewed. The current version has not been reviewed. Confirm the installation to continue.`
+      : `dsh-plugin-shop: ${args.name} is a community plugin and has not been reviewed. Confirm the installation to continue.`
     return { ok: false, code: 'needs-acknowledgement', detail }
   }
   return { ok: true, entry }

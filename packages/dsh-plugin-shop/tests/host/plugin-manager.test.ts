@@ -113,7 +113,7 @@ describe('managerOutcome', () => {
 
   it("reads an install's version refusal on web word for word, and says nothing was installed when dsh's output is empty", () => {
     expect(managerOutcome(refused, context).detail).toBe(
-      'dsh-plugin-shop: dsh refused the install: dsh-managed@1.0.0 declares @deepseek-ai/dsh 0.1.2-rc.1, which dsh 0.1.7-rc.2 does not satisfy.'
+      'dsh-plugin-shop: dsh refused the install: dsh-managed@1.0.0 requires @deepseek-ai/dsh 0.1.2-rc.1, which dsh 0.1.7-rc.2 does not satisfy.'
       + ' Nothing was installed. To accept the risk of crashes or data loss for this exact version,'
       + ' run: dsh plugin --profile web allow-version dsh-managed@1.0.0 --dsh-version 0.1.7-rc.2 --accept-risk - then install again.')
   })
@@ -133,8 +133,8 @@ describe('managerOutcome', () => {
     expect(readChange(answer).incompatible)
       .toEqual([{ name: 'p', version: '1.0.0', runtimeVersion: '0.2.1-rc.2', peers: { 'engines.dsh': '>=0.3.0' } }])
     const detail = managerOutcome(answer, context).detail ?? ''
-    expect(detail).toContain('p@1.0.0 declares engines.dsh >=0.3.0, which dsh 0.2.1-rc.2 does not satisfy')
-    expect(detail).not.toContain('declares ,')
+    expect(detail).toContain('p@1.0.0 requires engines.dsh >=0.3.0, which dsh 0.2.1-rc.2 does not satisfy')
+    expect(detail).not.toContain('requires ,')
   })
 
   it("reads a removal's refusal that names requirements the same way, from the pnpm run's own list", () => {
@@ -153,7 +153,7 @@ describe('managerOutcome', () => {
     expect(incompatible).toHaveLength(1)
     expect(incompatible[0]?.peers).toEqual({ '@deepseek-ai/dsh': '^0.3.0' })
     expect(managerOutcome(answer, uninstall).detail)
-      .toContain('dsh-sibling@1.0.0 declares @deepseek-ai/dsh ^0.3.0, which dsh 0.2.1-rc.2 does not satisfy')
+      .toContain('dsh-sibling@1.0.0 requires @deepseek-ai/dsh ^0.3.0, which dsh 0.2.1-rc.2 does not satisfy')
   })
 
   // R28: dsh keeps only the last 16 KB of a pnpm run's output, so a long
@@ -176,7 +176,7 @@ describe('managerOutcome', () => {
     const detail = managerOutcome(refused, desktop).detail ?? ''
     expect(detail).toContain('@deepseek-ai/dsh 0.1.2-rc.1')
     expect(detail).not.toContain('dsh plugin')
-    expect(detail).toMatch(/does not manage the desktop profile/)
+    expect(detail).toMatch(/cannot manage desktop profiles/)
   })
 
   it('never reports an enablement failure after pnpm succeeded as a done install', () => {
@@ -210,9 +210,9 @@ describe('managerOutcome', () => {
 
   it('says what a classified failure was and where', () => {
     expect(managerOutcome(pnpmFailed('not-found', 'ERR_PNPM_FETCH_404', { failedAt: 'registry' }), context).detail)
-      .toBe('dsh-plugin-shop: the install failed at the registry: no such package was found.')
+      .toBe('dsh-plugin-shop: the install failed at the registry: the package could not be found.')
     expect(managerOutcome(pnpmFailed('network', 'ENOTFOUND', { failedAt: 'spec-host' }), context).detail)
-      .toBe('dsh-plugin-shop: the install failed at the host the package is fetched from: the network failed.')
+      .toBe('dsh-plugin-shop: the install failed while connecting to the package source: the network request failed.')
     expect(managerOutcome(pnpmFailed('disk-full', 'ENOSPC'), context).detail)
       .toBe('dsh-plugin-shop: the install failed: the disk is full.')
     // R40: for a GitHub repository dsh runs `git ls-remote` before pnpm,
@@ -221,10 +221,10 @@ describe('managerOutcome', () => {
     // never carry failedAt (dsh-plugin-manager 0.1.7-rc.2, installBundle).
     const repositoryCheck = { failedAt: 'spec-host', registries: [], target: `github:someone/dsh-managed#${'e'.repeat(40)}` }
     expect(managerOutcome(pnpmFailed('timeout', 'dsh: connection to github.com timed out after 5000ms\n', repositoryCheck), context).detail)
-      .toBe('dsh-plugin-shop: the install failed at the host the package is fetched from: dsh checks that a GitHub repository is reachable'
-        + ' before pnpm runs, and that check did not finish within its bound (5 s by default), so pnpm never ran.')
+      .toBe('dsh-plugin-shop: the install stopped because the GitHub connection check timed out (5 s by default).'
+        + ' pnpm has not run. Check your connection to GitHub and try again.')
     expect(managerOutcome(pnpmFailed('timeout', 'Progress: resolved 1\n'), context).detail)
-      .toBe("dsh-plugin-shop: the install failed: pnpm did not finish within dsh's own time bound.")
+      .toBe("dsh-plugin-shop: the install failed: pnpm took too long to finish.")
   })
 
   // What pnpm printed for the web e2e's 404 through dsh 0.1.7-rc.2 on
@@ -234,7 +234,7 @@ describe('managerOutcome', () => {
 
   it("reads dsh's answer to a registry 404 as the sentence for it, and embeds none of its output", () => {
     expect(managerOutcome(pnpmFailed('not-found', registry404, { failedAt: 'registry' }), context))
-      .toEqual({ state: 'failed', detail: 'dsh-plugin-shop: the install failed at the registry: no such package was found.' })
+      .toEqual({ state: 'failed', detail: 'dsh-plugin-shop: the install failed at the registry: the package could not be found.' })
   })
 
   it('names the operation that failed: a removal pnpm was not permitted', () => {
@@ -246,7 +246,7 @@ describe('managerOutcome', () => {
     // R42.9: an update of the shop itself takes its version from npm's
     // dist-tags (updateStart), not from the catalog.
     expect(managerOutcome(pnpmFailed('no-matching-version', 'ERR_PNPM_NO_MATCHING_VERSION', { failedAt: 'registry' }), { ...context, operation: 'update' }).detail)
-      .toBe('dsh-plugin-shop: the update failed at the registry: no version matching the requested one was found.')
+      .toBe('dsh-plugin-shop: the update failed at the registry: the requested version could not be found.')
   })
 
   // R42.10: the app bundles its own package manager, so `pnpm approve-builds`
@@ -260,28 +260,28 @@ describe('managerOutcome', () => {
   it("names dsh's Plugins page to a desktop reader whose install pnpm held on build scripts, and no pnpm command", () => {
     const held = pnpmFailed('build-blocked', 'ERR_PNPM_IGNORED_BUILDS', { pendingBuilds: ['esbuild'] })
     expect(managerOutcome(held, desktop).detail).toBe(
-      'dsh-plugin-shop: pnpm is holding the build scripts of esbuild, which it blocks by default, and this shop never allows them.'
-      + ' dsh\'s Plugins page offers "Allow these scripts and retry" when an install it runs stops on them.')
+      'dsh-plugin-shop: pnpm blocked build scripts for esbuild. These scripts need approval, which the shop cannot grant.'
+      + ' Try installing from dsh\'s Plugins page. If these scripts block the install there, use "Allow these scripts and retry" to approve them.')
     expect(managerOutcome(held, { ...desktop, operation: 'update' }).detail).toBe(
-      'dsh-plugin-shop: pnpm is holding the build scripts of esbuild, which it blocks by default, and this shop never allows them.')
+      'dsh-plugin-shop: pnpm blocked build scripts for esbuild. These scripts need approval, which the shop cannot grant.')
     expect(managerOutcome(pnpmFailed('build-blocked', 'ERR_PNPM_IGNORED_BUILDS'), desktop).detail).toBe(
-      'dsh-plugin-shop: pnpm is holding the build scripts of a dependency, which it blocks by default, and this shop never allows them.')
+      'dsh-plugin-shop: pnpm blocked build scripts for a dependency. These scripts need approval, which the shop cannot grant.')
   })
 
   it('tells an update held on build scripts to update again, not to install again', () => {
     const outcome = managerOutcome(pnpmFailed('build-blocked', 'ERR_PNPM_IGNORED_BUILDS', { pendingBuilds: ['esbuild'] }), { ...context, operation: 'update' })
-    expect(outcome.detail).toBe('dsh-plugin-shop: pnpm is holding the build scripts of esbuild, which it blocks by default:'
-      + ' run `pnpm approve-builds` in the profile directory to allow them, then update again.')
+    expect(outcome.detail).toBe('dsh-plugin-shop: pnpm blocked build scripts for esbuild.'
+      + ' To review and allow them, run `pnpm approve-builds` in the profile directory, then update again.')
   })
 
   it('reads a pnpm failure the same way when dsh does not wrap it in an error, as a later harness may not', () => {
     const { error: _wrapped, ...unwrapped } = pnpmFailed('not-found', registry404, { failedAt: 'registry' })
-    expect(managerOutcome(unwrapped, context).detail).toBe('dsh-plugin-shop: the install failed at the registry: no such package was found.')
+    expect(managerOutcome(unwrapped, context).detail).toBe('dsh-plugin-shop: the install failed at the registry: the package could not be found.')
   })
 
   it('reads a failed answer with neither an error code nor a kind as one it cannot read', () => {
     expect(managerOutcome({ changed: false, application: 'failed', stage: 'install', target: 'dsh-managed@1.0.0', registries: [null] }, context).detail)
-      .toBe('dsh-plugin-shop: dsh answered the install with "failed", which this shop does not know how to read.')
+      .toBe('dsh-plugin-shop: could not confirm the install. dsh returned an unrecognized status: "failed".')
   })
 
   it('carries a management code with the sentence dsh source gives it, and dsh diagnostic', () => {
@@ -298,7 +298,7 @@ describe('managerOutcome', () => {
     // R42.11: `operation-error` is what dsh codes any error that is not one
     // of its refusals (managementError), so "refused" misnamed it.
     const outcome = managerOutcome({ changed: false, application: 'failed', stage: 'remove', target: 'dsh-managed', error: { code: 'operation-error', diagnostic: 'EBUSY: node_modules' } }, uninstall)
-    expect(outcome.detail).toBe('dsh-plugin-shop: dsh could not uninstall dsh-managed (operation-error): dsh hit an unexpected error. dsh reported: EBUSY: node_modules.')
+    expect(outcome.detail).toBe('dsh-plugin-shop: dsh could not uninstall dsh-managed (operation-error): dsh encountered an unexpected error. dsh reported: EBUSY: node_modules.')
   })
 
   it('reads a code, a kind or a place named for an Object.prototype key as one it has no sentence for', () => {
@@ -327,7 +327,7 @@ describe('managerOutcome', () => {
   it('says what dsh did with a cancelled install, and names no command on web or on desktop', () => {
     const cancelled = { changed: false, application: 'cancelled', stage: 'install', target: 'x' }
     const said = 'dsh-plugin-shop: the install did not finish within 900s, so the shop cancelled it.'
-      + " dsh stopped it, restored the profile's package.json and pnpm-lock.yaml, and installed nothing. Try the install again from the shop."
+      + " dsh restored the profile's package.json and pnpm-lock.yaml. Nothing was installed. Try the install again from the shop."
     expect(managerOutcome(cancelled, context)).toEqual({ state: 'failed', detail: said })
     expect(managerOutcome(cancelled, desktop)).toEqual({ state: 'failed', detail: said })
     expect(managerOutcome(cancelled, { ...context, operation: 'update' }).detail).toContain('Try the update again from the shop.')
@@ -343,7 +343,7 @@ describe('managerOutcome', () => {
   it('keeps overridden as success, with a note that another layer decides', () => {
     const outcome = managerOutcome({ ...applied, application: 'overridden' }, context)
     expect(outcome.state).toBe('done')
-    expect(outcome.detail).toMatch(/higher-priority layer/)
+    expect(outcome.detail).toMatch(/configuration overrides this setting/)
   })
 
   it('reads applied as live for a host-only install and as reload for one with a browser half', () => {
@@ -389,7 +389,7 @@ describe('managerOutcome', () => {
     // produces, and says a higher layer decides whether the change runs at
     // all. Nothing here claims the new code is live.
     expect(managerOutcome({ ...applied, application: 'overridden' }, { ...context, operation: 'update', alreadyImported: true, reconcilesRunningPlugins: true }))
-      .toEqual({ state: 'done', activation: 'restart', restartReason: 'already-loaded', detail: 'Saved, but a higher-priority layer (the home or invocation patch) decides whether it runs.' })
+      .toEqual({ state: 'done', activation: 'restart', restartReason: 'already-loaded', detail: 'Saved, but a home or startup configuration overrides this setting and controls whether the plugin runs.' })
   })
 
   it('fails loudly on an application it does not know', () => {
@@ -408,14 +408,14 @@ describe('managerOutcome', () => {
   // dsh's text, beside the refusal the shop builds from the structured list.
   it("passes on what dsh restored after refusing a removal, with the shop's own exemption command on web", () => {
     expect(managerOutcome(removalRejected(REPAIRED), uninstall).detail).toBe(
-      'dsh-plugin-shop: dsh refused the uninstall: dsh-sibling@1.0.0 declares @deepseek-ai/dsh 0.1.2-rc.1, which dsh 0.1.7-rc.2 does not satisfy.'
+      'dsh-plugin-shop: dsh refused the uninstall: dsh-sibling@1.0.0 requires @deepseek-ai/dsh 0.1.2-rc.1, which dsh 0.1.7-rc.2 does not satisfy.'
       + ' Restored package.json, pnpm-lock.yaml, and node_modules. To accept the risk of crashes or data loss for this exact version,'
       + ' run: dsh plugin --profile web allow-version dsh-sibling@1.0.0 --dsh-version 0.1.7-rc.2 --accept-risk - then uninstall again.')
   })
 
   it("passes dsh's whole restoration line on to a web reader, its own repair step included", () => {
     expect(managerOutcome(removalRejected(NOT_REPAIRED), uninstall).detail).toBe(
-      'dsh-plugin-shop: dsh refused the uninstall: dsh-sibling@1.0.0 declares @deepseek-ai/dsh 0.1.2-rc.1, which dsh 0.1.7-rc.2 does not satisfy.'
+      'dsh-plugin-shop: dsh refused the uninstall: dsh-sibling@1.0.0 requires @deepseek-ai/dsh 0.1.2-rc.1, which dsh 0.1.7-rc.2 does not satisfy.'
       + " Restored package.json and pnpm-lock.yaml, but node_modules could not be reinstalled; run 'dsh plugin install'."
       + ' To accept the risk of crashes or data loss for this exact version,'
       + ' run: dsh plugin --profile web allow-version dsh-sibling@1.0.0 --dsh-version 0.1.7-rc.2 --accept-risk - then uninstall again.')
@@ -424,9 +424,9 @@ describe('managerOutcome', () => {
   it('keeps what dsh restored for a desktop reader, and drops only its dsh plugin step', () => {
     const detail = managerOutcome(removalRejected(NOT_REPAIRED), { ...desktop, operation: 'uninstall' }).detail ?? ''
     expect(detail).toBe(
-      'dsh-plugin-shop: dsh refused the uninstall: dsh-sibling@1.0.0 declares @deepseek-ai/dsh 0.1.2-rc.1, which dsh 0.1.7-rc.2 does not satisfy.'
+      'dsh-plugin-shop: dsh refused the uninstall: dsh-sibling@1.0.0 requires @deepseek-ai/dsh 0.1.2-rc.1, which dsh 0.1.7-rc.2 does not satisfy.'
       + ' Restored package.json and pnpm-lock.yaml, but node_modules could not be reinstalled.'
-      + " dsh's CLI, which grants version exemptions, does not manage the desktop profile, and this shop grants none.")
+      + " Version exemptions are not available here: the dsh CLI cannot manage desktop profiles, and the shop cannot grant them.")
     expect(detail).not.toContain('dsh plugin')
   })
 
@@ -446,7 +446,7 @@ describe('managerOutcome', () => {
     // package.json when pnpm starts (:461), after the switch-off, so what it
     // restored still has the package switched off.
     expect(managerOutcome(removalRejected(REPAIRED, true), uninstall).detail).toBe(
-      'dsh-plugin-shop: dsh refused the uninstall: dsh-sibling@1.0.0 declares @deepseek-ai/dsh 0.1.2-rc.1, which dsh 0.1.7-rc.2 does not satisfy.'
+      'dsh-plugin-shop: dsh refused the uninstall: dsh-sibling@1.0.0 requires @deepseek-ai/dsh 0.1.2-rc.1, which dsh 0.1.7-rc.2 does not satisfy.'
       + ' Restored package.json, pnpm-lock.yaml, and node_modules. To accept the risk of crashes or data loss for this exact version,'
       + ' run: dsh plugin --profile web allow-version dsh-sibling@1.0.0 --dsh-version 0.1.7-rc.2 --accept-risk - then uninstall again.'
       + ' dsh-managed is still installed, but dsh has switched it off.')
@@ -487,7 +487,7 @@ describe('managerOutcome', () => {
     const detail = managerOutcome(cliOnly, desktop).detail ?? ''
     // "could not install" since R42.11, a wording fix: the case is about the
     // scrubbed diagnostic reading as absent.
-    expect(detail).toBe('dsh-plugin-shop: dsh could not install dsh-managed (operation-error): dsh hit an unexpected error.')
+    expect(detail).toBe('dsh-plugin-shop: dsh could not install dsh-managed (operation-error): dsh encountered an unexpected error.')
     expect(detail).not.toContain('dsh reported:')
   })
 })

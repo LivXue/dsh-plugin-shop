@@ -120,7 +120,7 @@ China-side reader at 0.03 MB/s against an npm mirror's 12.53 MB/s. See
 **Amendment (2026-10-15): the shop is a Settings section, not a tab inside Plugins.** At the maintainer's request, the client half registers one entry into `settings.section` with `id: 'shop'` and `order: 17`, and contributes nothing to `settings.plugins.tab`.
 
 - **The seat.** dsh's settings contract (`dsh-client-ui-settings`, `contract/slots.d.ts`) gives one settings page per `settings.section` entry, carrying the registrant's `id`, `order` (the nav position) and localized `label`; "adding a setting never means editing the shell". The built-in pages register there too. Measured on 0.1.5-rc.3, 0.1.7-rc.2 and 0.2.0-rc.2, their orders are the same: General 0, Models 10, Built-in plugins (`plugins`) 15, Agent presets 20, plus account at −10 from 0.1.7. Order 17 puts the shop directly after Built-in plugins on all three.
-- **The page.** The nav label and the page title are "Plugin shop" / "插件商店". Under the title stands one intro line, as on the Models and Built-in plugins pages: "Browse, install, and update plugins from the catalog." / "浏览、安装和更新目录中的插件。" The shop's body below it is unchanged. The intro takes label-secondary, not the label-tertiary dsh's own intro lines use: tertiary measures 3.71:1 on the light theme's white, secondary 5.80:1.
+- **The page.** The nav label and the page title are "Plugin shop" / "插件商店". Under the title stands one intro line, as on the Models and Built-in plugins pages: "Browse, install, and update plugins." / "浏览、安装和更新插件。" (Copy revised 2026-10-23.) The shop's body below it is unchanged. The intro takes label-secondary, not the label-tertiary dsh's own intro lines use: tertiary measures 3.71:1 on the light theme's white, secondary 5.80:1.
 - **The icon.** The settings shell draws each nav icon itself, from a fixed table keyed by section id (`navIcon` in `dsh-client-ui-settings-general`). An id outside it, `shop` included, gets the default gear, the icon General has. No registration option supplies an icon, and the gear ships (maintainer's decision, 2026-10-15).
 - **What Built-in plugins shows.** Without the shop, `settings.plugins.tab` holds dsh's own tabs. From 0.1.7-rc.2 on that is "Plugin list" alone, whose page dsh renders without a tab bar; 0.1.5-rc.3 also registers "Plugin configuration" at order 0, so its bar keeps two tabs and opens on that one.
 - **Self-update.** A self-update hot swap re-registers the section, and an open panel stays on the shop section across it.
@@ -870,6 +870,22 @@ on.
 - **`outdated` still compares `installed` with `latest`.** When an update is pending, the row offers Restart instead of Update, since Update would reinstall what is already on disk.
 
 **Amendment (2026-10-06): `shop/version` and `shop/restart` name the process that answers.** `bootId` is drawn once per process, when `own-version.ts` is first evaluated, and is fixed for that process's life. `shop/version` always sends it. A committed `shop/restart` answers `{ ok: true, logFile, bootId, pid }`, where `pid` is the process the takeover waits on, and a repeat gets the same answer. Both fields are optional on the wire: a host older than them sends neither, and the client judges nothing by an absent field. §8's 2026-10-06 amendment says what the client does with them.
+
+**Amendment (2026-10-23): user-facing copy.** The update section now reads
+"Updates available" / "有可用更新". Review badges read "Reviewed" and
+"Current version unreviewed": the latter identifies a different artifact
+from the reviewed one, regardless of which version is newer. The review
+itself has no expiry date.
+
+Messages state the outcome first, followed by the action the reader can take.
+Activation notices describe whether a plugin is ready, needs a page reload,
+or needs a dsh restart. Same-name conflicts explain the profile's one-package-
+per-name limit; actual entry-ID collisions have their own diagnostic.
+An unreadable installation record leaves the outcome unknown. Error details
+keep the commands, versions, paths, and codes needed to resolve the problem,
+and restart and compatibility notices retain their interruption and data-loss
+warnings. The revision changes copy in both languages, with the existing
+locale keys, interpolation parameters, RPC codes, and state transitions.
 
 ## 8. When changes take effect
 

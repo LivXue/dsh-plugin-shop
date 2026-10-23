@@ -213,10 +213,11 @@ hold the whole client back on a harness that lacks the service.
 - **The header holds no control.** dsh's desktop drag region
   (`data-window-drag`) can therefore cover all of it.
 - **Headings.** The page title is the page's `<h1>`, so the shelf's
-  "Updatable" `<h2>` now sits under it. That settles #94's deferred minor, an
+  "Updates available" `<h2>` now sits under it. That settles #94's deferred minor, an
   `<h2>` beside an `<h2>`.
-- **Copy.** The title and intro keep 0.8.7's dictionary keys and text. The
-  intro uses `--dsw-alias-label-secondary`, as dsh's intro does, and the e2e
+- **Copy.** The title and intro keep 0.8.7's dictionary keys. The 2026-10-23
+  copy revision shortens the intro to "Browse, install, and update plugins."
+  The intro uses `--dsw-alias-label-secondary`, as dsh's intro does, and the e2e
   measures its contrast on the page's real background.
 - **`ShopTab` keeps its name**, its `data-shop-tab` root and its content.
 - **Amendment (2026-10-22): the column follows the window.** Inside Settings

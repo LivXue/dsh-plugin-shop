@@ -70,7 +70,7 @@ describe('startManagerOperation', () => {
     })
     const status = await running.finished
     expect(status.state).toBe('failed')
-    expect(status.detail).toBe('dsh-plugin-shop: the shop could not check what dsh installed: ENOENT: no such file, package.json')
+    expect(status.detail).toBe('dsh-plugin-shop: could not verify the installed plugin: ENOENT: no such file, package.json')
     expect(inProfileQueue('runner-6', async () => {}).ahead).toBe(0)
   })
 
@@ -214,7 +214,7 @@ describe('startManagerOperation', () => {
     })
     const status = await running.finished
     expect(status.state).toBe('failed')
-    expect(status.detail).toBe("dsh-plugin-shop: the shop could not read dsh's answer: getter boom")
+    expect(status.detail).toBe("dsh-plugin-shop: could not read the result from dsh: getter boom")
     expect(inProfileQueue('runner-15', async () => {}).ahead).toBe(0)
   })
 
@@ -293,7 +293,7 @@ describe('startManagerOperation', () => {
     })
     const status = await running.finished
     expect(status.state).toBe('failed')
-    expect(status.detail).toBe("dsh-plugin-shop: the shop could not read dsh's answer: cannot classify this answer")
+    expect(status.detail).toBe("dsh-plugin-shop: could not read the result from dsh: cannot classify this answer")
   })
 
   it('flushes a partial streamed line before the record fails', async () => {

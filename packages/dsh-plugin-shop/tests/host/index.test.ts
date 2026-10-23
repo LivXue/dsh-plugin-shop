@@ -775,7 +775,7 @@ describe('ShopGateway.setEnabled', () => {
       ] }) },
     })
     const own = await gateway.setEnabled({ name: 'dsh-plugin-shop', enabled: false })
-    expect(own).toEqual({ ok: false, detail: 'dsh-plugin-shop: dsh-plugin-shop is part of the harness chain and cannot be toggled from the shop' })
+    expect(own).toEqual({ ok: false, detail: 'dsh-plugin-shop: dsh-plugin-shop is part of dsh itself and cannot be enabled or disabled from the shop.' })
     const framework = await gateway.setEnabled({ name: '@deepseek-ai/dsh-app-boot', enabled: false })
     expect(framework.ok).toBe(false)
     expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
@@ -878,7 +878,7 @@ describe("switches through dsh's pluginManager", () => {
     const { gateway, calls } = switchingGateway([{ ...applied, enabled: true, application: 'overridden' }], { oneRow: true })
     expect(await gateway.setEnabled({ name: 'dsh-one-row', enabled: true })).toEqual({
       ok: false,
-      detail: "dsh-plugin-shop: dsh saved the switch for dsh-one-row, but a home or invocation patch, which outranks the profile's own, keeps it off.",
+      detail: "dsh-plugin-shop: dsh saved the switch for dsh-one-row, but a home or startup configuration overrides it. The plugin remains off.",
     })
     expect(calls).toEqual([['include:one-row', true]])
   })
@@ -887,7 +887,7 @@ describe("switches through dsh's pluginManager", () => {
     const { gateway, calls } = switchingGateway([applied, { ...applied, application: 'overridden' }])
     expect(await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })).toEqual({
       ok: false,
-      detail: "dsh-plugin-shop: dsh saved the switch for dsh-two-rows, but a home or invocation patch, which outranks the profile's own, keeps it on."
+      detail: "dsh-plugin-shop: dsh saved the switch for dsh-two-rows, but a home or startup configuration overrides it. The plugin remains on."
         + ' 1 of its 2 plugins had already switched off.',
     })
     expect(calls).toHaveLength(2)
@@ -899,7 +899,7 @@ describe("switches through dsh's pluginManager", () => {
     const { gateway, calls } = switchingGateway([{ ...applied, application: 'deferred' }])
     expect(await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })).toEqual({
       ok: false,
-      detail: 'dsh-plugin-shop: dsh answered the switch for dsh-two-rows with "deferred", which this shop does not know how to read.',
+      detail: 'dsh-plugin-shop: could not confirm the switch for dsh-two-rows. dsh returned an unrecognized status: "deferred".',
     })
     expect(calls).toHaveLength(1)
   })
@@ -909,7 +909,7 @@ describe("switches through dsh's pluginManager", () => {
     const { gateway } = switchingGateway([{ ...applied, application: 'failed', error: { code: 'operation-error', diagnostic: 'EACCES: cordis.patch.yml' } }])
     expect(await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })).toEqual({
       ok: false,
-      detail: 'dsh-plugin-shop: dsh could not switch dsh-two-rows (operation-error): dsh hit an unexpected error. dsh reported: EACCES: cordis.patch.yml.',
+      detail: 'dsh-plugin-shop: dsh could not switch dsh-two-rows (operation-error): dsh encountered an unexpected error. dsh reported: EACCES: cordis.patch.yml.',
     })
   })
 
@@ -918,7 +918,7 @@ describe("switches through dsh's pluginManager", () => {
     const result = await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })
     expect(result).toEqual({
       ok: false,
-      detail: "dsh-plugin-shop: dsh refused to switch dsh-two-rows (unaddressable): the plugin is not a row of the profile's own patch, so dsh cannot address it. dsh reported: not a root row.",
+      detail: "dsh-plugin-shop: dsh refused to switch dsh-two-rows (unaddressable): the plugin is not defined in this profile's configuration, so dsh cannot change it here. dsh reported: not a root row.",
     })
   })
 
@@ -1027,8 +1027,8 @@ describe("switches through dsh's pluginManager", () => {
     const started = await gateway.install({ name: 'dsh-managed', version: '1.0.0', acknowledged: true })
     if (!started.ok) throw new Error(started.detail)
     await vi.waitFor(() => expect(calls).toEqual([['installBundle', 'dsh-managed@1.0.0']]), { timeout: 5000 })
-    const busy = (name: string): string => 'dsh-plugin-shop: an install, update or uninstall is still running in this profile,'
-      + ` and dsh holds the profile until it ends; switch ${name} after it finishes.`
+    const busy = (name: string): string => 'dsh-plugin-shop: an install, update or uninstall is still running in this profile.'
+      + ` Wait for it to finish before changing the enabled state of ${name}.`
     expect(await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })).toEqual({ ok: false, detail: busy('dsh-two-rows') })
     expect(await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })).toEqual({ ok: false, detail: busy('dsh-hello-fixture') })
     // Switching a deselected package off is the shop's own row write, which
@@ -1470,7 +1470,7 @@ describe("the bundle switch of dsh 0.1.7's own Plugins page", () => {
     const gateway = new ShopGateway(withManager(manager.service), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
     expect(await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })).toEqual({
       ok: false,
-      detail: 'dsh-plugin-shop: dsh answered the selection of dsh-hello-fixture with "deferred", which this shop does not know how to read.',
+      detail: 'dsh-plugin-shop: could not confirm the selection of dsh-hello-fixture. dsh returned an unrecognized status: "deferred".',
     })
     expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
   })
@@ -1511,7 +1511,7 @@ describe("the bundle switch of dsh 0.1.7's own Plugins page", () => {
     const gateway = new ShopGateway(withManager(service), { profile: 'desktop', profileDir, inventory: { list: async () => ({ entries: [] }) } })
     expect(await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })).toEqual({
       ok: false,
-      detail: 'dsh-plugin-shop: dsh could not select dsh-hello-fixture again: the profile is locked',
+      detail: 'dsh-plugin-shop: dsh could not enable dsh-hello-fixture again: the profile is locked',
     })
   })
 
@@ -1799,7 +1799,7 @@ describe('ShopGateway.restart', () => {
     })
     const result = await gateway.restart()
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.detail).toContain('restart could not be started')
+    if (!result.ok) expect(result.detail).toContain('could not start the restart process')
     expect(exit).not.toHaveBeenCalled()
   })
 
@@ -1923,7 +1923,7 @@ describe('restart guard (systemd)', () => {
     // states every input the predicate reads rather than inheriting some.
     const cases: Array<{ reason: RestartBlockedReason; detail: string; options: Partial<ShopGatewayOptions> }> = [
       { reason: 'windows', detail: 'not supported on Windows', options: { platform: 'win32', env: {}, ppid: 4321, restartArgv: ['web'] } },
-      { reason: 'systemd', detail: 'systemd service', options: { platform: 'linux', env: { INVOCATION_ID: 'abc' }, ppid: 1, restartArgv: ['web'] } },
+      { reason: 'systemd', detail: 'managed by systemd', options: { platform: 'linux', env: { INVOCATION_ID: 'abc' }, ppid: 1, restartArgv: ['web'] } },
       { reason: 'from-default-profile', detail: '--from-default-profile', options: { platform: 'linux', env: {}, ppid: 4321, restartArgv: ['rescue', '--from-default-profile', 'web'] } },
       { reason: 'port-zero', detail: '--port 0', options: { platform: 'linux', env: {}, ppid: 4321, restartArgv: ['web', '--port', '0'] } },
     ]
@@ -1944,9 +1944,9 @@ describe('restart guard (--from-default-profile)', () => {
   // launched that way deleted every plugin in the profile, this shop included.
   // Measured 2026-10-19 in throwaway homes; 0.2.0 refused to boot such a
   // profile instead (design 2026-10-19-dsh-021-readiness §3).
-  const DETAIL = 'dsh-plugin-shop: restart is not supported when dsh was launched with --from-default-profile;'
-    + ' from dsh 0.2.1 a restart would recreate the profile from its template and delete every plugin installed in it,'
-    + ' this shop included. Restart dsh manually without that flag to apply the change'
+  const DETAIL = 'dsh-plugin-shop: dsh was started with --from-default-profile.'
+    + ' In dsh 0.2.1 and later, restarting with this flag recreates the profile from its template and deletes all installed plugins,'
+    + ' including the shop. Restart dsh manually without this flag.'
 
   // Pinned as the table above pins them: the argv and the supervisor's env and
   // ppid here, the profile and the platform through `gatewayOptions()`, so
@@ -2055,10 +2055,10 @@ describe('the desktop profile, which dsh refuses to manage from its CLI', () => 
   // same in 0.1.5-rc.3 and 0.1.7-rc.2). Every mutation the shop makes goes
   // through that CLI, so each is refused up front — before anything spawns,
   // naming the app — instead of failing as "pnpm failed in the profile".
-  const INSTALL_DETAIL = 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh'
-    + ' refuses to change it from the command line the shop runs; add and remove its plugins from the app instead'
-  const RESTART_DETAIL = 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh'
-    + ' refuses to restart it from here; restart the app to apply the change'
+  const INSTALL_DETAIL = 'dsh-plugin-shop: this profile is managed by the DeepSeek Harness desktop app.'
+    + ' The shop cannot change it through the command line. Add or remove plugins from the app.'
+  const RESTART_DETAIL = 'dsh-plugin-shop: this profile is managed by the DeepSeek Harness desktop app.'
+    + ' Restart the app to apply the change.'
 
   const desktopGateway = (profile: string, dir: string, exit = vi.fn<() => void>()): ShopGateway => new ShopGateway(stubCtx(), {
     ...gatewayOptions(), profile, dshBin: fakeDshRecording(dir, 0, { silent: true }), exit, restartExitDelayMs: 5,
@@ -2431,7 +2431,7 @@ describe('release-rescued tarball install', () => {
     expect(result).toEqual({
       ok: false,
       code: 'tarball-integrity',
-      detail: 'dsh-plugin-shop: the release tarball failed sha256 verification against the catalog record; refusing to install',
+      detail: 'dsh-plugin-shop: the release archive does not match the catalog checksum (SHA-256). Installation stopped.',
     })
     expect(fetchTarball).toHaveBeenCalledWith(TARBALL_URL)
     // A spawned fixture would have created the calls log within this settle window.
@@ -2447,7 +2447,7 @@ describe('release-rescued tarball install', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) {
       expect(result.code).toBe('tarball-integrity')
-      expect(result.detail).toContain('network failure: ECONNREFUSED')
+      expect(result.detail).toContain('Network error: ECONNREFUSED')
     }
     // Same no-spawn property as the mismatch: the check failed, nothing ran.
     await new Promise(resolve => setTimeout(resolve, 50))
@@ -2536,18 +2536,18 @@ describe('verifyTarballSha256', () => {
       url,
       sha256,
     )
-    expect(detail).toBe('dsh-plugin-shop: the release tarball failed sha256 verification against the catalog record; refusing to install')
+    expect(detail).toBe('dsh-plugin-shop: the release archive does not match the catalog checksum (SHA-256). Installation stopped.')
   })
 
   it('refuses a body over the byte cap with a size-cap detail', async () => {
     const detail = await verifyTarballSha256(async () => new Response(bytes), url, sha256, 8)
-    expect(detail).toContain('exceeds the size cap')
-    expect(detail).toContain('refusing to install')
+    expect(detail).toContain('exceeds the size limit')
+    expect(detail).toContain('Installation stopped')
   })
 
   it('names the HTTP status when the fetch answers non-2xx', async () => {
     const detail = await verifyTarballSha256(async () => new Response('nope', { status: 404 }), url, sha256)
-    expect(detail).toBe('dsh-plugin-shop: the release tarball could not be fetched (HTTP 404); refusing to install')
+    expect(detail).toBe('dsh-plugin-shop: could not download the release archive (HTTP 404). Installation stopped.')
   })
 })
 
@@ -2976,13 +2976,13 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     const harness = (patchLists: boolean | null) => async (): Promise<RunningHarness> =>
       ({ dshVersion: '0.1.5-rc.3', templates: {}, patchLists, peerCheck: null })
     const cases: Array<[unknown, boolean | null, string | null]> = [
-      [['./host.yml', './web.yml'], false, 'dsh-plugin-shop: dsh-hello-plugin lists its bundle patch as several files, which dsh reads from 0.1.7 on;'
-        + ' this dsh (0.1.5-rc.3) reads one and would not start with it installed.'
+      [['./host.yml', './web.yml'], false, 'dsh-plugin-shop: dsh-hello-plugin uses multiple configuration files, which require dsh 0.1.7 or later.'
+        + ' Your dsh (0.1.5-rc.3) only supports one file and cannot start with this plugin installed.'
         + ' It is on disk: run `dsh plugin --profile web remove dsh-hello-plugin` to undo this install.'],
       [['./host.yml', './web.yml'], true, null],
       [['./host.yml', './web.yml'], null, null],
-      [7, null, 'dsh-plugin-shop: dsh-hello-plugin declares its bundle patch as neither a file path nor a list of them,'
-        + ' which dsh refuses to load, so the profile would not start.'
+      [7, null, 'dsh-plugin-shop: dsh-hello-plugin has an invalid bundle patch declaration; it must be a file path or a list of paths.'
+        + ' dsh cannot start this profile with the plugin installed.'
         + ' It is on disk: run `dsh plugin --profile web remove dsh-hello-plugin` to undo this install.'],
     ]
     for (const [patch, patchLists, detail] of cases) {
@@ -3142,7 +3142,7 @@ describe('ShopGateway.setEnabled entry ownership', () => {
     // dsh's app-boot mounts the whole profile as one root Include, so the
     // inventory reports `include:<id>` for every entry a bundle patch
     // inserted. The shop matched only the bare id, so no row was ever found
-    // and every plugin's switch answered "not in the running plugin tree".
+    // and every plugin's switch answered "has not been loaded".
     const profileDir = toggleProfile()
     fixturePackage(profileDir, '@tt-a1i/archify-dsh', archifyPatch)
     const gateway = new ShopGateway(stubCtx(), {
@@ -3221,7 +3221,7 @@ describe('ShopGateway.setEnabled entry ownership', () => {
     const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
     const result = await gateway.setEnabled({ name: 'dsh-libonly', enabled: false })
     expect(result.ok).toBe(false)
-    expect(result.ok === false && result.detail).toContain('contributes no plugin entries')
+    expect(result.ok === false && result.detail).toContain('has no plugin entries')
     expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
   })
 
@@ -3236,7 +3236,7 @@ describe('ShopGateway.setEnabled entry ownership', () => {
     const result = await gateway.setEnabled({ name: 'dsh-broken', enabled: false })
     expect(result.ok).toBe(false)
     expect(result.ok === false && result.detail).toContain('dsh-broken')
-    expect(result.ok === false && result.detail).toContain('bundle patch that could not be read')
+    expect(result.ok === false && result.detail).toContain('could not read the plugin configuration')
     expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
   })
 
@@ -3261,7 +3261,7 @@ describe('ShopGateway.setEnabled entry ownership', () => {
     const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
     const result = await gateway.setEnabled({ name: '@tt-a1i/archify-dsh', enabled: false })
     expect(result.ok).toBe(false)
-    expect(result.ok === false && result.detail).toContain('not in the running plugin tree')
+    expect(result.ok === false && result.detail).toContain('has not been loaded')
     expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
   })
 })
@@ -3913,7 +3913,7 @@ describe('restart while an install is running (F-5)', () => {
     const outcome = await gateway.restart()
     expect(outcome).toEqual({
       ok: false,
-      detail: 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.',
+      detail: 'dsh-plugin-shop: an install is still running in this profile. Wait for it to finish before restarting so the configuration can be saved completely.',
     })
     expect(exit).not.toHaveBeenCalled()
     await vi.waitFor(() => {
@@ -4021,7 +4021,7 @@ describe('a queued install is live, not finished', () => {
     const restart = await gateway.restart()
     expect(restart).toEqual({
       ok: false,
-      detail: 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.',
+      detail: 'dsh-plugin-shop: an install is still running in this profile. Wait for it to finish before restarting so the configuration can be saved completely.',
     })
     const deadline = Date.now() + 20000
     while (!isTerminalInstallState(gateway.installStatus({ installId: second.installId }).state) && Date.now() < deadline) {
@@ -4053,7 +4053,7 @@ describe('a queued install is live, not finished', () => {
     const restart = await gateway.restart()
     expect(restart).toEqual({
       ok: false,
-      detail: 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.',
+      detail: 'dsh-plugin-shop: an install is still running in this profile. Wait for it to finish before restarting so the configuration can be saved completely.',
     })
     const deadline = Date.now() + 20000
     while (!isTerminalInstallState(gateway.installStatus({ installId: queued.installId }).state) && Date.now() < deadline) {
@@ -4284,9 +4284,9 @@ describe("installs and updates through dsh's pluginManager", () => {
   const beforePnpm = { output: () => [], lands: false }
   /** The line the record gains when the shop continues such an update
    * through dsh's CLI: published copy, so it is spelled out here. */
-  const bridgeTo = (spec: string): string => "dsh-plugin-shop: dsh's plugin manager updates no installed package in place (already-installed);"
-    + ` running \`dsh plugin --profile web add ${spec}\` instead`
-  const inPlaceSentence = 'this dsh updates no installed package in place: uninstall it, then install it again.'
+  const bridgeTo = (spec: string): string => "dsh-plugin-shop: dsh's plugin manager cannot update this package directly (already-installed)."
+    + ` Continuing with: \`dsh plugin --profile web add ${spec}\``
+  const inPlaceSentence = 'this version of dsh cannot update an installed package directly; uninstall it, then install it again.'
 
   it('continues an update dsh refuses in place through the CLI, in the same record', async () => {
     const { gateway, calls, cliDir } = managedGateway(refusedInPlace('dsh-managed@1.0.0'), { ...beforePnpm, dependencies: { 'dsh-managed': '0.9.0' } })
@@ -4419,7 +4419,7 @@ describe("installs and updates through dsh's pluginManager", () => {
       expect(gateway.installStatus({ installId: started.installId }).state).toBe('running')
       expect(await gateway.restart()).toEqual({
         ok: false,
-        detail: 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.',
+        detail: 'dsh-plugin-shop: an install is still running in this profile. Wait for it to finish before restarting so the configuration can be saved completely.',
       })
       expect(exit).not.toHaveBeenCalled()
     } finally {
@@ -4524,7 +4524,7 @@ describe("installs and updates through dsh's pluginManager", () => {
       expect(calls).toEqual([['installBundle', 'dsh-managed@1.0.0', started.installId], ['cancelInstall', started.installId]])
       expect(status.state).toBe('failed')
       // What dsh did, not the CLI path's timeout detail (R42.8).
-      expect(status.detail).toMatch(/^dsh-plugin-shop: the install did not finish within \d+s, so the shop cancelled it\. dsh stopped it, restored the profile's package\.json and pnpm-lock\.yaml, and installed nothing\./)
+      expect(status.detail).toMatch(/^dsh-plugin-shop: the install did not finish within \d+s, so the shop cancelled it\. dsh restored the profile's package\.json and pnpm-lock\.yaml\. Nothing was installed\./)
     } finally {
       vi.useRealTimers()
     }
@@ -4644,7 +4644,7 @@ describe("installs and updates through dsh's pluginManager", () => {
     await vi.waitFor(() => expect(service.removeBundle).toHaveBeenCalledOnce(), { timeout: 5000 })
     expect(await gateway.restart()).toEqual({
       ok: false,
-      detail: 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.',
+      detail: 'dsh-plugin-shop: an install is still running in this profile. Wait for it to finish before restarting so the configuration can be saved completely.',
     })
     release({ changed: true, application: 'applied', stage: 'remove', target: 'dsh-managed', warnings: [], packageResult: { exitCode: 0, output: 'Packages: -1', truncated: false, logPath: '/l' } })
     // The queue runs one operation at a time, so a task queued behind the
@@ -4660,8 +4660,8 @@ describe("installs and updates through dsh's pluginManager", () => {
     fixturePackage(profileDir, 'dsh-holder', "- insert:\n    - id: managed-row\n      name: 'dsh-holder'\n")
     expect(await installAndSettle(gateway, managed)).toMatchObject({
       state: 'failed',
-      detail: 'dsh-plugin-shop: dsh-managed declares the loader entry id "managed-row", which dsh-holder already declares.'
-        + ' dsh refuses to load a plugin tree holding a duplicate entry id, so the profile would not start.'
+      detail: 'dsh-plugin-shop: dsh-managed and dsh-holder use the same plugin entry ID, "managed-row".'
+        + ' dsh cannot start this profile while both plugins are installed.'
         + ' It is on disk: uninstall it from the shop to undo this install.',
     })
   })

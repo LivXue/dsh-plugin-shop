@@ -233,17 +233,17 @@ export interface OutcomeContext {
 /** What each management code means, in dsh 0.1.7-rc.2's own terms (the
  * implementation plan of 2026-09-27, Task 2, records where each is raised). */
 const CODE_SENTENCE: Record<string, string> = {
-  'unknown-plugin': 'dsh lists no plugin entry by that id',
-  'invalid-spec': 'dsh could not read the install spec',
-  'ambiguous-install': 'dsh could not tell which package the install added',
+  'unknown-plugin': 'dsh could not find a plugin with that ID',
+  'invalid-spec': 'dsh could not read the package name or install source',
+  'ambiguous-install': 'dsh could not identify the installed package',
   'not-bundle': 'the package is not a dsh bundle',
   'not-removable': 'dsh does not allow removing this bundle',
-  'stop-profile': 'the bundle is running and this dsh cannot unload it live, so the profile has to be stopped first',
+  'stop-profile': 'this bundle is still running; stop dsh for this profile before removing it',
   'bundle-in-use': 'the bundle was switched off, but some of its plugins are still running',
-  'stale-approval': 'a build approval names a package pnpm no longer holds',
+  'stale-approval': 'the build approval refers to a package that pnpm no longer lists',
   'management-required': 'the plugin belongs to dsh itself',
-  unaddressable: "the plugin is not a row of the profile's own patch, so dsh cannot address it",
-  'operation-error': 'dsh hit an unexpected error',
+  unaddressable: "the plugin is not defined in this profile's configuration, so dsh cannot change it here",
+  'operation-error': 'dsh encountered an unexpected error',
   // From dsh 0.2.1 (dsh-plugin-manager 0.2.1-alpha.3 on; design
   // 2026-10-19-dsh-021-readiness §2): installBundle refuses a spec naming a
   // package the profile already depends on wherever the `hmr` service exists
@@ -251,18 +251,18 @@ const CODE_SENTENCE: Record<string, string> = {
   // updates one. The gateway carries an update it refuses on through dsh's
   // CLI, so a reader meets this only where that cannot run: a fresh install,
   // and the desktop profile.
-  'already-installed': 'this dsh updates no installed package in place: uninstall it, then install it again',
+  'already-installed': 'this version of dsh cannot update an installed package directly; uninstall it, then install it again',
 }
 
 /** What each classified pnpm failure was, as dsh classifies it. */
 const KIND_SENTENCE: Record<string, string> = {
   'pnpm-missing': 'pnpm could not be started',
-  timeout: "pnpm did not finish within dsh's own time bound",
-  'not-found': 'no such package was found',
+  timeout: 'pnpm took too long to finish',
+  'not-found': 'the package could not be found',
   // The requested version, not the catalog's: an update of the shop itself
   // asks for the version npm's dist-tags name.
-  'no-matching-version': 'no version matching the requested one was found',
-  network: 'the network failed',
+  'no-matching-version': 'the requested version could not be found',
+  network: 'the network request failed',
   'disk-full': 'the disk is full',
   permission: 'permission was denied',
   integrity: 'the downloaded package failed its integrity check',
@@ -270,7 +270,7 @@ const KIND_SENTENCE: Record<string, string> = {
 
 const WHERE: Record<string, string> = {
   registry: ' at the registry',
-  'spec-host': ' at the host the package is fetched from',
+  'spec-host': ' while connecting to the package source',
 }
 
 /** An own-property read of one of the three tables above. They are object
@@ -304,13 +304,13 @@ function restorationSentence(output: string): string | null {
  * says what dsh's own pre-check says, and an uninstall says nothing of it. */
 function versionRefusalDetail(context: OutcomeContext, change: ManagerChange): string {
   const refused = change.incompatible.map(issue =>
-    `${issue.name}@${issue.version} declares ${Object.entries(issue.peers).map(([peer, range]) => `${peer} ${range}`).join(', ')},`
+    `${issue.name}@${issue.version} requires ${Object.entries(issue.peers).map(([peer, range]) => `${peer} ${range}`).join(', ')},`
     + ` which dsh ${issue.runtimeVersion} does not satisfy`)
   const restored = restorationSentence(change.output)
     ?? (context.operation === 'uninstall' || change.truncated ? null : 'Nothing was installed.')
   const base = `dsh-plugin-shop: dsh refused the ${context.operation}: ${refused.join('; ')}.${restored === null ? '' : ` ${restored}`}`
   if (context.desktop) {
-    return `${base} dsh's CLI, which grants version exemptions, does not manage the desktop profile, and this shop grants none.`
+    return `${base} Version exemptions are not available here: the dsh CLI cannot manage desktop profiles, and the shop cannot grant them.`
   }
   const commands = change.incompatible
     .map(issue => allowVersionCommand(context.profile, issue))
@@ -341,9 +341,9 @@ export function codeReason(change: ManagerChange, code: string): string {
  * Add plugin dialog refuses a name the profile already holds, so it cannot
  * rerun an update, and with no name listed it offers no such button. */
 function desktopBuildsDetail(context: OutcomeContext, change: ManagerChange, held: string): string {
-  const base = `dsh-plugin-shop: pnpm is holding the build scripts of ${held}, which it blocks by default, and this shop never allows them.`
+  const base = `dsh-plugin-shop: pnpm blocked build scripts for ${held}. These scripts need approval, which the shop cannot grant.`
   if (context.operation !== 'install' || change.pendingBuilds.length === 0) return base
-  return `${base} dsh's Plugins page offers "Allow these scripts and retry" when an install it runs stops on them.`
+  return `${base} Try installing from dsh's Plugins page. If these scripts block the install there, use "Allow these scripts and retry" to approve them.`
 }
 
 /** What a `cancelled` answer means, for every reader: the shop's deadline
@@ -358,7 +358,7 @@ function desktopBuildsDetail(context: OutcomeContext, change: ManagerChange, hel
 function cancelledDetail(context: OutcomeContext): string {
   const seconds = Math.max(1, Math.round(context.timeoutMs / 1000))
   return `dsh-plugin-shop: the ${context.operation} did not finish within ${seconds}s, so the shop cancelled it.`
-    + ` dsh stopped it, restored the profile's package.json and pnpm-lock.yaml, and installed nothing. Try the ${context.operation} again from the shop.`
+    + ` dsh restored the profile's package.json and pnpm-lock.yaml. Nothing was installed. Try the ${context.operation} again from the shop.`
 }
 
 /** A `ChangeResult` as the shop's terminal install record: design
@@ -414,8 +414,8 @@ function outcomeByRule(change: ManagerChange, context: OutcomeContext): ManagerO
       if (context.desktop) return { state: 'failed', detail: desktopBuildsDetail(context, change, held) }
       return {
         state: 'failed',
-        detail: `dsh-plugin-shop: pnpm is holding the build scripts of ${held}, which it blocks by default:`
-          + ` run \`pnpm approve-builds\` in the profile directory to allow them, then ${context.operation} again.`,
+        detail: `dsh-plugin-shop: pnpm blocked build scripts for ${held}.`
+          + ` To review and allow them, run \`pnpm approve-builds\` in the profile directory, then ${context.operation} again.`,
       }
     }
     // For a GitHub repository dsh runs `git ls-remote` before pnpm, bounded
@@ -426,8 +426,8 @@ function outcomeByRule(change: ManagerChange, context: OutcomeContext): ManagerO
     if (change.kind === 'timeout' && change.failedAt === 'spec-host') {
       return {
         state: 'failed',
-        detail: `dsh-plugin-shop: the ${context.operation} failed at the host the package is fetched from: dsh checks that a GitHub repository is reachable`
-          + ' before pnpm runs, and that check did not finish within its bound (5 s by default), so pnpm never ran.',
+        detail: `dsh-plugin-shop: the ${context.operation} stopped because the GitHub connection check timed out (5 s by default).`
+          + ' pnpm has not run. Check your connection to GitHub and try again.',
       }
     }
     const sentence = lookup(KIND_SENTENCE, change.kind)
@@ -461,7 +461,7 @@ function outcomeByRule(change: ManagerChange, context: OutcomeContext): ManagerO
   }
   if (change.application === 'applied' || change.application === 'overridden') {
     const note = change.application === 'overridden'
-      ? { detail: 'Saved, but a higher-priority layer (the home or invocation patch) decides whether it runs.' }
+      ? { detail: 'Saved, but a home or startup configuration overrides this setting and controls whether the plugin runs.' }
       : {}
     // On a harness whose reconcile replaces a running plugin (dsh 0.2.1's
     // dsh-hmr `reconcileProfile`), an `applied` answer says it already has:
@@ -485,6 +485,6 @@ function outcomeByRule(change: ManagerChange, context: OutcomeContext): ManagerO
   }
   return {
     state: 'failed',
-    detail: `dsh-plugin-shop: dsh answered the ${context.operation} with "${change.application ?? 'nothing'}", which this shop does not know how to read.`,
+    detail: `dsh-plugin-shop: could not confirm the ${context.operation}. dsh returned an unrecognized status: "${change.application ?? 'nothing'}".`,
   }
 }
