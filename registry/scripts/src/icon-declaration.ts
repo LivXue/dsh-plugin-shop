@@ -260,6 +260,14 @@ function isArrayIndex(key: string): boolean {
  */
 export type IconMediaType = 'image/svg+xml' | 'image/png' | 'image/jpeg' | 'image/webp'
 
+/** Every {@link IconMediaType}, as a record: a member added to the union stops compiling here until it is listed. */
+export const ICON_MEDIA_TYPES: Readonly<Record<IconMediaType, true>> = {
+  'image/svg+xml': true,
+  'image/png': true,
+  'image/jpeg': true,
+  'image/webp': true,
+}
+
 const MEDIA_TYPES: ReadonlyMap<string, IconMediaType> = new Map<string, IconMediaType>([
   ['.svg', 'image/svg+xml'],
   ['.png', 'image/png'],

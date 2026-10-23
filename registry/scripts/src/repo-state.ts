@@ -16,7 +16,8 @@
  */
 
 import { canEverList } from './repo-gate.ts'
-import type { IconDeclaration, IconMediaType } from './icon-declaration.ts'
+import { ICON_MEDIA_TYPES } from './icon-declaration.ts'
+import type { IconDeclaration } from './icon-declaration.ts'
 import { UNBUILT_FIELD_MAX_LENGTH } from './release-asset.ts'
 import type { RepoCandidate, StoredIconRead } from './types.ts'
 
@@ -297,18 +298,6 @@ function isDshPeersRecord(value: unknown): value is Record<string, string> {
   const entries = Object.entries(value)
   return entries.length > 0 && entries.every(([name, range]) =>
     (name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')) && typeof range === 'string')
-}
-
-/**
- * The media types `readIconDeclaration` writes, as a record so that a type
- * added to {@link IconMediaType} stops compiling here until it is listed:
- * `icon-declaration.ts` keeps its table by extension and exports no list.
- */
-const ICON_MEDIA_TYPES: Record<IconMediaType, true> = {
-  'image/svg+xml': true,
-  'image/png': true,
-  'image/jpeg': true,
-  'image/webp': true,
 }
 
 /**
