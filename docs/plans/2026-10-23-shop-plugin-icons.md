@@ -272,7 +272,8 @@ export function sha256Hex(bytes: Uint8Array): string
   - `FF D8 FF E0` passes for JPEG.
   - `RIFF` + 4 bytes + `WEBP` passes for WebP.
   - Each of these SVG texts passes: `\uFEFF<?xml version="1.0"?>\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "x">\n<!-- c --><svg xmlns="http://www.w3.org/2000/svg"/>`, and `<svg>`, and `<svg\n viewBox="0 0 1 1">`.
-  - These fail: `<html>`, `<svgx>`, `<SVG>`, and bytes that are not valid UTF-8 (`0xC3 0x28`).
+  - These pass too, because some browser draws them (design §5.4): UTF-16LE and UTF-16BE with a byte order mark, including one with a stray last byte or a lone surrogate after the root; an ISO-8859-1 file with byte `0xA9` in a comment and in `<title>`; `<svg:svg xmlns:svg="http://www.w3.org/2000/svg">`; a UTF-8 file holding `<title>图标</title>`; and invalid UTF-8 inside a comment before `<svg`.
+  - These fail: `<html>`, `<svgx>`, `<SVG>`, `<svg:svgx>`, `<:svg>`; a prolog with no root (an XML declaration alone, a comment alone, a DOCTYPE alone, a BOM alone); a UTF-16 byte order mark with no root after it; UTF-16 with no byte order mark, in every form (`<svg/>`, or one that opens with an XML declaration), because it drew in neither browser measured; and bytes that hold no root (`0xC3 0x28`).
 - **Checking.**
   - An SVG body exactly `MAX_CATALOG_ICON_BYTES` long (padded with a comment) is `{ ok: true }`.
   - One byte longer is refused, with detail ending `is 32.1 KiB; the shop shows icons of at most 32 KiB.`
@@ -285,8 +286,8 @@ Run: `pnpm vitest run registry/scripts/tests/icon-bytes.test.ts`
 Expected: FAIL, the module is missing.
 
 - [ ] **Step 3: Implement**
-- SVG decodes with `new TextDecoder('utf-8', { fatal: true })`.
-- Before matching `<svg` followed by whitespace, `/` or `>`, skip any number of each of these, in any order: a BOM, whitespace, `<?…?>`, `<!--…-->` and `<!DOCTYPE …>`.
+- SVG is read in the encodings browsers read, not as UTF-8 alone (design §5.4). Bytes that start with a UTF-16 byte order mark (`FF FE` or `FE FF`) decode as UTF-16LE or UTF-16BE with `new TextDecoder(label)`, replacing and never `fatal`, so a lone surrogate or a stray last byte becomes U+FFFD and the scan goes on. Any other bytes, UTF-16 with no byte order mark among them, are read one character per byte (`latin1`), so UTF-8, ISO-8859-1 and the other ASCII-compatible encodings reach the root, and the encoding past the root is never validated. The bytes must already be held to `MAX_CATALOG_ICON_BYTES`, because the text is built from all of them.
+- Before matching `<svg` or `<prefix:svg` (a non-empty prefix of name characters, any character from U+0080 on counting as one) followed by whitespace, `/` or `>`, skip any number of each of these, in any order: a BOM, whitespace, `<?…?>`, `<!--…-->` and `<!DOCTYPE …>`.
 - Check the size first, then the sniff.
 
 - [ ] **Step 4: Run, and see them pass**
