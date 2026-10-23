@@ -225,8 +225,9 @@ function reboundCarriedSize(candidate: RepoCandidate): RepoCandidate {
  * (`writeDeclarations`), and this throws on it. `icon` is absent on every
  * record rule 2 wrote and on every manifest that declares none; present, it is
  * `declared` or `refused` and nothing else, so the `none` read, which the
- * writer removes rather than stores, is a record no build wrote
- * ({@link isIconRecord}).
+ * writer removes rather than stores, is a record no build wrote, and nor is a
+ * declared path with an empty, `.` or `..` segment, which the reader
+ * normalises away ({@link isIconRecord}).
  *
  * Types only, not the harvest's length and count bounds. Those are applied
  * where the value is read (`peerNamesOf`, `compatibilityOf`, `dshPeersOf`,
@@ -334,10 +335,13 @@ function isListed<Member extends string>(table: Readonly<Record<Member, true>>, 
  * Exact key sets, as {@link isCompatibilityRecord} asks for, because a `path`
  * becomes a key and a request and a `detail` is published under the author's
  * name (design §5 and §10), so a key the harvest never wrote has no business
- * riding along. Types only otherwise: a path's own rules (relative, inside the
- * package, an extension that agrees with its media type) are the reader's, and
- * a rule tightened later must not turn every row written under the old one
- * into a build that cannot start.
+ * riding along. Types only otherwise, with one rule of shape: a `path` has no
+ * empty, `.` or `..` segment ({@link hasNamedSegments}). Its other rules
+ * (relative, inside the package, an extension that agrees with its media type)
+ * are the reader's, and a rule tightened later must not turn every row written
+ * under the old one into a build that cannot start; this one is no bound that a
+ * later build might move, because `readIconDeclaration` normalises every path
+ * it writes and so never makes such a record.
  */
 function isIconRecord(value: unknown): value is StoredIconRead {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
@@ -349,8 +353,20 @@ function isIconRecord(value: unknown): value is StoredIconRead {
   const { source, path, mediaType } = declaration as { source?: unknown; path?: unknown; mediaType?: unknown }
   return hasExactKeys(declaration as Record<string, unknown>, ['source', 'path', 'mediaType'])
     && isListed(ICON_SOURCES, source)
-    && typeof path === 'string' && path !== ''
+    && typeof path === 'string' && hasNamedSegments(path)
     && isListed(ICON_MEDIA_TYPES, mediaType)
+}
+
+/**
+ * Whether every segment of a `/`-separated path is a name: none is empty, `.`
+ * or `..`. An empty path is one empty segment, so it fails too. The icon step
+ * builds the URL it reads the file from out of these segments, each encoded,
+ * and encoding leaves `.` and `..` as they are: a URL parser reads them as
+ * directions, so a path holding one would name a file outside the commit it
+ * is keyed by. An empty segment is read as a different path again.
+ */
+function hasNamedSegments(path: string): boolean {
+  return path.split('/').every(segment => segment !== '' && segment !== '.' && segment !== '..')
 }
 
 /** Whether a plain object's own keys are exactly `keys`, in any order. */
