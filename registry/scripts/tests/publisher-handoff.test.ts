@@ -32,12 +32,12 @@ interface Run {
   readonly urls: string[]
 }
 
-/** A throwaway working directory holding the three registry files
+/** A throwaway working directory holding the registry files
  * `loadRegistryConfig` requires; everything else it treats as absent. */
 function newWorkspace(): string {
   const cwd = mkdtempSync(join(tmpdir(), 'publisher-handoff-'))
   mkdirSync(join(cwd, 'registry'), { recursive: true })
-  for (const file of ['verified.yml', 'denied.yml', 'allowed-similar.yml']) {
+  for (const file of ['verified.yml', 'denied.yml', 'allowed-similar.yml', 'withheld-icons.yml']) {
     writeFileSync(join(cwd, 'registry', file), '[]\n')
   }
   return cwd

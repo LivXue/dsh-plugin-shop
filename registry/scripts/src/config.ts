@@ -78,6 +78,14 @@ const deniedSchema = z.array(z.object({
 
 const allowedSimilarSchema = z.array(npmNameOrRepo)
 
+/** `withheld-icons.yml`: a maintainer's rows, each naming a package or a
+ * repository whose icon the shop must not show. The reason is required because
+ * the build report prints it to the plugin's author. */
+const withheldIconsSchema = z.array(z.object({
+  name: npmNameOrRepo,
+  reason: z.string().min(1),
+}).strict())
+
 const categoriesSchema = z.array(z.object({
   name: z.string().min(1),
   category: z.enum(CATEGORIES),
@@ -130,6 +138,14 @@ export interface RegistryConfig {
   /** The `owner/slug`-shaped clearances, lowercased — the only form the
    * GitHub channel honours. */
   allowedSimilarRepos: Set<string>
+  /**
+   * The plugins whose icon a maintainer withheld by hand, to the reason (design
+   * 2026-10-23-shop-plugin-icons §9). Keyed as `firstSeenKey` keys an entry, so
+   * a lookup needs no further folding: an npm name as written, a repository's
+   * `owner/slug` lowercased. One row therefore covers every entry of a
+   * repository. Only the icon is withheld; the listing is {@link denied}'s.
+   */
+  withheldIcons: Map<string, { reason: string }>
   /** Names cleared past the client's shop-like name filter: judged NOT to be
    * competing plugin markets, so the shelf shows them. The verdict decides
    * this, not who recorded it; {@link marketRows} is what tells the build
@@ -200,18 +216,19 @@ function setUnique<V>(map: Map<string, V>, label: string, name: string, value: V
 }
 
 /**
- * Parse the six registry files from their text.
+ * Parse the registry files from their text.
  * @param input - the raw text of each file.
  * @returns the parsed configuration.
  * @throws when any file is malformed, or when `verified.yml`, `denied.yml`,
- *   `markets.yml`, `categories.yml`, or `first-seen.yml` lists the same
- *   package name twice.
+ *   `withheld-icons.yml`, `markets.yml`, `categories.yml`, or `first-seen.yml`
+ *   lists the same package name twice.
  */
 export function parseRegistryConfig(
   input: {
     verified: string
     denied: string
     allowedSimilar: string
+    withheldIcons: string
     /** Optional so the five callers that predate this file stay valid; the
      * loader always passes it. */
     markets?: string
@@ -260,6 +277,16 @@ export function parseRegistryConfig(
   const allowedSimilarRepos = new Set(
     allowedSimilarRows.filter(entry => REPO_FULL_NAME.test(entry)).map(entry => entry.toLowerCase()),
   )
+  const withheldIcons = new Map<string, { reason: string }>()
+  for (const row of parseFile('withheld-icons.yml', input.withheldIcons, withheldIconsSchema)) {
+    // Keyed as `firstSeenKey` keys an entry, which is what the icon planner
+    // looks a row up by (`IconSubject.withheldKey`): a repository by its
+    // lowercased owner/slug, so `Owner/Repo` and `owner/repo` collide here,
+    // being one project. A scoped package is the only npm name with a slash,
+    // and REPO_FULL_NAME refuses its leading `@`, so it stays as written.
+    const key = REPO_FULL_NAME.test(row.name) ? row.name.toLowerCase() : row.name
+    setUnique(withheldIcons, 'withheld-icons.yml', key, { reason: row.reason })
+  }
   const marketVerdicts = new Map<string, boolean>()
   const marketRows: MarketRow[] = []
   for (const row of parseFile('markets.yml', input.markets ?? '[]', marketsSchema)) {
@@ -305,7 +332,7 @@ export function parseRegistryConfig(
   }
   return {
     verified, verifiedNames, denied, deniedRepos, allowedSimilar, allowedSimilarRepos,
-    notAShop, marketsJudged, marketRows, categories, firstSeen,
+    withheldIcons, notAShop, marketsJudged, marketRows, categories, firstSeen,
   }
 }
 
@@ -319,6 +346,11 @@ export function loadRegistryConfig(dir: string): RegistryConfig {
     verified: readFileSync(join(dir, 'verified.yml'), 'utf8'),
     denied: readFileSync(join(dir, 'denied.yml'), 'utf8'),
     allowedSimilar: readFileSync(join(dir, 'allowed-similar.yml'), 'utf8'),
+    // A maintainer's file, so a missing one stops the build like the others
+    // above instead of defaulting to `[]` like the files the build writes: an
+    // absent list would publish the icons it exists to hold back, and look
+    // exactly like an empty one.
+    withheldIcons: readFileSync(join(dir, 'withheld-icons.yml'), 'utf8'),
     markets: readOptional(dir, 'markets.yml'),
     categories: readOptional(dir, 'categories.yml'),
     firstSeen: readOptional(dir, 'first-seen.yml'),

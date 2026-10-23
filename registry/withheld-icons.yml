@@ -1,0 +1,20 @@
+# Plugin icons the shop does not show, withheld by hand. Every row states why.
+# A row withholds one plugin's icon: the shop draws its default artwork in its
+# place, and the build report lists the row with its reason. The plugin stays
+# listed. A row never touches the listing; excluding a plugin is denied.yml's
+# job.
+#
+#   name    an npm package name, or a GitHub owner/slug. An owner/slug row
+#           covers every entry of that repository, in whatever case it is
+#           written.
+#   reason  published. The build report prints it after "withheld by
+#           registry/withheld-icons.yml: ", so write it for the plugin's
+#           author, who reads it to learn why the icon is not shown.
+#
+# A name written twice stops the build, as it does in the other review files.
+#
+# - name: dsh-hello-plugin
+#   reason: The icon is an SVG that stalls the browser while it decodes.
+# - name: someone/dsh-repo-plugin
+#   reason: The icon is another product's logo.
+[]

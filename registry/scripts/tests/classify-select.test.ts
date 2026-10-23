@@ -13,6 +13,7 @@ const configWith = (categories: string): ReturnType<typeof parseRegistryConfig> 
     verified: '[]',
     denied: '[]',
     allowedSimilar: '[]',
+    withheldIcons: '[]',
     categories,
     firstSeen: '[]',
   })

@@ -8,6 +8,7 @@ const config = parseRegistryConfig({
   verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
   denied: '[]',
   allowedSimilar: '[]',
+  withheldIcons: '[]',
   categories: '[]',
   firstSeen: '[]',
 })
@@ -215,6 +216,7 @@ describe('gateRepo', () => {
       verified: '[]',
       denied: '- name: someone/dsh-repo-plugin\n  reason: known bad actor\n- name: dsh-denied-name\n  reason: bundle name denied\n',
       allowedSimilar: '[]',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '[]',
     })
@@ -239,6 +241,7 @@ describe('gateRepo', () => {
       verified: '[]',
       denied: '- name: someone/dsh-repo-plugin\n  reason: known bad actor.\n  replacement: dsh-good-plugin\n- name: dsh-denied-name\n  reason: bundle name denied.\n  replacement: dsh-good-plugin\n',
       allowedSimilar: '[]',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '[]',
     })
@@ -332,7 +335,7 @@ describe('the bounds the two channels share', () => {
   /** The npm candidate the same over-long value would arrive on, so the two
    * details can be compared rather than transcribed. */
   const npmConfig = parseRegistryConfig({
-    verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]',
+    verified: '[]', denied: '[]', allowedSimilar: '[]', withheldIcons: '[]', categories: '[]', firstSeen: '[]',
   })
   const npmCandidate = (overrides: Partial<import('../src/types.ts').Candidate>) => ({
     name: 'dsh-hello-plugin',
@@ -568,6 +571,7 @@ describe('the hold and the reviewed identity', () => {
     ].join('\n') + '\n',
     denied: '[]',
     allowedSimilar: '[]',
+    withheldIcons: '[]',
     categories: '[]',
     firstSeen: '[]',
   })
@@ -606,6 +610,7 @@ describe('the hold and the reviewed identity', () => {
       verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
       denied: '[]',
       allowedSimilar: '- good/dsh-fs-tol\n',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '[]',
     })
@@ -616,6 +621,7 @@ describe('the hold and the reviewed identity', () => {
       verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
       denied: '[]',
       allowedSimilar: '- dsh-fs-tol\n',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '[]',
     })
@@ -638,6 +644,7 @@ describe('case folding on the GitHub channel', () => {
       verified: '[]',
       denied: '- name: someone/dsh-repo-plugin\n  reason: known bad actor\n',
       allowedSimilar: '[]',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '[]',
     })
@@ -672,6 +679,7 @@ describe('case folding on the GitHub channel', () => {
       verified: '- name: DSH-Legacy\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
       denied: '[]',
       allowedSimilar: '[]',
+      withheldIcons: '[]',
       categories: '[]',
       firstSeen: '[]',
     })
