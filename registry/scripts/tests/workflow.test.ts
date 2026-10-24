@@ -358,7 +358,7 @@ describe('the daily workflow stages every registry file the build writes', () =>
     // If a refactor changes how the writes are spelled, this fails rather than
     // letting the guards below pass vacuously.
     expect(registryWrites(buildTs))
-      .toEqual(['feed-state.json', 'first-seen.yml', 'publisher-state.json', 'repo-state.json', 'snapshots/manifest.lock'])
+      .toEqual(['feed-state.json', 'first-seen.yml', 'icon-state.json', 'publisher-state.json', 'repo-state.json', 'snapshots/manifest.lock'])
     expect(registryWrites(classifyTs)).toEqual(['categories.yml', 'markets.yml'])
   })
 

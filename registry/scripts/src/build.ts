@@ -1,11 +1,11 @@
 /**
  * Catalog build entry point.
  *
- * Network access is confined to `npm-client.ts`, `llm-client.ts`, and
- * `github-stars.ts` (the only modules that reach the network). Filesystem
- * access lives in this module (writing the build artifacts), in `config.ts`
- * (reading the registry inputs), and in `emit-schema.ts` (writing the
- * generated schema).
+ * Network access is confined to `npm-client.ts`, `npm-feed.ts`,
+ * `github-client.ts`, `icon-fetch.ts`, `llm-client.ts`, and `github-stars.ts`
+ * (the only modules that reach the network). Filesystem access lives in this
+ * module (writing the build artifacts), in `config.ts` (reading the registry
+ * inputs), and in `emit-schema.ts` (writing the generated schema).
  * The pure core — `gate.ts`, `tier.ts`, `emit.ts`, `pipeline.ts`, `schema.ts`,
  * and `types.ts` — touches neither, so a failure here is an I/O failure
  * rather than a policy one.
@@ -18,14 +18,18 @@ import { loadRegistryConfig, serializeFirstSeen } from './config.ts'
 import { describeDepartures, parseDepartureSummary, type DepartureSummary } from './departures.ts'
 import { applyConfirmations, bootstrapFeedState, describeFeedCoverage, describeFeedRun, feedCarriersByKeyword, parseFeedCoverage, parseFeedRunReport, parseFeedState, serializeFeedState, type FeedInput, type FeedRead, type FeedState } from './feed-state.ts'
 import { fetchStarCounts, fetchArchivedFlags } from './github-stars.ts'
-import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, describeSearchPhantoms, harvestRepos, parseHarvestBudget } from './github-client.ts'
+import { GITHUB_REQUEST_TIMEOUT_MS, HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, TARBALL_REQUEST_TIMEOUT_MS, describeSearchPhantoms, harvestRepos, parseHarvestBudget } from './github-client.ts'
 import { applyArchivedFlags, applyForkFlags, layerArchivedFlags, layerForkFlags, parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
+import { ICON_FETCH_BUDGET_DEFAULT, ICON_FETCH_CONCURRENCY, ICON_FETCH_TIME_BUDGET_MS_DEFAULT, harvestIcons, readPublishedIcons } from './icon-fetch.ts'
+import { foldIconResults, iconSubjects, planIconWork, renderIconSection } from './icon-plan.ts'
+import { parseIconState, serializeIconState, type IconKey, type IconOutcome } from './icon-state.ts'
+import { serializeIcons } from './icons-assemble.ts'
 import { accountForDepartures, fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
 import { confirmCarriers, harvestFeed } from './npm-feed.ts'
 import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, mergePublishers, parsePublisherState, retainPinned, serializePublisherState } from './publisher-state.ts'
-import { pagesArtifactNames } from './pages-artifacts.ts'
-import { describeRereadStopped, repoPeersEmitted, runPipeline, selectEntries, withholdRepoPeers } from './pipeline.ts'
+import { pagesArtifactNames, pagesPointerOf } from './pages-artifacts.ts'
+import { assertIconsInFile, describeLostIconsFile, describeRereadStopped, parseBudgetVariable, repoPeersEmitted, runPipeline, selectEntries, withholdRepoPeers } from './pipeline.ts'
 import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
 import { assembleStarsForEntries, serializeStars } from './stars-assemble.ts'
 import type { Candidate, Rejection, RepoCandidate } from './types.ts'
@@ -82,6 +86,36 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   const ghToken = process.env.GITHUB_TOKEN ?? ''
 
   const config = loadRegistryConfig(REGISTRY_DIR)
+
+  // The icon step's two inputs that a typo or a hand edit can break, read here
+  // with the rest of the environment and the committed state and spent after
+  // the stars step. The harvest in between takes the better part of two hours,
+  // and a mistyped budget or a malformed record has to stop the build in its
+  // first second, not at the step that needs it.
+  // The record is what became of every icon key (design
+  // 2026-10-23-shop-plugin-icons §5.1). Only a file that is not there is a first
+  // run, an empty record; any other failure to read it, or any malformation in
+  // it, throws. Read as empty it would send every icon in the catalog to be
+  // fetched again, the refused ones included, and a refusal is meant to be asked
+  // once.
+  const iconStatePath = join(REGISTRY_DIR, 'icon-state.json')
+  let iconStateText: string | null = null
+  try {
+    iconStateText = readFileSync(iconStatePath, 'utf8')
+  } catch (error) {
+    // Swallows ENOENT alone: the first run, before any build has written the
+    // record. Whatever else readFileSync throws (a permission, a directory in
+    // its place) is rethrown, because it is not "no record".
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  const iconState: Map<IconKey, IconOutcome> = iconStateText === null ? new Map() : parseIconState(iconStateText)
+  // The budgets are defaults unless the variable is set, and a variable that is
+  // set is held to what `parseBudgetVariable` accepts: a NaN deadline would be
+  // no deadline, and a count that reads as zero would fetch nothing, each
+  // reported as a healthy run.
+  const iconFetchBudget = parseBudgetVariable('ICON_FETCH_BUDGET', process.env.ICON_FETCH_BUDGET, ICON_FETCH_BUDGET_DEFAULT)
+  const iconFetchTimeBudgetMs = parseBudgetVariable('ICON_FETCH_TIME_BUDGET_MS', process.env.ICON_FETCH_TIME_BUDGET_MS, ICON_FETCH_TIME_BUDGET_MS_DEFAULT)
+
   let candidates: Candidate[]
   let rejections: Rejection[]
   /** Tolerated npm search shortfalls, one entry per keyword, for the
@@ -510,6 +544,79 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     }
   }
 
+  // Icons (design 2026-10-23-shop-plugin-icons §4 to §6): the icon each listed
+  // entry's author declared, read once from the artifact the entry installs and
+  // carried in a sidecar of its own, beside the stars. An icon never decides what
+  // is listed (decision 6), so nothing below can delist an entry or fail the
+  // build over an author's file: an icon that is missing, refused or unanswered
+  // is an entry published with the default artwork, and the report says why.
+  // What does stop the build is a malformed record or file of ours, which is a
+  // defect and not an author's, and the two tripwires below.
+  const iconSubjectList = iconSubjects(selectedEntries, candidates, repoCandidates)
+  // Yesterday's icons file, for the bytes of every icon the record already holds.
+  // Null when it cannot be read, which costs fetches and nothing else.
+  const publishedIcons = await readPublishedIcons(fetch)
+  // The plan and the fold are handed the same record, file and withheld rows: a
+  // plan made from one set and folded against another would reuse an icon the
+  // fold then has no bytes for.
+  const iconPlan = planIconWork(iconSubjectList, iconState, publishedIcons, config.withheldIcons, iconFetchBudget)
+  process.stderr.write(`icons: ${iconPlan.reuse.length} reused, ${iconPlan.fetch.length} to fetch, ${iconPlan.deferred.length} past the budget\n`)
+  const iconResults = await harvestIcons(
+    iconPlan,
+    {
+      fetchImpl: fetch,
+      sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+      // The job's GitHub token goes to raw.githubusercontent.com and nowhere
+      // else (see IconTransport).
+      token: ghToken,
+      timeoutMs: GITHUB_REQUEST_TIMEOUT_MS,
+      tarballTimeoutMs: TARBALL_REQUEST_TIMEOUT_MS,
+    },
+    { concurrency: ICON_FETCH_CONCURRENCY, deadlineMs: iconFetchTimeBudgetMs },
+  )
+  // The plan's fetches the time budget ran out before starting have no result
+  // at all, and the fold reads them as "not yet read" like the rest. Said here,
+  // because the report's count cannot tell them from a fetch that failed.
+  const iconsNotStarted = iconPlan.fetch.length - iconResults.size
+  if (iconsNotStarted > 0) {
+    process.stderr.write(`icons: ${iconsNotStarted} of ${iconPlan.fetch.length} planned fetches were not started: the time budget of ${iconFetchTimeBudgetMs} ms ran out\n`)
+  }
+  // A fetch that said nothing about its artifact is recorded nowhere, and its
+  // reason is for the log alone (IconFetchResult): ten of them, in plan order so
+  // that the sample does not depend on which worker finished first, then the
+  // count. The same cap the declarations re-read puts on its failure lines.
+  const ICON_REASON_LINES = 10
+  const unanswered = iconPlan.fetch.flatMap(work => {
+    const result = iconResults.get(work.key)
+    return result?.kind === 'not-yet-read' ? [{ key: work.key, reason: result.reason }] : []
+  })
+  for (const { key, reason } of unanswered.slice(0, ICON_REASON_LINES)) {
+    // The key holds the author's path, quoted; the reason is flattened to one line.
+    process.stderr.write(`icons: not yet read ${JSON.stringify(key)}: ${reason.replace(/\s+/g, ' ')}\n`)
+  }
+  if (unanswered.length > ICON_REASON_LINES) {
+    process.stderr.write(`icons: ${unanswered.length - ICON_REASON_LINES} more not yet read\n`)
+  }
+  const iconFold = foldIconResults(iconSubjectList, iconPlan, iconResults, iconState, publishedIcons, config.withheldIcons)
+  // Before anything this build writes or publishes about icons: a row the next
+  // build could not read back throws here, with the committed record untouched
+  // and no sidecar written. The text is written below, after the pipeline, with
+  // the other state files.
+  const iconStateOut = serializeIconState(iconFold.nextState)
+  // The fold builds the file and the map of entries to icons together and
+  // guarantees every icon an entry names is in the file. A dangling one would
+  // pass every check from here on and draw the default artwork, which is how a
+  // plugin with no icon looks, so it is asserted rather than trusted.
+  assertIconsInFile(iconFold.byIdentity, iconFold.file)
+  // No icon at all is no sidecar and no pointer, rather than an empty file
+  // every shop would fetch and verify for nothing.
+  const iconsFile = iconFold.file === null ? null : serializeIcons(iconFold.file)
+  if (iconsFile !== null) writeFileSync(join(OUT_DIR, iconsFile.fileName), iconsFile.json)
+  const iconsFileBytes = iconsFile === null ? null : Buffer.byteLength(iconsFile.json)
+  const iconsLostNote = describeLostIconsFile(iconState, publishedIcons, iconPlan)
+  process.stderr.write(`icons: ${Object.entries(iconFold.counts).map(([name, count]) => `${name} ${count}`).join(', ')}; icons file: ${iconsFile === null ? 'none' : `${iconsFile.fileName}, ${iconsFileBytes} bytes`}\n`)
+  if (iconsLostNote !== null) process.stderr.write(`icons: ${iconsLostNote}\n`)
+
   // The clock, read exactly once, and passed down. First-seen bookkeeping moved
   // into the pipeline: which candidates are ENTRIES is a policy question the
   // gate answers, and stamping every harvested candidate here dated packages
@@ -528,7 +635,10 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   const schemaVersion = v5Flag
     ? CATALOG_SCHEMA_VERSION
     : (probeSubpackages ? SUBPACKAGE_SCHEMA_VERSION : SCHEMA_VERSION)
-  const artifacts = runPipeline(candidates, repoCandidates, config, builtAt, rejections, starsInfo, schemaVersion)
+  const artifacts = runPipeline(
+    candidates, repoCandidates, config, builtAt, rejections, starsInfo, schemaVersion,
+    iconsFile === null ? null : { pointer: { url: iconsFile.fileName, sha256: iconsFile.sha256 }, byIdentity: iconFold.byIdentity },
+  )
 
   writeFileSync(join(OUT_DIR, artifacts.pluginsFileName), artifacts.pluginsJson)
   writeFileSync(join(OUT_DIR, 'index.json'), artifacts.indexJson)
@@ -598,6 +708,10 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   for (const part of axisParts) process.stderr.write(`npm: ${part}\n`)
   writeFileSync(publisherStatePath, serializePublisherState(nextPublishers))
   if (nextFeed !== undefined) writeFileSync(feedStatePath, serializeFeedState(nextFeed))
+  // The icon record, serialised before the pipeline ran (see above) and written
+  // here with the other state files: after the pipeline, so that a build which
+  // throws on its own artifacts leaves no record of icons it did not publish.
+  writeFileSync(iconStatePath, iconStateOut)
   for (const part of feedParts) process.stderr.write(`npm: ${part}\n`)
   process.stderr.write(
     `npm: publisher vocabulary ${priorPublishers.publishers.length} -> ${nextPublishers.publishers.length}\n`)
@@ -620,7 +734,12 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   for (const part of departureParts) process.stderr.write(`npm: ${part}\n`)
   const [departureHead, ...departureRest] = departureParts
   const departureLine = departureHead === undefined ? '' : `\n${departureHead}\n${departureRest.map(part => `- ${part}\n`).join('')}`
-  writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${departureLine}${axisLine}${feedLine}${repoLine}${archivedLine}${forkedLine}`)
+  // The icon section closes the report, as the last block, so that it can stand
+  // on its own heading: it starts at the heading with no blank line before it
+  // and ends in one newline, which is what keeps `report.md` ending in exactly
+  // one. The note about a lost icons file belongs to it, and follows it.
+  const iconSection = `${renderIconSection(iconFold, iconsFileBytes)}${iconsLostNote === null ? '' : `\n${iconsLostNote}\n`}`
+  writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${departureLine}${axisLine}${feedLine}${repoLine}${archivedLine}${forkedLine}\n${iconSection}`)
 
   // Pages gets a directory staged from scratch, holding exactly the artifacts
   // the spec lists. `dist/v1` is NOT cleaned and is not what deploys: the
@@ -630,14 +749,18 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   const PAGES_DIR = 'dist/pages'
   rmSync(PAGES_DIR, { recursive: true, force: true })
   mkdirSync(join(PAGES_DIR, 'v1'), { recursive: true })
+  // The pointer is read back from the index this build just wrote, not
+  // assembled from the pieces it was built from: what Pages stages is then
+  // exactly what the index names, and a sidecar added to the index reaches
+  // Pages with no second edit here (pagesPointerOf).
   // The classification report comes from `classify.ts`, which the daily
   // workflow runs before this and a local build does not run at all. Asking
   // the disk is the only honest answer: a name in the returned list that is
   // not there is a `copyFileSync` that throws and takes the build with it.
-  const pagesFiles = pagesArtifactNames({
-    plugins: { url: artifacts.pluginsFileName },
-    ...(starsInfo === null ? {} : { stars: { url: starsInfo.url } }),
-  }, { classificationReport: existsSync(join(OUT_DIR, 'classification-report.md')) })
+  const pagesFiles = pagesArtifactNames(
+    pagesPointerOf(artifacts.indexJson),
+    { classificationReport: existsSync(join(OUT_DIR, 'classification-report.md')) },
+  )
   for (const name of pagesFiles) copyFileSync(join(OUT_DIR, name), join(PAGES_DIR, 'v1', name))
   process.stderr.write(`staged ${pagesFiles.length} file(s) for Pages: ${pagesFiles.join(', ')}\n`)
 

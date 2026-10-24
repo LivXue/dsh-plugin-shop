@@ -1,11 +1,15 @@
 # Plugin icons on the shop page — design
 
-Status: **proposed** (2026-10-23). LivXue asked for it on 2026-10-22 and took
-each decision in §2 on 2026-10-23, the look from mockups shot on a real dsh
-(§2.4). Nothing is built. It touches four places: the catalog build (§4, §5),
-the catalog format (§6), the shop's host (§7) and the shop page (§8). The
-format change is one the host reads, so the shop ships it through `beta` first
-(§12). English only, per convention.
+Status: **specified (2026-10-23); the catalog half is built (2026-10-24), the
+shop half is not.** LivXue asked for it on 2026-10-22 and took each decision in
+§2 on 2026-10-23, the look from mockups shot on a real dsh (§2.4). It touches
+four places: the catalog build (§4, §5), the catalog format (§6), the shop's
+host (§7) and the shop page (§8). The first two, with the review file (§9) and
+the report (§10), are built and tested against fixtures; no run has yet fetched
+an icon from the live registry, so the budgets in `icon-fetch.ts` are inferred
+until one does. The host (§7), the page (§8) and the author docs (§11) are not
+built. The format change is one the host reads, so the shop ships it through
+`beta` first (§12). English only, per convention.
 
 Every harness fact below that names no other source was read in the installed
 bundles of dsh 0.1.5-rc.3, 0.1.7-rc.2, 0.2.0-rc.2 and 0.2.1-rc.2
@@ -278,15 +282,21 @@ the whole registry source.
 A per-run budget bounds the new fetches, in the idiom of
 `REPO_BACKFILL_BUDGET`: a count (`ICON_FETCH_BUDGET_DEFAULT`) and a wall-clock
 budget, their values measured on the first full run and kept with their
-arithmetic in the constant's comment, never restated elsewhere. A key past
-the budget is "not yet read": the entry publishes without an icon this build
-and is fetched on a later one, unless the sha256 its record names already has
-its bytes in hand this build, from yesterday's file or from another key's
-fetch. A sha256 names its bytes whichever key they were read under, and a key
-names one immutable artifact (§5.1), so those bytes are that key's own icon
-too. A transport failure is "not yet read" too, never a refusal: a refusal is
-the author's to fix, and a timeout is not (CLAUDE.md, the converse of
-`no-manifest`); the same exception holds for it.
+arithmetic in the constant's comment, never restated elsewhere. Each default
+gives way to the environment variable of the same name without `_DEFAULT`,
+`ICON_FETCH_BUDGET` and `ICON_FETCH_TIME_BUDGET_MS`, read as
+`REPO_BACKFILL_BUDGET` is: a value that is not a non-negative safe integer stops
+the build when it starts, naming the variable, because a deadline that reads as
+NaN is no deadline and a count that reads as zero fetches nothing, each
+reported as a healthy run. A key past the budget is "not yet read": the entry
+publishes without an icon this build and is fetched on a later one, unless the
+sha256 its record names already has its bytes in hand this build, from
+yesterday's file or from another key's fetch. A sha256 names its bytes
+whichever key they were read under, and a key names one immutable artifact
+(§5.1), so those bytes are that key's own icon too. A transport failure is
+"not yet read" too, never a refusal: a refusal is the author's to fix, and a
+timeout is not (CLAUDE.md, the converse of `no-manifest`); the same exception
+holds for it.
 
 ### 5.4 What a fetched icon must be
 
@@ -479,7 +489,10 @@ A new review file, `registry/withheld-icons.yml`, empty, in the shape of
 same `npmNameOrRepo` grammar), a repeated identity throws, as in every review
 file. A withheld entry is published without an icon, so it draws the default,
 and the report names it with its reason. It never touches the listing; that
-stays `denied.yml`'s job.
+stays `denied.yml`'s job. A row that names no listed entry is reported with the
+other review files' rows that matched nothing, because a mistyped name loads,
+fires on nothing and leaves the icon published; a repository is keyed by its
+`owner/repo`, so a row that names its bundle name is reported too.
 
 ## 10. The build report
 
@@ -496,7 +509,10 @@ package", "icon ./icon.svg is not in the published package", and, for a
 package that matched its digest and cannot be opened, "the published package
 x@1.0.0 could not be read by the catalog build as a gzipped tar archive with
 one top-level directory, so its icon was not read." (a release asset says "the
-release asset" for "the published package x@1.0.0"). These rows are
+release asset" for "the published package x@1.0.0"). When the published icons
+file cannot be read while the record holds published icons (§5.1), the section
+ends with one line saying so, how many icons were fetched again within the
+budget and how many the budget turned away. These rows are
 not rejections: the entry is
 listed, the new code space is the icon section's own, and none of it touches
 the rejection codes the published report already carries.

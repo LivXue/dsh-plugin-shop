@@ -2,9 +2,13 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { describeRereadStopped, repoPeersEmitted, runPipeline, selectEntries, unmatchedRegistryNotes, withholdRepoPeers } from '../src/pipeline.ts'
+import { assertIconsInFile, describeLostIconsFile, describeRereadStopped, parseBudgetVariable, repoPeersEmitted, runPipeline, selectEntries, unmatchedRegistryNotes, withholdRepoPeers } from '../src/pipeline.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import { lockNpmNames, SCHEMA_VERSION, type IconsPointer } from '../src/emit.ts'
+import { sha256Hex } from '../src/icon-bytes.ts'
+import { planIconWork, type IconSubject } from '../src/icon-plan.ts'
+import { npmIconKey, type IconKey, type IconOutcome } from '../src/icon-state.ts'
+import type { IconsFile } from '../src/icons-assemble.ts'
 import type { Candidate, Rejection, RepoCandidate } from '../src/types.ts'
 
 const candidates = JSON.parse(
@@ -1030,6 +1034,10 @@ describe('unmatchedRegistryNotes', () => {
     catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
     description: 'x',
   }
+  // The two candidates as the gate lists them: what a withheld icon row has to
+  // name. `repo` keeps the case GitHub spells it in.
+  const listedNpm = { source: 'npm', name: 'dsh-hello-plugin' } as const
+  const listedRepo = { source: 'github', name: 'dsh-repo-plugin', repo: 'Someone/dsh-repo-plugin' } as const
 
   it('says nothing when every row matched something', () => {
     const matched = parseRegistryConfig({
@@ -1040,7 +1048,7 @@ describe('unmatchedRegistryNotes', () => {
       categories: '[]',
       firstSeen: '[]',
     })
-    expect(unmatchedRegistryNotes([npmCandidate], [repoCandidate], matched)).toEqual([])
+    expect(unmatchedRegistryNotes([npmCandidate], [repoCandidate], matched, [])).toEqual([])
   })
 
   it('names every row that matched nothing, with its file, sorted', () => {
@@ -1056,7 +1064,7 @@ describe('unmatchedRegistryNotes', () => {
       categories: '[]',
       firstSeen: '[]',
     })
-    expect(unmatchedRegistryNotes([npmCandidate], [repoCandidate], stale)).toEqual([
+    expect(unmatchedRegistryNotes([npmCandidate], [repoCandidate], stale, [])).toEqual([
       'Registry rows that matched no harvested candidate this run:',
       '- allowed-similar.yml: dsh-gone',
       '- denied.yml: DSH-Evil',
@@ -1077,7 +1085,7 @@ describe('unmatchedRegistryNotes', () => {
       categories: '[]',
       firstSeen: '[]',
     })
-    expect(unmatchedRegistryNotes([], [repoCandidate], reviewedAndCleared)).toEqual([])
+    expect(unmatchedRegistryNotes([], [repoCandidate], reviewedAndCleared, [])).toEqual([])
 
     const deniedByBundleName = parseRegistryConfig({
       verified: '[]',
@@ -1087,7 +1095,73 @@ describe('unmatchedRegistryNotes', () => {
       categories: '[]',
       firstSeen: '[]',
     })
-    expect(unmatchedRegistryNotes([], [repoCandidate], deniedByBundleName)).toEqual([])
+    expect(unmatchedRegistryNotes([], [repoCandidate], deniedByBundleName, [])).toEqual([])
+  })
+
+  it('says nothing about a withheld icon row that names a listed entry, in whatever case a repository is written', () => {
+    // The row is looked up the way the icon planner looks it up, by the key
+    // `firstSeenKey` gives the entry: an npm name as written, a repository
+    // lower-cased. `SOMEONE/...` below is the entry's `Someone/...` in
+    // another case, and loads as one project.
+    const withheld = parseRegistryConfig({
+      verified: '[]',
+      denied: '[]',
+      allowedSimilar: '[]',
+      withheldIcons: '- name: dsh-hello-plugin\n  reason: not ours to show\n- name: SOMEONE/dsh-repo-plugin\n  reason: not ours to show\n',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    expect(unmatchedRegistryNotes([npmCandidate], [repoCandidate], withheld, [listedNpm, listedRepo])).toEqual([])
+  })
+
+  it('names a withheld icon row that matches no listed entry, after the files it sorts behind', () => {
+    // The hazard is the one the other three files have: a well-formed but
+    // mistyped name loads, matches nothing, and the icon it was written to
+    // hold back stays published. `dsh-hello-plugn` is `dsh-hello-plugin` with
+    // a letter dropped; `zeta-gone` and `Alpha/gone` have left; and
+    // `dsh-repo-plugin` is the BUNDLE name of the listed repository, which a
+    // row cannot use: a repository is keyed by its owner/slug.
+    const stale = parseRegistryConfig({
+      verified: '- name: dsh-unpublished\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
+      denied: '[]',
+      allowedSimilar: '[]',
+      withheldIcons: [
+        '- name: zeta-gone\n  reason: r\n',
+        '- name: dsh-hello-plugn\n  reason: r\n',
+        '- name: Alpha/gone\n  reason: r\n',
+        '- name: dsh-repo-plugin\n  reason: r\n',
+      ].join(''),
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    expect(unmatchedRegistryNotes([npmCandidate], [repoCandidate], stale, [listedNpm, listedRepo])).toEqual([
+      'Registry rows that matched no harvested candidate this run:',
+      '- verified.yml: dsh-unpublished',
+      '- withheld-icons.yml: alpha/gone',
+      '- withheld-icons.yml: dsh-hello-plugn',
+      '- withheld-icons.yml: dsh-repo-plugin',
+      '- withheld-icons.yml: zeta-gone',
+    ])
+  })
+
+  it('does not take a harvested candidate for a listed entry', () => {
+    // An icon can be withheld only from an entry the catalog lists. A name
+    // the harvest saw and the gate turned away (rejected, denied) lists
+    // nothing, so a row naming it withholds nothing today. It is reported all
+    // the same, under the heading the other files' rows use, rather than left
+    // to read as protection.
+    const turnedAway = parseRegistryConfig({
+      verified: '[]',
+      denied: '[]',
+      allowedSimilar: '[]',
+      withheldIcons: '- name: dsh-hello-plugin\n  reason: r\n',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    expect(unmatchedRegistryNotes([npmCandidate], [repoCandidate], turnedAway, [listedRepo])).toEqual([
+      'Registry rows that matched no harvested candidate this run:',
+      '- withheld-icons.yml: dsh-hello-plugin',
+    ])
   })
 
   it('rides the build report', () => {
@@ -1102,6 +1176,23 @@ describe('unmatchedRegistryNotes', () => {
     const { report } = runPipeline(candidates, [], stale, BUILT_AT)
     expect(report).toContain('Registry rows that matched no harvested candidate this run:')
     expect(report).toContain('- denied.yml: dsh-never-seen')
+  })
+
+  it('rides the build report for a withheld icon row, judged against what the pipeline lists', () => {
+    // `dsh-hello-plugin` is listed by this fixture, so its row fires and is
+    // not reported; `dsh-never-listed` is nobody's.
+    const withheld = parseRegistryConfig({
+      verified: '[]',
+      denied: '[]',
+      allowedSimilar: '[]',
+      withheldIcons: '- name: dsh-hello-plugin\n  reason: r\n- name: dsh-never-listed\n  reason: r\n',
+      categories: '[]',
+      firstSeen: '- name: dsh-hello-plugin\n  added: 2026-08-11\n- name: dsh-derived-plugin\n  added: 2026-08-12\n- name: dsh-fs-tool\n  added: 2026-08-10\n',
+    })
+    const { report } = runPipeline(candidates, [], withheld, BUILT_AT)
+    expect(report).toContain('Registry rows that matched no harvested candidate this run:')
+    expect(report).toContain('- withheld-icons.yml: dsh-never-listed')
+    expect(report).not.toContain('- withheld-icons.yml: dsh-hello-plugin')
   })
 })
 
@@ -1282,5 +1373,155 @@ describe('describeRereadStopped (github declarations re-read)', () => {
 
   it('is empty when the phase did not stop early', () => {
     expect(describeRereadStopped(null)).toBe('')
+  })
+})
+
+describe('parseBudgetVariable (the icon step\'s two budgets)', () => {
+  // The same contract as parseHarvestBudget, for a variable of any name. The
+  // two budgets fail open in the same way the backfill's did: planIconWork
+  // slices its fetches at the count, so NaN fetches nothing and a negative
+  // count reads from the end; and harvestIcons stops starting fetches once
+  // `elapsed >= deadline`, which is never true of NaN, so a NaN deadline is
+  // no deadline at all.
+  it('reads a plain integer, and falls back when the variable is unset', () => {
+    expect(parseBudgetVariable('ICON_FETCH_BUDGET', '500', 1500)).toBe(500)
+    expect(parseBudgetVariable('ICON_FETCH_BUDGET', undefined, 1500)).toBe(1500)
+  })
+
+  it('accepts zero, a deliberate "fetch nothing" run', () => {
+    expect(parseBudgetVariable('ICON_FETCH_BUDGET', '0', 1500)).toBe(0)
+    expect(parseBudgetVariable('ICON_FETCH_TIME_BUDGET_MS', '0', 900_000)).toBe(0)
+  })
+
+  it('accepts the largest safe integer and refuses the next', () => {
+    expect(parseBudgetVariable('ICON_FETCH_BUDGET', String(Number.MAX_SAFE_INTEGER), 1500)).toBe(Number.MAX_SAFE_INTEGER)
+    // 2**53 is an integer, but past it a number no longer reads back as the
+    // one written: 2**53 + 1 is 2**53, so a budget this large is not the
+    // budget its operator typed.
+    expect(() => parseBudgetVariable('ICON_FETCH_BUDGET', String(Number.MAX_SAFE_INTEGER + 1), 1500)).toThrow(/ICON_FETCH_BUDGET/)
+  })
+
+  it('throws on every value that would fail open, naming the variable it was asked about', () => {
+    for (const raw of ['abc', '', ' ', '-1', '1.5', 'Infinity', 'NaN', '1e400']) {
+      for (const name of ['ICON_FETCH_BUDGET', 'ICON_FETCH_TIME_BUDGET_MS']) {
+        expect(() => parseBudgetVariable(name, raw, 1500), `${name}=${JSON.stringify(raw)} must throw`)
+          .toThrow(new RegExp(`^${name} must be`))
+      }
+    }
+  })
+
+  it('quotes the value back, because the operator cannot see it in a log line that says nothing was fetched', () => {
+    expect(() => parseBudgetVariable('ICON_FETCH_TIME_BUDGET_MS', '15 minutes', 900_000)).toThrow(/got "15 minutes"/)
+  })
+})
+
+describe('describeLostIconsFile', () => {
+  const KEY = (name: string): IconKey => npmIconKey(name, '1.0.0', 'icon.svg')
+
+  /** What the record holds for an icon that was published: the digest of a label, which no other label shares. */
+  const publishedRow = (label: string): IconOutcome => ({
+    outcome: 'published', sha256: sha256Hex(new TextEncoder().encode(label)), mediaType: 'image/svg+xml', bytes: label.length,
+  })
+
+  /** The subject of an npm entry that declares `icon.svg`, with what the planner needs to fetch it. */
+  function subject(name: string): IconSubject {
+    return {
+      identity: `npm:${name}`,
+      name,
+      withheldKey: name,
+      read: { kind: 'declared', declaration: { source: 'icon', path: 'icon.svg', mediaType: 'image/svg+xml' } },
+      key: KEY(name),
+      target: {
+        kind: 'npm', name, version: '1.0.0', tarball: `https://registry.npmjs.org/${name}/-/${name}-1.0.0.tgz`,
+        integrity: 'sha512-AAAA', path: 'icon.svg',
+      },
+    }
+  }
+
+  // a, b and c are recorded as published; d is a key the record has never met.
+  const subjects = ['a', 'b', 'c', 'd'].map(subject)
+  const record = new Map<IconKey, IconOutcome>(['a', 'b', 'c'].map(name => [KEY(name), publishedRow(name)]))
+  const emptyFile: IconsFile = { icons: {}, sources: {} }
+  const plan = (published: IconsFile | null, budget: number) => planIconWork(subjects, record, published, new Map(), budget)
+
+  it('says how many recorded icons were fetched again within the budget, and how many it turned away', () => {
+    // With the file gone every recorded key is fetched again, in key order, so
+    // a and b fit the budget of two and c does not. d was never recorded: its
+    // fetch is a first read, not a refetch, and it is turned away without
+    // being counted either way.
+    expect(describeLostIconsFile(record, null, plan(null, 2))).toBe(
+      'The published icons file could not be read, so icons recorded as published were fetched again: 2 within this build\'s budget, 1 turned away by it.',
+    )
+  })
+
+  it('does not count the fetch of a key the record has never met as a refetch', () => {
+    expect(describeLostIconsFile(record, null, plan(null, 4))).toBe(
+      'The published icons file could not be read, so icons recorded as published were fetched again: 3 within this build\'s budget, 0 turned away by it.',
+    )
+  })
+
+  it('still says so when the record names icons that no listing wants any more', () => {
+    // Nothing is left to fetch, and the file was still lost: the line is the
+    // only trace of it in the report.
+    expect(describeLostIconsFile(record, null, planIconWork([], record, null, new Map(), 10))).toBe(
+      'The published icons file could not be read, so icons recorded as published were fetched again: 0 within this build\'s budget, 0 turned away by it.',
+    )
+  })
+
+  it('says nothing when the published file was read', () => {
+    expect(describeLostIconsFile(record, emptyFile, plan(emptyFile, 4))).toBeNull()
+  })
+
+  it('says nothing on a first run, which has no record to lose', () => {
+    const none = new Map<IconKey, IconOutcome>()
+    expect(describeLostIconsFile(none, null, planIconWork(subjects, none, null, new Map(), 4))).toBeNull()
+  })
+
+  it('says nothing when the record holds no published row, whatever became of the file', () => {
+    // A refusal and a package past the caps are asked once and never fetched
+    // again, so a lost file costs them nothing.
+    const sad = new Map<IconKey, IconOutcome>([
+      [KEY('a'), { outcome: 'refused', detail: 'icon ./icon.svg is not in the published package' }],
+      [KEY('b'), { outcome: 'not-read', detail: 'the published package b@1.0.0 is too large' }],
+    ])
+    expect(describeLostIconsFile(sad, null, planIconWork(subjects, sad, null, new Map(), 4))).toBeNull()
+  })
+})
+
+describe('assertIconsInFile', () => {
+  const SHA_A = sha256Hex(new TextEncoder().encode('a'))
+  const SHA_B = sha256Hex(new TextEncoder().encode('b'))
+  const file: IconsFile = {
+    icons: { [SHA_A]: 'data:image/svg+xml;base64,AAAA' },
+    sources: { 'npm:a@1.0.0:icon.svg': SHA_A },
+  }
+
+  it('passes when every entry names an icon the file holds, one icon for many entries included', () => {
+    expect(() => assertIconsInFile(new Map([['npm:a', SHA_A], ['npm:fork-of-a', SHA_A]]), file)).not.toThrow()
+  })
+
+  it('passes when there are no icons at all, and no file', () => {
+    expect(() => assertIconsInFile(new Map(), null)).not.toThrow()
+    expect(() => assertIconsInFile(new Map(), file)).not.toThrow()
+  })
+
+  it('throws, naming the entry, on a well-formed sha256 the file does not hold', () => {
+    // A dangling key passes every grammar check downstream and draws the
+    // default artwork, which looks exactly like a plugin with no icon.
+    expect(() => assertIconsInFile(new Map([['npm:a', SHA_A], ['npm:b', SHA_B]]), file))
+      .toThrow(/does not hold: 1, the first being "npm:b"/)
+  })
+
+  it('throws when entries name icons and there is no file to hold them', () => {
+    expect(() => assertIconsInFile(new Map([['npm:a', SHA_A]]), null)).toThrow(/"npm:a"/)
+  })
+
+  it('does not take a name on the prototype chain for a held icon', () => {
+    expect(() => assertIconsInFile(new Map([['npm:a', 'toString']]), file)).toThrow(/"npm:a"/)
+  })
+
+  it('counts every dangling entry and names the first in code-unit order, whatever order they came in', () => {
+    const dangling = new Map([['npm:z', SHA_B], ['npm:m', SHA_B], ['npm:a', SHA_A]])
+    expect(() => assertIconsInFile(dangling, file)).toThrow(/does not hold: 2, the first being "npm:m"/)
   })
 })

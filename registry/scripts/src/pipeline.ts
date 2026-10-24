@@ -5,6 +5,9 @@ import { emit, SCHEMA_VERSION, type Artifacts, type IconsPointer, type StarsPoin
 import { compareStrings, firstSeenKey, installIdentity } from './identity.ts'
 import { acceptedNpmRepositories, npmShadowOf } from './npm-shadow.ts'
 import type { RegistryConfig } from './config.ts'
+import type { IconPlan } from './icon-plan.ts'
+import type { IconKey, IconOutcome } from './icon-state.ts'
+import type { IconsFile } from './icons-assemble.ts'
 import type { Candidate, Entry, Rejection, RepoCandidate } from './types.ts'
 
 /** Every artifact of one build, plus the rows to write back. */
@@ -115,6 +118,101 @@ export function describeRereadStopped(stopped: 'time-budget' | 'failure-breaker'
 }
 
 /**
+ * Parse a per-run budget from its environment string, for the variable `name`:
+ * the icon step's `ICON_FETCH_BUDGET` (keys to fetch) and
+ * `ICON_FETCH_TIME_BUDGET_MS` (how long fetches may keep starting).
+ *
+ * The same contract as `parseHarvestBudget` (github-client.ts), which names the
+ * one variable it was written for in its message, and `Number()` fails open here
+ * in the same ways. `''` and `' '` read as `0`. `Number('abc')` is `NaN`, which
+ * `planIconWork` would slice its fetches at and `harvestIcons` would compare an
+ * elapsed time with: `elapsed >= NaN` is never true, so a NaN deadline is no
+ * deadline at all. A negative count counts from the end of a list. And a value
+ * past 2**53 is an integer that no longer reads back as the number written.
+ * `0` is deliberately not one of them: it is a real instruction, fetch nothing,
+ * which is why the check cannot simply refuse a falsy budget.
+ * @param name - the variable, for the message.
+ * @param raw - the environment value, or undefined when unset.
+ * @param fallback - the budget to use when the variable is unset.
+ * @throws when the value is present but not a non-negative safe integer, naming
+ *   the variable and quoting the value back: the operator cannot see it in a log
+ *   line that says nothing was fetched.
+ */
+export function parseBudgetVariable(name: string, raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback
+  const budget = Number(raw)
+  if (raw.trim() === '' || !Number.isSafeInteger(budget) || budget < 0) {
+    throw new Error(`${name} must be a non-negative safe integer; got ${JSON.stringify(raw)}`)
+  }
+  return budget
+}
+
+/**
+ * The report's note for a lost icons file, or `null` when nothing was lost
+ * (design 2026-10-23-shop-plugin-icons §5.1).
+ *
+ * The icon step reuses an icon from the icons file the last build published, and
+ * fetches again, from its recorded source, one whose bytes that file no longer
+ * holds. When the file cannot be read at all (an outage, a deploy that failed
+ * after the snapshot commit, a host that served something else) every icon the
+ * record holds published takes that road at once, under the same per-run budget
+ * as a first read, and the catalog quietly loses the icons the budget did not
+ * reach. The section's counts say how many; this says why.
+ *
+ * Said only when the file is missing AND the record holds a published row: a
+ * first run has no record, and a record of refusals loses nothing with the file.
+ * A fetch counts as a refetch when the plan expects a sha256 of it, which it
+ * does exactly for a key the record holds published. A key the record has never
+ * met is a first read, and the budget turning it away is the section's `not yet
+ * read`, not a loss.
+ * @param state - the committed record, `icon-state.json`.
+ * @param published - what `readPublishedIcons` returned.
+ * @param plan - from `planIconWork` on the same record and file.
+ */
+export function describeLostIconsFile(
+  state: ReadonlyMap<IconKey, IconOutcome>,
+  published: IconsFile | null,
+  plan: Pick<IconPlan, 'fetch' | 'deferred'>,
+): string | null {
+  if (published !== null) return null
+  if (![...state.values()].some(row => row.outcome === 'published')) return null
+  const refetched = plan.fetch.filter(work => work.expectSha256 !== undefined).length
+  const turnedAway = plan.deferred.filter(key => state.get(key)?.outcome === 'published').length
+  return `The published icons file could not be read, so icons recorded as published were fetched again: ${refetched} within this build's budget, ${turnedAway} turned away by it.`
+}
+
+/**
+ * Throw when an entry would name an icon the icons file does not hold.
+ *
+ * `foldIconResults` builds the file and the map from entries to icons together,
+ * and guarantees every sha256 in the map is a key of the file. The build asserts
+ * it before `runPipeline` sets those keys on the entries anyway, because a
+ * dangling one passes every check downstream: it is 64 hexadecimal digits, so the
+ * grammar in `assertCatalogInvariants` accepts it, and the shop looks it up,
+ * finds nothing and draws the default artwork, which is exactly how a plugin
+ * with no icon looks. A published catalog that is plausible and wrong is what
+ * this project stops instead of shipping.
+ *
+ * Own keys only, as everywhere an icon is looked up: `toString` is not an icon.
+ * @param byIdentity - the install identity of each listed entry that carries an
+ *   icon, to the sha256 of that icon.
+ * @param file - the icons file the build publishes, or `null` when it publishes none.
+ * @throws when any sha256 in `byIdentity` is not a key of `file.icons`. The
+ *   message counts them and names the first by install identity, in code-unit
+ *   order, so that it does not depend on the order the entries came in.
+ */
+export function assertIconsInFile(byIdentity: ReadonlyMap<string, string>, file: IconsFile | null): void {
+  const dangling = [...byIdentity]
+    .filter(([, sha256]) => file === null || !Object.hasOwn(file.icons, sha256))
+    .sort(([a], [b]) => compareStrings(a, b))
+  const [first] = dangling
+  if (first === undefined) return
+  throw new Error(
+    `icons: listed entries naming an icon the icons file does not hold: ${dangling.length}, the first being ${JSON.stringify(first[0])} (${JSON.stringify(first[1])})`,
+  )
+}
+
+/**
  * Registry rows that matched nothing this run, as report lines.
  *
  * A denial, a review or a clearance is matched EXACTLY (the repo keyspace
@@ -124,22 +222,35 @@ export function describeRereadStopped(stopped: 'time-budget' | 'failure-breaker'
  * check in `config.ts` catches shapes that can never match; this catches the
  * shapes that can but do not.
  *
+ * A `withheld-icons.yml` row has the same hazard: a well-formed but mistyped
+ * name loads, matches nothing, and the icon it was written to hold back stays
+ * published. It is judged against what the catalog LISTS, not against what the
+ * harvest saw, because an icon can be withheld only from a listed entry: a row
+ * naming a candidate the gate turned away withholds nothing today. Its keys are
+ * the ones `firstSeenKey` gives an entry — an npm name as written, a
+ * repository's `owner/slug` lower-cased — so a row that names a repository's
+ * bundle name, which is no key of any entry, never fires and is reported.
+ *
  * Report-only: no row is dropped and no listing changes. Whether a stale row
  * should be deleted is a human's call — a package can be unpublished for a
  * week and come back.
  * @param candidates - every npm candidate this run harvested.
  * @param repoCandidates - every repository candidate this run harvested.
  * @param config - the human-authored registry files.
+ * @param listed - the entries the catalog lists. Only their identity is read,
+ *   so it does not matter whether the icon step has attached an icon yet.
  * @returns the lines to add to the build report, or `[]` when everything matched.
  */
 export function unmatchedRegistryNotes(
   candidates: readonly Candidate[],
   repoCandidates: readonly RepoCandidate[],
   config: RegistryConfig,
+  listed: readonly Pick<Entry, 'source' | 'name' | 'repo'>[],
 ): string[] {
   const npmNames = new Set(candidates.map(candidate => candidate.name))
   const repoFullNames = new Set(repoCandidates.map(candidate => candidate.repo.toLowerCase()))
   const bundleNames = new Set(repoCandidates.map(candidate => candidate.name))
+  const listedKeys = new Set(listed.map(entry => firstSeenKey(entry)))
   const rows: { file: string; row: string }[] = []
   for (const [key, review] of config.verified) {
     // The key already says which channel the review is for: an npm review is
@@ -158,6 +269,11 @@ export function unmatchedRegistryNotes(
   for (const entry of config.allowedSimilar) {
     const matched = npmNames.has(entry) || repoFullNames.has(entry.toLowerCase())
     if (!matched) rows.push({ file: 'allowed-similar.yml', row: entry })
+  }
+  for (const key of config.withheldIcons.keys()) {
+    // Already keyed as `firstSeenKey` keys an entry (config.ts), so the lookup
+    // needs no folding of its own.
+    if (!listedKeys.has(key)) rows.push({ file: 'withheld-icons.yml', row: key })
   }
   if (rows.length === 0) return []
   rows.sort((a, b) => compareStrings(a.file, b.file) || compareStrings(a.row, b.row))
@@ -336,7 +452,7 @@ export function runPipeline(
       ...llmOnly.map(name => `- ${name}`),
     )
   }
-  notes.push(...unmatchedRegistryNotes(candidates, repoCandidates, config))
+  notes.push(...unmatchedRegistryNotes(candidates, repoCandidates, config, entries))
   return {
     ...emit(entries, rejections, builtAt, stars, schemaVersion, config.notAShop, notes, icons?.pointer ?? null),
     firstSeen,

@@ -127,3 +127,56 @@ export function pagesArtifactNames(pointer: PagesPointer, reports: ReportsPresen
 export function npmArtifactNames(pointer: PagesPointer): string[] {
   return dataFileNames(pointer)
 }
+
+/** A sidecar pointer's file name, or null where `value` is no object carrying one. */
+function fileOf(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { url } = value as { url?: unknown }
+  return typeof url === 'string' && url !== '' ? url : null
+}
+
+/** The whole icons pointer, the hash included, or null where `value` is not one. */
+function iconsPointerOf(value: unknown): IconsPointer | null {
+  const url = fileOf(value)
+  if (url === null) return null
+  const { sha256 } = value as { sha256?: unknown }
+  return typeof sha256 === 'string' ? { url, sha256 } : null
+}
+
+/**
+ * The pointer {@link pagesArtifactNames} and {@link npmArtifactNames} read,
+ * taken back out of the `index.json` text the build emitted.
+ *
+ * `build.ts` used to assemble this pointer by hand from the pieces it had built,
+ * which states a second time what the index names. When the icons sidecar joined
+ * the index, a pointer left one literal short of it would have staged a Pages
+ * site whose index named a file the site did not hold, and the shop would have
+ * learned so on a reader's machine. Read from the index text, the file list is a
+ * function of the index: a sidecar it names reaches both transports, and one it
+ * does not name reaches neither. `publish-catalog.ts` reads the same text for the
+ * npm package.
+ *
+ * It throws on text that is not an index. That text is this build's own output,
+ * so a malformed one is a defect in `emit`, and staging from it would fail
+ * later, in the middle of the copies, on a file name that is not there.
+ * @param indexJson - the `indexJson` of the build's artifacts.
+ * @throws when the text is not JSON, is not an object, names no plugins file, or
+ *   carries a `stars` or `icons` pointer that does not name its file (and, for
+ *   `icons`, its hash).
+ */
+export function pagesPointerOf(indexJson: string): PagesPointer {
+  const index: unknown = JSON.parse(indexJson)
+  if (typeof index !== 'object' || index === null || Array.isArray(index)) throw new Error('index.json is not an object')
+  const { plugins, stars, icons } = index as Record<string, unknown>
+  const pluginsUrl = fileOf(plugins)
+  if (pluginsUrl === null) throw new Error('index.json names no plugins file')
+  const starsUrl = stars === undefined ? undefined : fileOf(stars)
+  if (starsUrl === null) throw new Error('index.json has a stars pointer that names no file')
+  const iconsPointer = icons === undefined ? undefined : iconsPointerOf(icons)
+  if (iconsPointer === null) throw new Error('index.json has an icons pointer that names no file and hash')
+  return {
+    plugins: { url: pluginsUrl },
+    ...(starsUrl === undefined ? {} : { stars: { url: starsUrl } }),
+    ...(iconsPointer === undefined ? {} : { icons: iconsPointer }),
+  }
+}
