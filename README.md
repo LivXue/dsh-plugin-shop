@@ -209,6 +209,7 @@ in the index before use. Set `DSH_SHOP_CATALOG_URL` to use only a specific sourc
 | [`/v1/index.json`](https://LivXue.github.io/dsh-plugin-shop/v1/index.json) | The index: `schemaVersion`, `builtAt`, the `count` of listed plugins, the `rejected` total, and content hashes. The badges above read these totals live. The file is small enough for regular polling. |
 | `/v1/plugins.<sha256>.json` | Plugin data, named by its content hash and safe to cache indefinitely. |
 | `/v1/stars.<sha256>.json` | GitHub star counts for each plugin, keyed by package name, when the daily build can retrieve them. |
+| `/v1/icons.<sha256>.json` | Plugin icons, each stored once as a data URL under the sha256 of its bytes. A plugin's `icon` field in the plugin data is its key here. Only icons that passed the daily build's checks are included, and the file is absent when there are none. |
 
 Each workflow run includes a rejection report listing every rejected plugin and the
 reason it was excluded, with details to help authors troubleshoot.

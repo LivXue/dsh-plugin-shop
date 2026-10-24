@@ -1,9 +1,11 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { PUBLISHED_CATALOG_URL } from '../src/icon-fetch.ts'
 
 const testsDir = dirname(fileURLToPath(import.meta.url))
 const srcDir = join(testsDir, '..', 'src')
@@ -20,9 +22,14 @@ const preload = pathToFileURL(join(testsDir, 'preload-fetch.ts')).href
  * The variables that must not leak into a child, so a developer's live
  * credentials cannot turn one of these runs into a real request. `LLM_API_KEY`
  * empty is what disables classification; `GITHUB_TOKEN` absent is what keeps
- * the GitHub half from harvesting.
+ * the GitHub half from harvesting. The icon step's two budgets are not
+ * credentials, but a developer who set one for a local run would change what a
+ * test reads; `runEntry`'s `extraEnv` sets them where a test is about them.
  */
-const WITHHELD = ['LLM_API_KEY', 'GITHUB_TOKEN', 'NPM_TOKEN', 'NPM_BACKUP_REGISTRY']
+const WITHHELD = ['LLM_API_KEY', 'GITHUB_TOKEN', 'NPM_TOKEN', 'NPM_BACKUP_REGISTRY', 'ICON_FETCH_BUDGET', 'ICON_FETCH_TIME_BUDGET_MS']
+
+/** The published catalog's index as a request carries it: `URL` writes the host in lower case. */
+const PUBLISHED_INDEX_URL = new URL('index.json', PUBLISHED_CATALOG_URL).href
 
 interface Run {
   readonly status: number | null
@@ -43,8 +50,13 @@ function newWorkspace(): string {
   return cwd
 }
 
-/** Runs one entry point as the real script CI runs, against fixed responses. */
-function runEntry(cwd: string, file: string, args: readonly string[], rules: readonly unknown[]): Run {
+/**
+ * Runs one entry point as the real script CI runs, against fixed responses.
+ * `extraEnv` is applied after the variables above are withheld.
+ */
+function runEntry(
+  cwd: string, file: string, args: readonly string[], rules: readonly unknown[], extraEnv: NodeJS.ProcessEnv = {},
+): Run {
   const fixture = join(cwd, 'fetch-rules.json')
   const log = join(cwd, 'fetch-log.txt')
   writeFileSync(fixture, JSON.stringify({ rules }))
@@ -52,6 +64,7 @@ function runEntry(cwd: string, file: string, args: readonly string[], rules: rea
   const env: NodeJS.ProcessEnv = { ...process.env, FETCH_FIXTURE: fixture, FETCH_LOG: log }
   for (const name of WITHHELD) delete env[name]
   env.LLM_API_KEY = ''
+  Object.assign(env, extraEnv)
   const result = spawnSync(
     process.execPath,
     ['--experimental-strip-types', '--import', preload, join(srcDir, file), ...args],
@@ -403,7 +416,12 @@ describe('the change feed rides the handoff into the committed file', () => {
       expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
       expect(readFileSync(join(cwd, 'registry', 'feed-state.json'), 'utf8')).toBe(feedState(117350001))
       expect(readFileSync(join(cwd, 'dist', 'v1', 'report.md'), 'utf8')).toContain('change feed: seq 117350000 -> 117350001')
-      expect(run.urls).toEqual([])
+      // Nothing is requested for the feed, nor for anything else the handoff
+      // already carries. The one request is the icon step's look at the
+      // published catalog, which every build makes (design
+      // 2026-10-23-shop-plugin-icons §5.1); this fixture has no rule for it, so
+      // it fails, and the build goes on without yesterday's icons.
+      expect(run.urls).toEqual([PUBLISHED_INDEX_URL])
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
@@ -601,6 +619,235 @@ describe('a listed npm package the harvest lost (design 2026-09-26-market-borrow
       const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
       expect(run.status).not.toBe(0)
       expect(run.stderr).toContain('expected `departures`')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('the icon step rides the daily build (design 2026-10-23-shop-plugin-icons)', () => {
+  // The build is run as CI runs it, from a handoff with one listed plugin that
+  // declares `icon.svg`. Everything the icon step touches is read back from
+  // disk. The icon is a real one and its digests are made here, by node:crypto
+  // and Buffer and not by the modules under test, so the files the build writes
+  // are held to an oracle of their own.
+  const SVG = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><title>icon</title></svg>')
+  const sha256 = (data: string | Buffer): string => createHash('sha256').update(data).digest('hex')
+  const ICON_SHA = sha256(SVG)
+  const DATA_URL = `data:image/svg+xml;base64,${SVG.toString('base64')}`
+  const KEY = 'npm:dsh-icon-plugin@1.0.0:icon.svg'
+  const INDEX_URL = PUBLISHED_INDEX_URL
+  const TARBALL_URL = 'https://registry.npmjs.org/dsh-icon-plugin/-/dsh-icon-plugin-1.0.0.tgz'
+
+  /** The record after a build that published the icon, as `serializeIconState` writes it. */
+  const PUBLISHED_RECORD = `${JSON.stringify({
+    [KEY]: { outcome: 'published', sha256: ICON_SHA, mediaType: 'image/svg+xml', bytes: SVG.length },
+  }, null, 2)}\n`
+
+  // Yesterday's published catalog, as the fixture serves it. The preload
+  // answers with `JSON.stringify(body)`, so the bytes the pointer's hash covers
+  // are the ones hashed here.
+  const publishedFile = { icons: { [ICON_SHA]: DATA_URL }, sources: { [KEY]: ICON_SHA } }
+  const publishedSha = sha256(JSON.stringify(publishedFile))
+  const PUBLISHED_ICONS_URL = new URL(`icons.${publishedSha}.json`, PUBLISHED_CATALOG_URL).href
+  const PUBLISHED_RULES = [
+    { contains: 'v1/index.json', body: { icons: { url: `icons.${publishedSha}.json`, sha256: publishedSha } } },
+    { contains: `icons.${publishedSha}.json`, body: publishedFile },
+  ]
+
+  /** A workspace holding the handoff of one plugin the gate lists, and the record when given. */
+  function workspace(options: { icon?: boolean; record?: string } = {}): string {
+    const cwd = newWorkspace()
+    mkdirSync(join(cwd, 'dist'), { recursive: true })
+    const icon = options.icon ?? true
+    writeFileSync(join(cwd, 'dist', 'harvest.json'), `${JSON.stringify({
+      candidates: [{
+        name: 'dsh-icon-plugin', version: '1.0.0', integrity: 'sha512-icon', publishedAt: '2026-08-01T12:00:00.000Z',
+        repository: 'https://github.com/you/icon-plugin', license: 'MIT', deprecated: false, hasBundle: true,
+        catalog: { category: 'tool', summary: { en: 'Draws an icon', zh: '画一个图标' }, capabilities: [] },
+        description: 'A plugin that declares an icon.', keywords: [], peers: [],
+        ...(icon
+          ? { icon: { kind: 'declared', declaration: { source: 'icon', path: 'icon.svg', mediaType: 'image/svg+xml' } }, distTarball: TARBALL_URL }
+          : {}),
+      }],
+      rejections: [], shortfalls: [], publishers: [],
+    })}\n`)
+    if (options.record !== undefined) writeFileSync(join(cwd, 'registry', 'icon-state.json'), options.record)
+    return cwd
+  }
+
+  const buildFrom = (cwd: string, rules: readonly unknown[] = [], env: NodeJS.ProcessEnv = {}): Run =>
+    runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], rules, env)
+
+  const out = (cwd: string, ...path: string[]): string => join(cwd, 'dist', 'v1', ...path)
+  const readIndex = (cwd: string): { plugins: { url: string }; icons?: { url: string; sha256: string } } =>
+    JSON.parse(readFileSync(out(cwd, 'index.json'), 'utf8')) as { plugins: { url: string }; icons?: { url: string; sha256: string } }
+  /** Each listed entry's name and, when it carries one, its icon: the rest of an entry is not this step's. */
+  const readEntries = (cwd: string): { name: string; icon?: string }[] =>
+    (JSON.parse(readFileSync(out(cwd, readIndex(cwd).plugins.url), 'utf8')) as { plugins: { name: string; icon?: string }[] }).plugins
+      .map(({ name, icon }) => ({ name, ...(icon === undefined ? {} : { icon }) }))
+  const iconFiles = (dir: string): string[] => readdirSync(dir).filter(name => name.startsWith('icons.'))
+
+  it('writes the sidecar, points the index and the entry at it, stages it for Pages and keeps the record', () => {
+    const cwd = workspace({ record: PUBLISHED_RECORD })
+    try {
+      const run = buildFrom(cwd, PUBLISHED_RULES)
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      // The file as the design states it (§6.1): both maps in code-unit order,
+      // two-space JSON and one trailing newline, named by its own hash.
+      const sidecar = `${JSON.stringify({ icons: { [ICON_SHA]: DATA_URL }, sources: { [KEY]: ICON_SHA } }, null, 2)}\n`
+      const name = `icons.${sha256(sidecar)}.json`
+      expect(readFileSync(out(cwd, name), 'utf8')).toBe(sidecar)
+      const index = readIndex(cwd)
+      expect(index.icons).toEqual({ url: name, sha256: sha256(sidecar) })
+      expect(readEntries(cwd)).toEqual([{ name: 'dsh-icon-plugin', icon: ICON_SHA }])
+      // Pages stages what the index names, the icons file included, and no other data file.
+      expect(readdirSync(join(cwd, 'dist', 'pages', 'v1')).sort())
+        .toEqual(['badge.json', 'index.json', name, index.plugins.url, 'report.md'].sort())
+      // Nothing was fetched for the icon: the record and yesterday's file carried it.
+      expect(run.urls).toEqual([INDEX_URL, PUBLISHED_ICONS_URL])
+      expect(readFileSync(join(cwd, 'registry', 'icon-state.json'), 'utf8')).toBe(PUBLISHED_RECORD)
+      // The section is the last block of the report, in one piece.
+      const report = readFileSync(out(cwd, 'report.md'), 'utf8')
+      expect(report).toContain(
+        `\n## Icons\n\nDeclared 1: published 1, withheld by hand 0, withheld for size 0, refused 0, not read 0, not yet read 0. Icons file: ${Buffer.byteLength(sidecar)} bytes.\n`,
+      )
+      expect(report.endsWith(' bytes.\n')).toBe(true)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('writes no sidecar and no pointer when no listed plugin has an icon, and commits an empty record', () => {
+    const cwd = workspace({ icon: false })
+    try {
+      const run = buildFrom(cwd)
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      expect(iconFiles(out(cwd))).toEqual([])
+      expect(iconFiles(join(cwd, 'dist', 'pages', 'v1'))).toEqual([])
+      expect('icons' in readIndex(cwd)).toBe(false)
+      expect(readEntries(cwd)).toEqual([{ name: 'dsh-icon-plugin' }])
+      // The record is still written, so the snapshot step has a file to commit.
+      expect(readFileSync(join(cwd, 'registry', 'icon-state.json'), 'utf8')).toBe('{}\n')
+      expect(readFileSync(out(cwd, 'report.md'), 'utf8')).toContain(
+        '\n## Icons\n\nDeclared 0: published 0, withheld by hand 0, withheld for size 0, refused 0, not read 0, not yet read 0. Icons file: none.\n',
+      )
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('stops on a malformed record before it requests, writes or publishes anything', () => {
+    const malformed = '{"npm:dsh-icon-plugin@1.0.0:icon.svg":{"outcome":"mystery"}}\n'
+    const cwd = workspace({ record: malformed })
+    try {
+      const run = buildFrom(cwd, PUBLISHED_RULES)
+      expect(run.status).not.toBe(0)
+      expect(run.stderr, `stderr:\n${run.stderr}`).toContain('icon-state.json')
+      expect(run.stderr).not.toContain('ERR_UNSUPPORTED_ESM_URL_SCHEME')
+      expect(run.stderr).not.toContain('preload-fetch:')
+      expect(run.urls).toEqual([])
+      expect(existsSync(out(cwd, 'index.json'))).toBe(false)
+      expect(existsSync(join(cwd, 'registry', 'first-seen.yml'))).toBe(false)
+      expect(readFileSync(join(cwd, 'registry', 'icon-state.json'), 'utf8')).toBe(malformed)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  for (const variable of ['ICON_FETCH_BUDGET', 'ICON_FETCH_TIME_BUDGET_MS']) {
+    it(`stops on a mistyped ${variable} before it requests or writes anything`, () => {
+      // A NaN deadline is no deadline and a count that reads as zero fetches
+      // nothing; either would be reported as a healthy run.
+      const cwd = workspace()
+      try {
+        const run = buildFrom(cwd, PUBLISHED_RULES, { [variable]: 'soon' })
+        expect(run.status).not.toBe(0)
+        expect(run.stderr, `stderr:\n${run.stderr}`).toContain(`${variable} must be a non-negative safe integer; got "soon"`)
+        expect(run.stderr).not.toContain('preload-fetch:')
+        expect(run.urls).toEqual([])
+        expect(existsSync(out(cwd, 'index.json'))).toBe(false)
+        expect(existsSync(join(cwd, 'registry', 'icon-state.json'))).toBe(false)
+      } finally {
+        rmSync(cwd, { recursive: true, force: true })
+      }
+    })
+  }
+
+  it('publishes the entry without its icon, keeps the record and says why, when the published file is lost and the budget is zero', () => {
+    // Budget zero is an instruction and not a typo: fetch nothing. The record
+    // names the icon published, yesterday's file cannot be read (the fixture has
+    // no rule for it), so the bytes are nowhere this build.
+    const cwd = workspace({ record: PUBLISHED_RECORD })
+    try {
+      const run = buildFrom(cwd, [], { ICON_FETCH_BUDGET: '0' })
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      expect(run.urls).toEqual([INDEX_URL])
+      expect(iconFiles(out(cwd))).toEqual([])
+      expect('icons' in readIndex(cwd)).toBe(false)
+      expect(readEntries(cwd)).toEqual([{ name: 'dsh-icon-plugin' }])
+      // Out of reach today, not gone: the next build fetches it against the sha256 recorded.
+      expect(readFileSync(join(cwd, 'registry', 'icon-state.json'), 'utf8')).toBe(PUBLISHED_RECORD)
+      const report = readFileSync(out(cwd, 'report.md'), 'utf8')
+      expect(report).toContain('Declared 1: published 0, withheld by hand 0, withheld for size 0, refused 0, not read 0, not yet read 1. Icons file: none.\n')
+      expect(report.endsWith(
+        '\nThe published icons file could not be read, so icons recorded as published were fetched again: 0 within this build\'s budget, 1 turned away by it.\n',
+      )).toBe(true)
+      expect(run.stderr).toContain('The published icons file could not be read')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('starts no fetch once the time budget is spent, says so, and leaves the key for the next build', () => {
+    // Zero is an instruction here as it is for the count: the deadline has
+    // passed before the first fetch, so none is started.
+    const cwd = workspace()
+    try {
+      const run = buildFrom(cwd, [], { ICON_FETCH_TIME_BUDGET_MS: '0' })
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      expect(run.urls).toEqual([INDEX_URL])
+      expect(run.stderr).toContain('icons: 1 of 1 planned fetches were not started: the time budget of 0 ms ran out')
+      expect(readEntries(cwd)).toEqual([{ name: 'dsh-icon-plugin' }])
+      expect(readFileSync(join(cwd, 'registry', 'icon-state.json'), 'utf8')).toBe('{}\n')
+      expect(readFileSync(out(cwd, 'report.md'), 'utf8')).toContain('Declared 1: published 0, withheld by hand 0, withheld for size 0, refused 0, not read 0, not yet read 1.')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('goes on when a fetch fails: the entry publishes without its icon, nothing is recorded, the next build asks again', () => {
+    // The tarball request has no rule, so it fails the way a timeout does. A
+    // transport failure says nothing about the package, so it is not a refusal
+    // and leaves no row.
+    const cwd = workspace()
+    try {
+      const run = buildFrom(cwd)
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      expect(run.urls).toEqual([INDEX_URL, TARBALL_URL])
+      expect(run.stderr).toContain(`icons: not yet read ${JSON.stringify(KEY)}: `)
+      expect(readEntries(cwd)).toEqual([{ name: 'dsh-icon-plugin' }])
+      expect(readFileSync(join(cwd, 'registry', 'icon-state.json'), 'utf8')).toBe('{}\n')
+      expect(readFileSync(out(cwd, 'report.md'), 'utf8')).toContain('Declared 1: published 0, withheld by hand 0, withheld for size 0, refused 0, not read 0, not yet read 1.')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('hands the plan the withheld rows as well as the fold: a withheld plugin is not fetched, and the report names the row', () => {
+    const cwd = workspace()
+    try {
+      writeFileSync(join(cwd, 'registry', 'withheld-icons.yml'), '- name: dsh-icon-plugin\n  reason: The icon is a logo we may not show.\n')
+      const run = buildFrom(cwd)
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      // A plan made without the row would have asked for the tarball.
+      expect(run.urls).toEqual([INDEX_URL])
+      expect(readEntries(cwd)).toEqual([{ name: 'dsh-icon-plugin' }])
+      const report = readFileSync(out(cwd, 'report.md'), 'utf8')
+      expect(report).toContain('Declared 1: published 0, withheld by hand 1, ')
+      expect(report).toContain('| dsh-icon-plugin | withheld by registry/withheld-icons.yml: The icon is a logo we may not show. |')
+      // The row names a listed entry, so it is not reported as stale.
+      expect(report).not.toContain('- withheld-icons.yml:')
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }

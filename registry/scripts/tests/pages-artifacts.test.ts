@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { PAGES_ONLY_FILES, npmArtifactNames, pagesArtifactNames } from '../src/pages-artifacts.ts'
+import { emit, type IconsPointer, type StarsPointer } from '../src/emit.ts'
+import { PAGES_ONLY_FILES, npmArtifactNames, pagesArtifactNames, pagesPointerOf } from '../src/pages-artifacts.ts'
 
 const WITH_CLASSIFICATION = { classificationReport: true }
 const WITHOUT_CLASSIFICATION = { classificationReport: false }
@@ -116,5 +117,59 @@ describe('npmArtifactNames', () => {
     const pointer = { plugins: { url: 'plugins.abc.json' } }
     npmArtifactNames(pointer).push('report.md')
     expect(npmArtifactNames(pointer)).toEqual(['index.json', 'plugins.abc.json'])
+  })
+})
+
+describe('pagesPointerOf', () => {
+  // `build.ts` used to assemble the Pages pointer by hand from the pieces it had
+  // built, which is a second statement of what `index.json` names: the icons
+  // sidecar was one literal short of it, and the shop would have been served an
+  // index pointing at a file Pages did not hold. The pointer is now read back
+  // from the index text the build wrote, so the two cannot disagree. `emit`
+  // makes the text here, the way the build does.
+  const STARS: StarsPointer = { url: 'stars.def.json', sha256: 'def' }
+  const BUILT_AT = '2026-10-24T00:00:00.000Z'
+  const indexOf = (stars: StarsPointer | null, icons: IconsPointer | null): string =>
+    emit([], [], BUILT_AT, stars, 5, new Set(), [], icons).indexJson
+
+  /** What the index names, read straight from its JSON without going through the helper. */
+  function namedBy(indexJson: string): string[] {
+    const index = JSON.parse(indexJson) as { plugins: { url: string }; stars?: { url: string }; icons?: { url: string } }
+    return [index.plugins.url, ...(index.stars === undefined ? [] : [index.stars.url]), ...(index.icons === undefined ? [] : [index.icons.url])]
+  }
+
+  for (const [label, stars, icons] of [
+    ['no sidecar', null, null],
+    ['the stars sidecar', STARS, null],
+    ['the icons sidecar', null, ICONS],
+    ['both sidecars', STARS, ICONS],
+  ] as const) {
+    it(`gives Pages and the npm package every file an index with ${label} names, and no other data file`, () => {
+      const indexJson = indexOf(stars, icons)
+      const pointer = pagesPointerOf(indexJson)
+      expect(npmArtifactNames(pointer)).toEqual(['index.json', ...namedBy(indexJson)])
+      const pages = pagesArtifactNames(pointer, WITH_CLASSIFICATION)
+      for (const name of ['index.json', ...namedBy(indexJson)]) expect(pages).toContain(name)
+      expect(pages.filter(name => !npmArtifactNames(pointer).includes(name))).toEqual([...PAGES_ONLY_FILES])
+    })
+  }
+
+  it('carries the whole icons pointer, the hash included, and the stars one by its file', () => {
+    const pointer = pagesPointerOf(indexOf(STARS, ICONS))
+    expect(pointer.icons).toEqual(ICONS)
+    expect(pointer.stars).toEqual({ url: STARS.url })
+    expect('icons' in pagesPointerOf(indexOf(STARS, null))).toBe(false)
+    expect('stars' in pagesPointerOf(indexOf(null, ICONS))).toBe(false)
+  })
+
+  it('refuses an index that does not name a plugins file, or names a sidecar without one', () => {
+    // A name that comes back undefined is a `copyFileSync` that throws in the
+    // middle of staging, after the report is written. Better here, named.
+    expect(() => pagesPointerOf('{}')).toThrow(/plugins/)
+    expect(() => pagesPointerOf('{"plugins":{"url":""}}')).toThrow(/plugins/)
+    expect(() => pagesPointerOf('{"plugins":{"url":"plugins.abc.json"},"icons":{"sha256":"ghi"}}')).toThrow(/icons/)
+    expect(() => pagesPointerOf('{"plugins":{"url":"plugins.abc.json"},"icons":{"url":"icons.ghi.json"}}')).toThrow(/icons/)
+    expect(() => pagesPointerOf('{"plugins":{"url":"plugins.abc.json"},"stars":{}}')).toThrow(/stars/)
+    expect(() => pagesPointerOf('[]')).toThrow(/index\.json/)
   })
 })

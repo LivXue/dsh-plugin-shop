@@ -191,6 +191,7 @@ flowchart LR
 | [`/v1/index.json`](https://LivXue.github.io/dsh-plugin-shop/v1/index.json) | 索引文件，包含 `schemaVersion`、`builtAt`、收录数 `count`、过滤数 `rejected` 和内容哈希。顶部徽章实时读取其中的数量；文件较小，适合定期轮询。 |
 | `/v1/plugins.<sha256>.json` | 插件数据，以内容哈希命名，可永久缓存。 |
 | `/v1/stars.<sha256>.json` | 各插件对应的 GitHub star 数，按包名记录，仅在每日构建成功获取时提供。 |
+| `/v1/icons.<sha256>.json` | 插件图标，每个图标只存一份，以 data URL 的形式按其字节的 sha256 存放。插件数据中的 `icon` 字段就是它在此文件里的键。只收录通过每日构建检查的图标，没有可收录的图标时不提供此文件。 |
 
 每次构建都会在对应的工作流运行记录中附上未收录报告，逐一列出插件及具体原因，方便作者排查。
 
