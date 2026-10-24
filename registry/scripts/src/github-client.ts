@@ -53,6 +53,16 @@ const RAW_GITHUB = 'https://raw.githubusercontent.com'
  * A name that is not well-formed UTF-16, a lone surrogate, becomes U+FFFD. It
  * names nothing and is answered 404, where `encodeURIComponent` would throw, and
  * a hostile name would fail the fetch of its whole repository.
+ *
+ * The raw host is not the only place a name goes into a path. The two
+ * api.github.com routes that take the default branch, the commits route and the
+ * tree route, are written through this as well. A `%2e%2e` ref climbs out of
+ * `/repos/<owner>/<slug>/` into another repository's endpoint, whose answer is
+ * then the commit this one is pinned at, and a `#` ref starts a fragment, which
+ * drops the rest of the URL, the tree route's `?recursive=1` with it. The sha of
+ * the sizing read goes through it too: it can hold neither, but it is a ref all
+ * the same. A scan in github-client.test.ts holds every `/repos/` route to the
+ * rule.
  */
 function encodePath(name: string): string {
   return name.toWellFormed().split('/').map(encodeURIComponent).join('/')
@@ -891,7 +901,10 @@ async function fetchHeadCommit(
   token: string | undefined,
   timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
 ): Promise<{ sha: string; date: string } | null> {
-  const url = `${GITHUB_API}/repos/${owner}/${slug}/commits/${branch}`
+  // The branch is a name its owner chose, so it is encoded (see encodePath): its
+  // answer is the commit the candidate is pinned at, and a ref that climbed out
+  // of this repository would be answered by another one.
+  const url = `${GITHUB_API}/repos/${owner}/${slug}/commits/${encodePath(branch)}`
   const response = await fetchRobust(url, fetchImpl, sleep, token, timeoutMs)
   if (response.status === 404) return null
   if (!response.ok) {
@@ -1400,7 +1413,9 @@ async function probeSubpackageCandidates(
   token: string | undefined,
   timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
 ): Promise<{ candidates: RepoCandidate[]; failures: RepoFetchFailure[]; anyClaimed: boolean; probed: number; manifests: Map<RepoCandidate, unknown> }> {
-  const treeUrl = `${GITHUB_API}/repos/${owner}/${slug}/git/trees/${meta.defaultBranch}?recursive=1`
+  // Encoded for the reason the commits route is: the default branch is a name its
+  // owner chose, and a `#` in it would drop `?recursive=1` along with the rest.
+  const treeUrl = `${GITHUB_API}/repos/${owner}/${slug}/git/trees/${encodePath(meta.defaultBranch)}?recursive=1`
   const treeResponse = await fetchRobust(treeUrl, fetchImpl, sleep, token, timeoutMs)
   // A 404 is a fact: there is no tree at that branch, so there are no
   // subpackages to find. Any other status is our transport failing, and
@@ -1552,8 +1567,13 @@ async function readSizingTree(
   timeoutMs: number,
 ): Promise<SizingRead> {
   try {
+    // `git/trees/` takes a ref in this place, so it is encoded like the other
+    // two, though a sha holds nothing to encode (fetchHeadCommit admits forty
+    // hexadecimal digits and no other). The point is the rule: every ref written
+    // into a `/repos/` route is encoded, which the scan in github-client.test.ts
+    // can then hold the whole module to.
     const response = await fetchRobust(
-      `${GITHUB_API}/repos/${fullName}/git/trees/${sha}?recursive=1`, fetchImpl, sleep, token, timeoutMs,
+      `${GITHUB_API}/repos/${fullName}/git/trees/${encodePath(sha)}?recursive=1`, fetchImpl, sleep, token, timeoutMs,
     )
     // A 404 is a fact about this commit; any other non-ok status is our
     // transport failing, exactly as the discovery tree read reads them.

@@ -5759,3 +5759,192 @@ describe('a raw GitHub URL encodes each path segment, so a name from a repositor
     expect(written[0]).toContain('encodePath(')
   })
 })
+
+// ---------------------------------------------------------------------------
+// An api.github.com URL encodes the branch it names (ruling R19b).
+//
+// The same defect as the raw host's, on the two routes of the API that take the
+// default branch in their path: the commits route, whose answer is the commit a
+// candidate is PINNED at, and the tree route, which lists the subpackages. The
+// default branch is a name its owner chooses, and a URL parser reads some names
+// as a way out of /repos/<owner>/<slug>/: `%2e%2e` (a ref may hold a percent
+// sign) climbs into another repository, whose endpoint then answers for this
+// one, and `#` (a ref may hold one) starts a fragment, so the request names a
+// shorter ref and the pin is the head of a branch the repository was never read
+// at. Each test serves its stub by the URL as `fetch` sends it (parsed, and with
+// no fragment), so a URL that climbs is answered with the victim's data, as
+// GitHub would answer it.
+// ---------------------------------------------------------------------------
+
+describe('an API URL encodes the branch name, so a ref cannot address another repository', () => {
+  const API = 'https://api.github.com/'
+  const RAW = 'https://raw.githubusercontent.com/'
+  const REPO_API = `${API}repos/hostile/repo/`
+  const OWN_SHA = 'e'.repeat(40)
+  const DECOY_SHA = 'd'.repeat(40)
+  const VICTIM_SHA = 'f'.repeat(40)
+  const meta = { fullName: 'hostile/repo', defaultBranch: 'main', description: null, license: 'MIT', pushedAt: '2026-08-01T00:00:00Z', stars: null as number | null }
+  const ownManifest = JSON.stringify({ name: 'own-plugin', version: '1.0.0', dsh: { bundle: {} } })
+  const monorepoRoot = JSON.stringify({ name: 'root', private: true, workspaces: ['packages/**'] })
+  const commitAnswer = (sha: string) => new Response(JSON.stringify({ sha, commit: { author: { date: '2026-08-01T12:00:00.000Z' } } }))
+  const treeAnswer = (...paths: string[]) => new Response(JSON.stringify({ truncated: false, tree: paths.map(path => ({ path, type: 'blob', size: 10 })) }))
+
+  /** A ref that climbs three segments out of /repos/hostile/repo/commits/, to /repos/, and names the victim's commit. */
+  const commitsClimb = `${'%2e%2e/'.repeat(3)}victim/plugin/commits/${VICTIM_SHA}`
+  /** A ref that climbs four out of /repos/hostile/repo/git/trees/, to /repos/, and names the victim's tree. */
+  const treeClimb = `${'%2e%2e/'.repeat(4)}victim/plugin/git/trees/${VICTIM_SHA}`
+
+  /**
+   * The URL as a request carries it: `fetch` parses the string, and a fragment is
+   * never sent, so everything from a `#` on is gone, a query included. (Measured
+   * against Node's own fetch on a loopback server, not recalled.)
+   */
+  const sent = (written: string): string => {
+    const url = new URL(written)
+    url.hash = ''
+    return url.href
+  }
+
+  /** GitHub as a real client meets it: a request is routed by the URL as `fetch` sends it, not as the code wrote it. */
+  function github(serve: (wire: string) => Response | undefined) {
+    const requested: { written: string; wire: string }[] = []
+    const fetchImpl = (async (input: string | URL) => {
+      const written = String(input)
+      const wire = sent(written)
+      requested.push({ written, wire })
+      return serve(wire) ?? new Response('{"message":"Not Found"}', { status: 404 })
+    }) as unknown as typeof fetch
+    /** What the harvest asked the API about the repository: every API request but a search. */
+    const api = () => requested.filter(request => request.wire.startsWith(API) && !request.wire.startsWith(`${API}search/`))
+    return { fetchImpl, api }
+  }
+
+  /** The wire URLs of `requests` that are not under `prefix`: none, where every read stayed in its repository. */
+  const leaving = (requests: { wire: string }[], prefix: string): string[] =>
+    requests.map(request => request.wire).filter(wire => !wire.startsWith(prefix))
+
+  /**
+   * A repository whose default branch is really called `named`, the name as it
+   * arrives on the wire, and a victim whose own endpoints answer a request that
+   * climbs into them. A branch read at its own path is served this repository's
+   * commit; a read that lands anywhere else is served somebody else's.
+   */
+  const repoWith = (named: string, root: string) => (wire: string): Response | undefined => {
+    if (wire === `${RAW}hostile/repo/${named}/package.json`) return new Response(root)
+    if (wire === `${REPO_API}commits/${named}`) return commitAnswer(OWN_SHA)
+    if (wire === `${REPO_API}git/trees/${named}?recursive=1`) return treeAnswer()
+    if (wire === `${API}repos/victim/plugin/commits/${VICTIM_SHA}`) return commitAnswer(VICTIM_SHA)
+    if (wire === `${API}repos/victim/plugin/git/trees/${VICTIM_SHA}?recursive=1`) return treeAnswer('packages/stolen/package.json')
+    return undefined
+  }
+
+  describe('the commits route, whose answer is the commit a candidate is pinned at', () => {
+    it('keeps a default branch named like a climb inside the repository', async () => {
+      // The premise: written as it was, this branch is the victim's commits endpoint.
+      expect(sent(`${REPO_API}commits/${commitsClimb}`)).toBe(`${API}repos/victim/plugin/commits/${VICTIM_SHA}`)
+      const { fetchImpl, api } = github(repoWith(`${'%252e%252e/'.repeat(3)}victim/plugin/commits/${VICTIM_SHA}`, ownManifest))
+      const result = await fetchRepoCandidate({ ...meta, defaultBranch: commitsClimb }, fetchImpl, sleep, 'token')
+      expect(api().map(request => request.written)).toEqual([
+        `${REPO_API}commits/${'%252e%252e/'.repeat(3)}victim/plugin/commits/${VICTIM_SHA}`,
+        // The sizing read of the commit it pinned, which is this repository's.
+        `${REPO_API}git/trees/${OWN_SHA}?recursive=1`,
+      ])
+      expect(leaving(api(), REPO_API)).toEqual([])
+      // Pinned where the repository's own endpoint put it, not where the victim's did.
+      expect(result.ok && result.candidates.map(candidate => candidate.commit)).toEqual([OWN_SHA])
+    })
+
+    it('does not pin a harvested repository at the victim\'s commit either', async () => {
+      const { fetchImpl, api } = github(wire => repoWith(`${'%252e%252e/'.repeat(3)}victim/plugin/commits/${VICTIM_SHA}`, ownManifest)(wire)
+        ?? searchResponder(() => [repoItem('hostile/repo', { default_branch: commitsClimb })])(wire))
+      const result = await harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't' })
+      expect(leaving(api(), REPO_API)).toEqual([])
+      expect(Object.values(result.nextState).flatMap(entry => entry.candidates.map(candidate => candidate.commit))).toEqual([OWN_SHA])
+    })
+
+    it('reaches the endpoint with the whole ref, a # as %23', async () => {
+      // The premise: written as it was, everything from the # on is dropped, so
+      // the request names the branch `release` and not `release#1`.
+      expect(sent(`${REPO_API}commits/release#1`)).toBe(`${REPO_API}commits/release`)
+      const { fetchImpl, api } = github(wire => repoWith('release%231', ownManifest)(wire)
+        ?? (wire === `${REPO_API}commits/release` ? commitAnswer(DECOY_SHA) : undefined))
+      const result = await fetchRepoCandidate({ ...meta, defaultBranch: 'release#1' }, fetchImpl, sleep, 'token')
+      expect(api().map(request => request.written)).toEqual([
+        `${REPO_API}commits/release%231`,
+        `${REPO_API}git/trees/${OWN_SHA}?recursive=1`,
+      ])
+      // The head of `release#1`, and not the head of the shorter branch the URL would have named.
+      expect(result.ok && result.candidates.map(candidate => candidate.commit)).toEqual([OWN_SHA])
+    })
+  })
+
+  describe('the tree route, which lists the subpackages of the repository', () => {
+    it('keeps a default branch named like a climb inside the repository', async () => {
+      // The premise: written as it was, this branch is the victim's tree.
+      expect(sent(`${REPO_API}git/trees/${treeClimb}?recursive=1`)).toBe(`${API}repos/victim/plugin/git/trees/${VICTIM_SHA}?recursive=1`)
+      const named = `${'%252e%252e/'.repeat(4)}victim/plugin/git/trees/${VICTIM_SHA}`
+      const { fetchImpl, api } = github(repoWith(named, monorepoRoot))
+      const result = await fetchRepoCandidate({ ...meta, defaultBranch: treeClimb }, fetchImpl, sleep, 'token')
+      expect(api().map(request => request.written)).toEqual([
+        `${REPO_API}commits/${named}`,
+        `${REPO_API}git/trees/${named}?recursive=1`,
+      ])
+      expect(leaving(api(), REPO_API)).toEqual([])
+      expect(result.ok && result.candidates.map(candidate => [candidate.name, candidate.commit])).toEqual([['root', OWN_SHA]])
+    })
+
+    it('reaches the endpoint with the whole ref, a # as %23', async () => {
+      // The premise: the query is part of what the # drops, so the tree is asked
+      // for neither the whole ref nor `recursive`.
+      expect(sent(`${REPO_API}git/trees/release#1?recursive=1`)).toBe(`${REPO_API}git/trees/release`)
+      const { fetchImpl, api } = github(repoWith('release%231', monorepoRoot))
+      await fetchRepoCandidate({ ...meta, defaultBranch: 'release#1' }, fetchImpl, sleep, 'token')
+      expect(api().map(request => request.written)).toEqual([
+        `${REPO_API}commits/release%231`,
+        `${REPO_API}git/trees/release%231?recursive=1`,
+      ])
+    })
+  })
+
+  // The controls. An encoder that kept too little would fail the tests above; one
+  // that encoded too much would turn every repository whose default branch has a
+  // slash in it into a 404, and a 404 on the commits route is a `fetch-failed`
+  // row naming the repository. These are asked for exactly as they were before.
+  it.each(['main', 'feature/x', 'release/v1.2-rc_3'])('requests the branch %s exactly as it is named', async branch => {
+    const { fetchImpl, api } = github(repoWith(branch, monorepoRoot))
+    const result = await fetchRepoCandidate({ ...meta, defaultBranch: branch }, fetchImpl, sleep, 'token')
+    expect(api().map(request => request.written)).toEqual([`${REPO_API}commits/${branch}`, `${REPO_API}git/trees/${branch}?recursive=1`])
+    expect(result.ok && result.candidates.map(candidate => [candidate.name, candidate.commit])).toEqual([['root', OWN_SHA]])
+  })
+
+  /** The code of every registry module, a comment's lines left out. */
+  const codeOf = (file: string): string => srcOf(file).split('\n').filter(line => !/^\s*(\*|\/\/|\/\*)/.test(line)).join('\n')
+  const modules = readdirSync(SRC_DIR).filter(name => name.endsWith('.ts'))
+
+  it('writes no /repos/ API URL whose ref or path is not encoded, in any module', () => {
+    // A guard of the kind the raw scan is: the encoding is only as good as the
+    // call sites that remember it, and for a sha the encoded and the raw
+    // spelling are one string on every input the harvest has, so no behaviour
+    // test can tell them apart. A route under /repos/ takes the repository as
+    // `owner`, `slug` or `fullName`, which are GitHub's own names for it, and
+    // every other piece of it, a branch, a sha or a path, through encodePath.
+    const routes = modules.flatMap(file => [...codeOf(file).matchAll(/\$\{GITHUB_API\}\/repos\/[^`]*`/g)].map(match => ({ file, text: match[0] })))
+    // Not a vacuous scan: the commits route, the release route and the two reads of a tree.
+    expect(routes.length).toBeGreaterThanOrEqual(4)
+    const written = routes.flatMap(({ file, text }) => {
+      const pieces = [...text.matchAll(/\$\{([^}]*)\}/g)].map(match => match[1] ?? '')
+      // A `${` this did not read whole (a template inside an interpolation) is not cleared.
+      const unread = (text.match(/\$\{/g) ?? []).length - pieces.length
+      return [
+        ...(unread === 0 ? [] : [`${file}: ${unread} interpolation(s) not read whole in ${text}`]),
+        ...pieces.filter(piece => !/^(GITHUB_API|owner|slug|fullName|encodePath\(.+\))$/.test(piece)).map(piece => `${file}: \${${piece}} is not encoded, in ${text}`),
+      ]
+    })
+    expect(written).toEqual([])
+  })
+
+  it('spells the API host once, so that no route is written past the scan above', () => {
+    const spelled = modules.flatMap(file => codeOf(file).split('\n').filter(line => line.includes('api.github.com/repos')).map(line => `${file}: ${line.trim()}`))
+    expect(spelled).toEqual([])
+  })
+})
