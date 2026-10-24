@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { PUBLISHED_CATALOG_URL } from '../src/icon-fetch.ts'
+import { ICON_FETCH_TIME_BUDGET_MS_DEFAULT, PUBLISHED_CATALOG_URL } from '../src/icon-fetch.ts'
 
 const testsDir = dirname(fileURLToPath(import.meta.url))
 const srcDir = join(testsDir, '..', 'src')
@@ -24,9 +24,11 @@ const preload = pathToFileURL(join(testsDir, 'preload-fetch.ts')).href
  * empty is what disables classification; `GITHUB_TOKEN` absent is what keeps
  * the GitHub half from harvesting. The icon step's two budgets are not
  * credentials, but a developer who set one for a local run would change what a
- * test reads; `runEntry`'s `extraEnv` sets them where a test is about them.
+ * test reads; `runEntry`'s `extraEnv` sets them where a test is about them. The
+ * job's deadline is in the environment of every step after the catalog job's
+ * first, `pnpm test` among them, so it is withheld for the same reason.
  */
-const WITHHELD = ['LLM_API_KEY', 'GITHUB_TOKEN', 'NPM_TOKEN', 'NPM_BACKUP_REGISTRY', 'ICON_FETCH_BUDGET', 'ICON_FETCH_TIME_BUDGET_MS']
+const WITHHELD = ['LLM_API_KEY', 'GITHUB_TOKEN', 'NPM_TOKEN', 'NPM_BACKUP_REGISTRY', 'ICON_FETCH_BUDGET', 'ICON_FETCH_TIME_BUDGET_MS', 'CATALOG_JOB_DEADLINE_MS']
 
 /** The published catalog's index as a request carries it: `URL` writes the host in lower case. */
 const PUBLISHED_INDEX_URL = new URL('index.json', PUBLISHED_CATALOG_URL).href
@@ -755,7 +757,7 @@ describe('the icon step rides the daily build (design 2026-10-23-shop-plugin-ico
     }
   })
 
-  for (const variable of ['ICON_FETCH_BUDGET', 'ICON_FETCH_TIME_BUDGET_MS']) {
+  for (const variable of ['ICON_FETCH_BUDGET', 'ICON_FETCH_TIME_BUDGET_MS', 'CATALOG_JOB_DEADLINE_MS']) {
     it(`stops on a mistyped ${variable} before it requests or writes anything`, () => {
       // A NaN deadline is no deadline and a count that reads as zero fetches
       // nothing; either would be reported as a healthy run.
@@ -832,6 +834,35 @@ describe('the icon step rides the daily build (design 2026-10-23-shop-plugin-ico
       expect(readEntries(cwd)).toEqual([{ name: 'dsh-icon-plugin' }])
       expect(readFileSync(join(cwd, 'registry', 'icon-state.json'), 'utf8')).toBe('{}\n')
       expect(readFileSync(out(cwd, 'report.md'), 'utf8')).toContain('Declared 1: published 0, withheld by hand 0, withheld for size 0, refused 0, not read 0, not yet read 1.')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('starts no icon fetch once the job\'s deadline has passed, says so, and still publishes', () => {
+    // The deadline is the moment the catalog build must be done by, which the
+    // workflow's first step writes. Past it the icon step has no time left at
+    // all: the key is left for the next build, and the catalog publishes.
+    const cwd = workspace()
+    try {
+      const run = buildFrom(cwd, [], { CATALOG_JOB_DEADLINE_MS: '0' })
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      expect(run.urls).toEqual([INDEX_URL])
+      expect(run.stderr).toContain(`icons: 1 of 1 planned fetches were not started: the time budget of 0 ms, cut from ${ICON_FETCH_TIME_BUDGET_MS_DEFAULT} ms to the time the job had left, ran out`)
+      expect(readEntries(cwd)).toEqual([{ name: 'dsh-icon-plugin' }])
+      expect(readFileSync(join(cwd, 'registry', 'icon-state.json'), 'utf8')).toBe('{}\n')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('fetches as it always has when the deadline is far off', () => {
+    const cwd = workspace()
+    try {
+      const run = buildFrom(cwd, [], { CATALOG_JOB_DEADLINE_MS: String(Date.now() + 24 * 60 * 60 * 1000) })
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      expect(run.urls).toEqual([INDEX_URL, TARBALL_URL])
+      expect(run.stderr).not.toContain('planned fetches were not started')
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }

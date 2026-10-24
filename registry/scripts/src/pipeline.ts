@@ -99,10 +99,11 @@ export function withholdRepoPeers(
  * `RepoHarvestResult.rereadStopped` (github-client.ts) is `null` when
  * the phase ran to its own budget or its queue simply emptied, so there is
  * nothing to add. The two non-null values are `'time-budget'` (the phase's
- * own time budget, {@link DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT} in
- * github-client.ts, was spent) and `'failure-breaker'` (the host, not any one
- * record, failed {@link DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES} times in
- * a row — see that constant's doc in github-client.ts). Either way the counts
+ * time budget was spent: {@link DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT} in
+ * github-client.ts, or less when the job's deadline cut it) and
+ * `'failure-breaker'` (the host, not any one record, failed
+ * {@link DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES} times in a row — see
+ * that constant's doc in github-client.ts). Either way the counts
  * already printed beside it (`rereadAttempted`, `rereadDeferred`, ...) say how
  * much of the queue that left; this only says why.
  * @param stopped - `RepoHarvestResult.rereadStopped`, verbatim.
@@ -145,6 +146,41 @@ export function parseBudgetVariable(name: string, raw: string | undefined, fallb
     throw new Error(`${name} must be a non-negative safe integer; got ${JSON.stringify(raw)}`)
   }
   return budget
+}
+
+/**
+ * The catalog job's deadline, in milliseconds since the epoch, or `null` when
+ * the variable is unset: every local run and every test, where no step is cut
+ * short by it. The daily workflow's first step writes it (`daily.yml` keeps the
+ * arithmetic).
+ *
+ * Held to {@link parseBudgetVariable}'s contract, for the same reason: it fails
+ * open the same way. A value that is no number makes `deadline - now` NaN, and
+ * a cap of NaN caps nothing, which would be reported as a healthy run.
+ * @param name - the variable, for the message.
+ * @param raw - the environment value, or undefined when unset.
+ * @throws when the value is present but not a non-negative safe integer,
+ *   naming the variable and quoting the value back.
+ */
+export function parseDeadlineVariable(name: string, raw: string | undefined): number | null {
+  return raw === undefined ? null : parseBudgetVariable(name, raw, 0)
+}
+
+/**
+ * How much of a step's time budget it may spend from `nowMs` on: the budget,
+ * cut to the time left before `deadlineMs`, and never below zero, which starts
+ * nothing. With no deadline, the budget.
+ *
+ * `deadlineMs` is the moment the step must stop STARTING work by, so a caller
+ * that wants the step's work done by a moment passes that moment less what the
+ * step may still have in flight, and less whatever has to follow it.
+ * @param budgetMs - the step's own budget, in milliseconds.
+ * @param deadlineMs - the moment it must stop starting work by, in milliseconds
+ *   since the epoch, or `null` for none.
+ * @param nowMs - the moment it starts, on the same clock.
+ */
+export function budgetBeforeDeadline(budgetMs: number, deadlineMs: number | null, nowMs: number): number {
+  return deadlineMs === null ? budgetMs : Math.max(0, Math.min(budgetMs, deadlineMs - nowMs))
 }
 
 /**

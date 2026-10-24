@@ -67,7 +67,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     # A full healthy run -- install, tests, classify, harvest, stars, emit --
-    # is now close to two hours, so this bound is sized against it rather than
+    # now takes over two hours, so this bound is sized against it rather than
     # far above it; it was 120 until 2026-10-04, when that left about ten.
     # DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT's comment in
     # registry/scripts/src/github-client.ts owns the measured per-run
@@ -83,18 +83,23 @@ jobs:
     # 10. Neither cap is the constant, though: a budget check cannot interrupt
     # an in-flight request, so each overruns by one request deadline. Classify
     # is 15 + 10 = 25 per call and it makes two, so 50; stars is 10 + 0.5. The
-    # optional data can therefore take ~60 of these 180 minutes, not ~40,
-    # leaving ~120 for the harvest. At 120 this left ~60, and the harvest
-    # outgrew it: the owner comment above keeps what it measures now.
+    # optional data can therefore take ~60 of these 180 minutes, not ~40. What
+    # that leaves no longer holds the harvest with room by arithmetic: the
+    # classify step now carries the npm harvest as well, and the owner comment
+    # above measures the whole job past two hours before either bounded phase
+    # below has run.
     #
-    # The declarations re-read is a third bounded phase, but unlike the two
-    # above it runs INSIDE the harvest rather than in front of it, so it
-    # spends from that ~120 rather than adding to the split above. It bounds
-    # itself at DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT, plus the reads
-    # still in flight when that runs out, each at most one asset read
-    # (TARBALL_REQUEST_TIMEOUT_MS). The first constant's comment in
-    # registry/scripts/src/github-client.ts does that arithmetic against this
-    # job's timeout-minutes; neither figure is restated here.
+    # The declarations re-read and the icon step are a third and a fourth
+    # bounded phase. Both run inside build:catalog, after classify has spent
+    # what it spends, and neither is held to its own budget alone: build.ts
+    # cuts each to the time left before the job's own deadline, which this
+    # job's first step writes, less a reserve for what still has to follow it
+    # (build.ts keeps the reserves and the measurements they rest on). A run
+    # whose harvest ran long therefore starts fewer reads and fetches, or none,
+    # and still publishes. What the deadline does not bound is every step that
+    # does not read it: classify, the search and the full fetches, the flags
+    # and stars passes, each held to its own bound or to none, as the next
+    # paragraph says of the full fetches.
     #
     # The harvest is what this bound is really for, and it is honest about what
     # it buys. Measured: one stalled repository costs four bounded attempts
@@ -143,6 +148,36 @@ jobs:
     env:
       SHOP_EMIT_REPO_PEERS: '0'
     steps:
+      - name: Set the job's own deadline
+        # The moment build:catalog must be done by, written for every later
+        # step: build.ts reads CATALOG_JOB_DEADLINE_MS and cuts the declarations
+        # re-read and the icon step to the time left before it, so a run whose
+        # harvest ran long publishes, where a job killed at timeout-minutes
+        # publishes nothing and commits no state. First, so that it is in place
+        # before anything runs. JOB_TIMEOUT_MINUTES is this job's
+        # timeout-minutes, and workflow.test.ts fails when the two differ.
+        #
+        # RESERVE_MINUTES is what the job needs after build:catalog. Measured on
+        # the last three main runs (2026-10-21 to 2026-10-23), every step after
+        # it, cleanup included, took 13 to 16 seconds: the two uploads, the
+        # Pages artifact, and two commits whose pushes went through at the
+        # first attempt, in 3 to 7 seconds each. Allowing a bad minute of the
+        # artifact service, a second push attempt for each commit, and the 2 to
+        # 3 seconds between the job's own clock starting and this step:
+        #
+        #     16s  the steps after build:catalog, the slowest run
+        #   + 60s  one bad minute of the artifact service
+        #   + 14s  a second push attempt for each commit, 7s each at most
+        #   +  3s  the job's clock running before this step does
+        #   = 93s, and three minutes is about twice that.
+        #
+        # The time is read to the second, which errs early, with the one
+        # spelling of `date` that GNU and BSD share, so that workflow.test.ts
+        # can run this line on any machine.
+        env:
+          JOB_TIMEOUT_MINUTES: 180
+          RESERVE_MINUTES: 3
+        run: echo "CATALOG_JOB_DEADLINE_MS=$(( ($(date +%s) + (JOB_TIMEOUT_MINUTES - RESERVE_MINUTES) * 60) * 1000 ))" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Otherwise checkout leaves a usable http.extraheader credential

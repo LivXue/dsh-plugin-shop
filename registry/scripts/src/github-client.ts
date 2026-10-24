@@ -2140,6 +2140,29 @@ export const DECLARATIONS_REREAD_BUDGET_DEFAULT = 4000
  * inside it, and the advisory steps' full ~60 on top of a 100-minute harvest
  * still fits.
  *
+ * RE-MEASURED 2026-10-24, AND THE SUM IS NOW CUT TO FIT. Three runs, none of
+ * which ran this phase or the icon step that now follows it (`gh api` job and
+ * step times):
+ *
+ *   run                 build job   classify   build:catalog   GitHub half
+ *   2026-10-21 (push)    137m01s    76m21s      59m16s          54m16s
+ *   2026-10-22           131m35s    70m43s      59m30s          53m45s
+ *   2026-10-23           129m58s    71m05s      57m32s          51m57s
+ *
+ * On the slowest, the GitHub half ended 131m48s into the job. This phase in
+ * full (15m), that run's flags and stars passes (4m56s) and the icon fetches
+ * in full (15m and a last request of up to 5m, by
+ * ICON_FETCH_TIME_BUDGET_MS_DEFAULT's arithmetic; its reads of the published
+ * file take seconds when Pages answers) end the build at about 171m45s, and
+ * the job at about 172m: inside 180, but not by enough to leave to arithmetic,
+ * and it is not left to it. daily.yml's first step writes the job's own
+ * deadline, and build.ts has this phase ask, as it starts, for the time left
+ * before it less a reserve for what follows ({@link RepoHarvestOptions.timeLeftMs};
+ * build.ts keeps the reserve). On that run the phase would have started 45
+ * minutes before the deadline and kept its whole budget; on a run whose
+ * harvest ran long it starts fewer reads, or none, and the build still
+ * publishes.
+ *
  * Why one batch in flight costs at most 5 minutes: the phase asks before
  * every read, not only every batch, so each repository in the last batch has
  * at most one read in flight, and they run side by side. And every re-read
@@ -2283,6 +2306,17 @@ export interface RepoHarvestOptions {
    */
   now?: () => number
   /**
+   * How many milliseconds the declarations re-read has left to start reads in,
+   * asked once, when the phase starts: it spends the smaller of this and
+   * {@link rereadTimeBudgetMs}, and starts nothing when the answer is zero or
+   * less. The daily build answers it from the catalog job's own deadline, which
+   * is why it is asked and not passed: the phase starts only after the search
+   * and every full fetch, half an hour or more after the harvest was called.
+   * Unset, the budget alone bounds the phase, as it always has. An answer that
+   * is not a finite number is the caller's defect, and throws.
+   */
+  timeLeftMs?: () => number
+  /**
    * Pause before retrying the WHOLE harvest once, when the first attempt
    * throws. Unset means no retry.
    *
@@ -2374,7 +2408,8 @@ export interface RepoHarvestResult {
   /**
    * Why the re-read stopped starting reads before its queue ran out, or null
    * when it did not: `'time-budget'` once
-   * {@link RepoHarvestOptions.rereadTimeBudgetMs} was spent, `'failure-breaker'`
+   * {@link RepoHarvestOptions.rereadTimeBudgetMs} was spent, or the shorter time
+   * {@link RepoHarvestOptions.timeLeftMs} answered, `'failure-breaker'`
    * after {@link DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES} host failures in
    * a row. The second is the host failing rather than any one record, and worth
    * saying so in the build note.
@@ -2445,6 +2480,7 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
     rereadBudget = DECLARATIONS_REREAD_BUDGET_DEFAULT,
     rereadTimeBudgetMs = DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT,
     now = Date.now,
+    timeLeftMs,
   } = options
   if (token === undefined) {
     return {
@@ -2638,6 +2674,7 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
     { fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs },
     rereadTimeBudgetMs,
     now,
+    timeLeftMs,
   )
   const nextState = reread.state
   const candidates = Object.values(nextState).flatMap(entry => entry.candidates)
@@ -3055,6 +3092,9 @@ async function rereadEntry(
  * (design 2026-09-01-harness-compatibility section 9.8): the missing stamp
  * queues it again next run.
  *
+ * `timeLeftMs`, when given, is asked here, as the phase starts, and the budget
+ * is cut to its answer, never below zero ({@link RepoHarvestOptions.timeLeftMs}).
+ *
  * The input state is never mutated — harvestRepos retries a whole attempt
  * with the SAME options, and a first attempt that had written into them would
  * hand the second a different start.
@@ -3068,6 +3108,7 @@ async function rereadDeclarations(
   transport: RereadTransport,
   timeBudgetMs: number,
   now: () => number,
+  timeLeftMs: (() => number) | undefined,
 ): Promise<{
   state: RepoState
   attempted: number
@@ -3077,7 +3118,12 @@ async function rereadDeclarations(
   stopped: 'time-budget' | 'failure-breaker' | null
 }> {
   const next: RepoState = { ...state }
-  const phase = rereadPhase(timeBudgetMs, now)
+  const left = timeLeftMs?.()
+  if (left !== undefined && !Number.isFinite(left)) {
+    throw new Error(`harvestRepos: timeLeftMs answered ${String(left)}, which is not a finite number of milliseconds; a time left of NaN or Infinity caps nothing`)
+  }
+  const spendable = left === undefined ? timeBudgetMs : Math.min(timeBudgetMs, Math.max(0, left))
+  const phase = rereadPhase(spendable, now)
   let attempted = 0
   for (let i = 0; i < queue.length; i += REPO_CONCURRENCY) {
     if (!phase.mayStart()) break
@@ -3097,8 +3143,9 @@ async function rereadDeclarations(
     process.stderr.write(`github: ${phase.failed} declaration re-reads failed this run and were left as recorded; the first ${DECLARATIONS_REREAD_FAILURE_LINES} are above\n`)
   }
   if (phase.stopped !== null) {
+    const cut = spendable < timeBudgetMs ? `, cut from ${timeBudgetMs} ms to the time the job had left,` : ''
     const why = phase.stopped === 'time-budget'
-      ? `its ${timeBudgetMs} ms budget was spent`
+      ? `its ${spendable} ms budget${cut} was spent`
       : `the host failed ${DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES} reads in a row`
     process.stderr.write(`github: the declarations re-read stopped after ${attempted} of ${queue.length} repositories because ${why}; the rest are deferred, unchanged, to the next run\n`)
   }
