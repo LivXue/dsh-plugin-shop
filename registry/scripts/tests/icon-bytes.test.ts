@@ -29,6 +29,8 @@ const PNG = bytesOf(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 
 const JPEG = bytesOf(0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10)
 const WEBP = riff('WEBP')
 const SVG = utf8(SVG_ROOT)
+/** Text that no measured browser draws under any of the four types: what a refusal is now made of, since a raster draws under every one of them. */
+const HTML = utf8('<html>')
 
 const SAMPLES: Record<IconMediaType, Uint8Array> = {
   'image/svg+xml': SVG,
@@ -105,16 +107,53 @@ describe('the fixtures', () => {
   })
 })
 
-describe('sniffIconBytes: each format is its own type and no other', () => {
-  it.each(MEDIA_TYPES.flatMap((actual) => MEDIA_TYPES.map((claimed): [IconMediaType, IconMediaType] => [actual, claimed])))(
-    '%s bytes, read as %s',
-    (actual, claimed) => {
-      expect(sniffIconBytes(SAMPLES[actual], claimed)).toBe(actual === claimed)
-    },
-  )
+// The refusal tells an author their file does not hold what its extension
+// says, so the sniff refuses only what no measured browser draws under the type
+// the extension names, the type the data URL carries (design §5.4). Measured
+// 2026-10-24 with data: URLs in an <img>, Chromium 151 and Firefox 153: both
+// draw any of the three rasters under any raster type, Firefox draws them under
+// image/svg+xml as well, and neither draws SVG text under a raster type.
+describe('sniffIconBytes: what some measured browser draws under the declared type', () => {
+  it.each<[actual: IconMediaType, declared: IconMediaType, drawn: boolean]>([
+    ['image/png', 'image/png', true],
+    ['image/png', 'image/jpeg', true],
+    ['image/png', 'image/webp', true],
+    ['image/png', 'image/svg+xml', true],
+    ['image/jpeg', 'image/png', true],
+    ['image/jpeg', 'image/jpeg', true],
+    ['image/jpeg', 'image/webp', true],
+    ['image/jpeg', 'image/svg+xml', true],
+    ['image/webp', 'image/png', true],
+    ['image/webp', 'image/jpeg', true],
+    ['image/webp', 'image/webp', true],
+    ['image/webp', 'image/svg+xml', true],
+    ['image/svg+xml', 'image/png', false],
+    ['image/svg+xml', 'image/jpeg', false],
+    ['image/svg+xml', 'image/webp', false],
+    ['image/svg+xml', 'image/svg+xml', true],
+  ])('%s bytes, declared %s: drawn, %s', (actual, declared, drawn) => {
+    expect(sniffIconBytes(SAMPLES[actual], declared)).toBe(drawn)
+  })
+
+  // The SVG cell under a raster type was measured in these spellings and one
+  // more, a root with a viewBox alone: each drew in both browsers as
+  // image/svg+xml, and in neither under any raster type.
+  it.each<[what: string, bytes: Uint8Array]>([
+    ['a bare root', SVG],
+    ['an XML declaration', utf8(`<?xml version="1.0" encoding="UTF-8"?>\n${SVG_ROOT}`)],
+    ['a declaration and a DOCTYPE', utf8(`<?xml version="1.0"?>\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n${SVG_ROOT}`)],
+    ['UTF-16 with its byte order mark', utf16le(SVG_ROOT)],
+  ])('refuses SVG text that opens with %s under each raster type', (_what, bytes) => {
+    expect(sniffIconBytes(bytes, 'image/svg+xml')).toBe(true)
+    for (const declared of ['image/png', 'image/jpeg', 'image/webp'] as const) expect(sniffIconBytes(bytes, declared)).toBe(false)
+  })
 
   it.each(MEDIA_TYPES)('nothing at all is %s', (mediaType) => {
     expect(sniffIconBytes(new Uint8Array(0), mediaType)).toBe(false)
+  })
+
+  it.each(MEDIA_TYPES)('text that is no image, html, is not %s', (mediaType) => {
+    expect(sniffIconBytes(utf8('<html><body>icon</body></html>'), mediaType)).toBe(false)
   })
 })
 
@@ -427,8 +466,19 @@ describe('checkIconBytes', () => {
     expect(refusal(big, declare('icon.png', 'image/png'))).toBe(iconDetail.tooLarge('package.json "icon"', '"icon.png"', big.length))
   })
 
-  it('refuses PNG bytes declared as icon.svg', () => {
-    expect(refusal(PNG, svg)).toBe(iconDetail.wrongBytes('package.json "icon"', '"icon.svg"', 'SVG'))
+  // A raster under another extension draws (design §5.4), so it is carried, not
+  // refused. This was a refusal until the matrix above was measured: dsh labels
+  // an icon by its extension and the browser draws the raster it finds anyway.
+  it.each(FILES.filter(([mediaType]) => mediaType !== 'image/svg+xml'))('accepts each raster declared as a %s file, %s', (mediaType, path) => {
+    for (const raster of [PNG, JPEG, WEBP]) expect(checkIconBytes(raster, declare(path, mediaType))).toEqual({ ok: true })
+  })
+
+  it('accepts a raster declared as icon.svg, which Firefox draws as the raster it is', () => {
+    for (const raster of [PNG, JPEG, WEBP]) expect(checkIconBytes(raster, svg)).toEqual({ ok: true })
+  })
+
+  it.each(FILES.filter(([mediaType]) => mediaType !== 'image/svg+xml'))('refuses SVG text declared as a %s file, %s, as not holding %s data', (mediaType, path, typeName) => {
+    expect(refusal(SVG, declare(path, mediaType))).toBe(iconDetail.wrongBytes('package.json "icon"', shownPath(path), typeName))
   })
 
   it.each(FILES)('refuses html bytes declared as a %s file, %s, as not holding %s data', (mediaType, path, typeName) => {
@@ -461,7 +511,7 @@ describe('checkIconBytes', () => {
     ['icon', 'package.json "icon"'],
     ['export', 'the "./icon" export'],
   ])('names a declaration that came from %s as %s, in either refusal', (source, label) => {
-    expect(refusal(PNG, declare('icon.svg', 'image/svg+xml', source))).toBe(iconDetail.wrongBytes(label, '"icon.svg"', 'SVG'))
+    expect(refusal(HTML, declare('icon.svg', 'image/svg+xml', source))).toBe(iconDetail.wrongBytes(label, '"icon.svg"', 'SVG'))
     expect(refusal(svgOfLength(MAX_CATALOG_ICON_BYTES + 1), declare('icon.svg', 'image/svg+xml', source)))
       .toBe(iconDetail.tooLarge(label, '"icon.svg"', MAX_CATALOG_ICON_BYTES + 1))
   })
@@ -469,7 +519,7 @@ describe('checkIconBytes', () => {
   it('quotes an author\'s path with shownPath, so a newline in it never reaches a sentence', () => {
     const path = 'a"b\nc.svg'
     expect(shownPath(path)).not.toContain('\n')
-    expect(refusal(PNG, declare(path, 'image/svg+xml'))).toBe(iconDetail.wrongBytes('package.json "icon"', shownPath(path), 'SVG'))
+    expect(refusal(HTML, declare(path, 'image/svg+xml'))).toBe(iconDetail.wrongBytes('package.json "icon"', shownPath(path), 'SVG'))
     expect(refusal(svgOfLength(MAX_CATALOG_ICON_BYTES + 1), declare(path, 'image/svg+xml')))
       .toBe(iconDetail.tooLarge('package.json "icon"', shownPath(path), MAX_CATALOG_ICON_BYTES + 1))
   })
@@ -482,6 +532,15 @@ describe('iconDataUrl', () => {
 
   it.each(MEDIA_TYPES)('opens with the %s type and nothing else', (mediaType) => {
     expect(iconDataUrl(SAMPLES[mediaType], mediaType).startsWith(`data:${mediaType};base64,`)).toBe(true)
+  })
+
+  // dsh labels an icon by its extension, so the shop does too: a raster under
+  // another extension draws in the shop exactly where it draws on dsh's page.
+  it('carries a raster under the type its extension names, not the one its bytes are', () => {
+    expect(checkIconBytes(JPEG, declare('icon.png', 'image/png'))).toEqual({ ok: true })
+    expect(iconDataUrl(JPEG, 'image/png')).toBe(`data:image/png;base64,${Buffer.from(JPEG).toString('base64')}`)
+    expect(checkIconBytes(PNG, declare('icon.svg', 'image/svg+xml'))).toEqual({ ok: true })
+    expect(iconDataUrl(PNG, 'image/svg+xml')).toBe(`data:image/svg+xml;base64,${Buffer.from(PNG).toString('base64')}`)
   })
 
   it.each<[what: string, bytes: Uint8Array, encoded: string]>([

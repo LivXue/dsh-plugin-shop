@@ -43,6 +43,14 @@ function largeSvg(label: string): Uint8Array {
 /** The eight bytes every PNG starts with, and padding: a PNG as far as the sniff goes, and no SVG at all. */
 const PNG = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00)
 
+/**
+ * Bytes the check refuses under every extension: text that is no image. The
+ * refused fixtures below used PNG under `icon.svg` until Firefox was measured
+ * drawing a raster under image/svg+xml, which the check now accepts (design
+ * §5.4).
+ */
+const NOT_AN_IMAGE = utf8('<html></html>')
+
 // What a git-pinned entry is pinned to and what a rescued one installs. The
 // digests are real ones, made here, so that nothing below is a typed hash.
 const COMMIT = sha256Hex(utf8('a commit')).slice(0, 40)
@@ -283,7 +291,8 @@ describe('the fixtures', () => {
     expect(checkIconBytes(svgOf('a'), declaration())).toEqual({ ok: true })
     expect(checkIconBytes(svgOfLength(MAX_CATALOG_ICON_BYTES / 2), declaration())).toEqual({ ok: true })
     expect(checkIconBytes(PNG, declaration('icon.png', 'image/png'))).toEqual({ ok: true })
-    expect(checkIconBytes(PNG, declaration())).toMatchObject({ ok: false })
+    expect(checkIconBytes(PNG, declaration())).toEqual({ ok: true })
+    expect(checkIconBytes(NOT_AN_IMAGE, declaration())).toMatchObject({ ok: false })
     expect(checkIconBytes(new Uint8Array(MAX_CATALOG_ICON_BYTES + 1), declaration())).toMatchObject({ ok: false })
   })
 
@@ -732,7 +741,7 @@ describe('foldIconResults: what a fetch brings back', () => {
 
   it('refuses bytes that are not what the extension says, with the check\'s sentence', () => {
     const detail = iconDetail.wrongBytes(iconLabel('icon'), shownPath('icon.svg'), 'SVG')
-    const { fold } = runDay([x], { results: resultsOf([keyOf(x), bytesResult(PNG)]) })
+    const { fold } = runDay([x], { results: resultsOf([keyOf(x), bytesResult(NOT_AN_IMAGE)]) })
     expect(fold.nextState).toEqual(stateOf([keyOf(x), { outcome: 'refused', detail }]))
     expect(fold.rows).toEqual([{ name: 'x', identity: 'npm:x', kind: 'refused', detail }])
   })
@@ -740,7 +749,7 @@ describe('foldIconResults: what a fetch brings back', () => {
   it('names the declaration in the check\'s sentence by the one the work carried, so an export reads as an export', () => {
     const exported = npmSubject('x', declared('assets/logo.svg', 'image/svg+xml', 'export'))
     const detail = iconDetail.wrongBytes(iconLabel('export'), shownPath('assets/logo.svg'), 'SVG')
-    const { fold } = runDay([exported], { results: resultsOf([keyOf(exported), bytesResult(PNG)]) })
+    const { fold } = runDay([exported], { results: resultsOf([keyOf(exported), bytesResult(NOT_AN_IMAGE)]) })
     expect(fold.rows).toEqual([{ name: 'x', identity: 'npm:x', kind: 'refused', detail }])
   })
 
@@ -766,7 +775,7 @@ describe('foldIconResults: what a fetch brings back', () => {
   it('turns a recorded icon into the refusal a new fetch of it comes to', () => {
     // The key was read and passed once; the bytes it holds now do not pass.
     const bytes = svgOf('x')
-    const { fold } = runDay([x], { state: stateOf([keyOf(x), publishedRow(bytes)]), results: resultsOf([keyOf(x), bytesResult(PNG)]) })
+    const { fold } = runDay([x], { state: stateOf([keyOf(x), publishedRow(bytes)]), results: resultsOf([keyOf(x), bytesResult(NOT_AN_IMAGE)]) })
     expect(fold.nextState.get(keyOf(x))).toEqual({ outcome: 'refused', detail: iconDetail.wrongBytes(iconLabel('icon'), shownPath('icon.svg'), 'SVG') })
     expect(fold.counts).toEqual({ ...ZERO, declared: 1, refused: 1 })
   })
@@ -1119,7 +1128,7 @@ describe('foldIconResults: the record that goes forward', () => {
     const { fold } = runDay(subjects, {
       results: resultsOf(
         [npmKey('a'), bytesResult(svgOf('a'))],
-        [npmKey('b'), bytesResult(PNG)],
+        [npmKey('b'), bytesResult(NOT_AN_IMAGE)],
         [npmKey('c'), { kind: 'not-read', detail: iconDetail.releaseUnreadable() }],
       ),
     })
@@ -1288,7 +1297,7 @@ describe('foldIconResults: every bucket at once', () => {
       results: resultsOf(
         [keyOf(subject('a-published')), bytesResult(published)],
         [keyOf(subject('d-big')), bytesResult(big)],
-        [keyOf(subject('f-badbytes')), bytesResult(PNG)],
+        [keyOf(subject('f-badbytes')), bytesResult(NOT_AN_IMAGE)],
         [keyOf(subject('g-gone')), { kind: 'not-read', detail: gone }],
         [keyOf(subject('h-later')), { kind: 'not-yet-read', reason: 'a timeout' }],
         [keyOf(subject('i-deferred')), bytesResult(svgOf('i'))],
@@ -1376,7 +1385,7 @@ describe('foldIconResults: every day for one entry', () => {
   const ANSWERS: Record<Scenario['answer'], IconFetchResult | undefined> = {
     'same-bytes': bytesResult(A),
     'new-bytes': bytesResult(B),
-    'wrong-bytes': bytesResult(PNG),
+    'wrong-bytes': bytesResult(NOT_AN_IMAGE),
     refused: { kind: 'refused', detail: FETCH_REFUSED },
     'not-read': { kind: 'not-read', detail: FETCH_NOT_READ },
     'not-yet-read': { kind: 'not-yet-read', reason: 'a timeout' },
@@ -1495,7 +1504,7 @@ describe('foldIconResults: the same answer from the same day', () => {
       state: stateOf([key('reused'), publishedRow(svgOf('reused'))]),
       published: fileOf([[key('reused'), svgOf('reused')]]),
       withheld: withheldOf(['held', 'r']),
-      results: resultsOf([key('ok'), bytesResult(shared)], [key('twin'), bytesResult(shared)], [key('bad'), bytesResult(PNG)]),
+      results: resultsOf([key('ok'), bytesResult(shared)], [key('twin'), bytesResult(shared)], [key('bad'), bytesResult(NOT_AN_IMAGE)]),
     }
     const expected = written(runDay(subjects, day).fold)
     expect(expected.counts).toEqual({ ...ZERO, declared: 5, published: 3, withheldByHand: 1, refused: 1 })
@@ -1627,7 +1636,7 @@ describe('whatever a day brings', () => {
         if (record === 'not-read') state.set(subject.key, { outcome: 'not-read', detail: iconDetail.releaseUnreadable() })
         const answer = draw.from(ANSWERS)
         if (answer === 'bytes') results.set(subject.key, bytesResult(draw.from(POOL)))
-        if (answer === 'wrong-bytes') results.set(subject.key, bytesResult(PNG))
+        if (answer === 'wrong-bytes') results.set(subject.key, bytesResult(NOT_AN_IMAGE))
         if (answer === 'refused') results.set(subject.key, { kind: 'refused', detail: iconDetail.notString() })
         if (answer === 'not-read') results.set(subject.key, { kind: 'not-read', detail: iconDetail.releaseUnreadable() })
         if (answer === 'not-yet-read') results.set(subject.key, { kind: 'not-yet-read', reason: 'a timeout' })
