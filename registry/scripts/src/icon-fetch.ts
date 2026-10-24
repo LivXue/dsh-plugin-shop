@@ -41,7 +41,7 @@ import type { IconKey } from './icon-state.ts'
 import { ICONS_FILE_BUDGET_BYTES, parseIconsFile } from './icons-assemble.ts'
 import type { IconsFile } from './icons-assemble.ts'
 import { withTimeout } from './npm-client.ts'
-import { echo, MAX_INFLATED_BYTES } from './release-asset.ts'
+import { echo, MAX_INFLATED_BYTES, normalize, singleRoot } from './release-asset.ts'
 
 /**
  * Where the catalog is published, and so where the last build's `index.json`,
@@ -75,13 +75,14 @@ export const ICON_FETCH_BUDGET_DEFAULT = 1500
  * `ICON_FETCH_TIME_BUDGET_MS` is unset: 15 minutes (design §5.3).
  *
  * `daily.yml` bounds the build job at 180 minutes, and a daily run takes about
- * 105 of them. So the budget, and the fetches still in flight when it runs out,
- * must fit in what the run leaves:
+ * 105 of them. So the budget, the published file's reads and the fetches still
+ * in flight when it runs out must fit in what the run leaves:
  *
  *   105m  the daily run without this step
+ * +   4m  the two reads of the published icons file, at most 120 seconds each
  * +  15m  this budget, spent in full
  * +   5m  at most one fetch in flight per worker when it runs out
- * = 125m  55m inside the bound.
+ * = 129m  51m inside the bound.
  *
  * A fetch in flight costs at most 5 minutes because each takes the first answer
  * it gets, without a status ladder to wait out: a tarball or an asset is one
@@ -291,16 +292,19 @@ function holdsBytesOf(dataUrl: string, sha256: string): boolean {
  *   bound, with its size where that is known and without it where the read
  *   stopped at the bound.
  * - `not-read`: the artifact could not be read at all, through no fault of its
- *   author: a download past 32 MiB, or an npm tarball that inflates past 64 MiB.
+ *   author, and bytes shown to be the artifact's will not read any better
+ *   tomorrow: an npm tarball past 32 MiB or inflating past 64 MiB, and a tarball
+ *   or asset, once it has matched its digest or sha256, that cannot be read as a
+ *   gzipped tar archive with one top-level directory.
  * - `not-yet-read`: anything that says nothing about the artifact, with a reason
  *   for the log. A transport failure of any kind, a status that is not an
  *   answer about the file, a tarball URL that is not the registry's or a release
- *   URL that is not the repository's, an integrity or sha256 the bytes do not
- *   match, bytes that cannot be read as a gzipped tar, an archive whose members
- *   share no one top-level directory (which member an install keeps depends on
- *   their order, so nothing true can be said of the icon), a release asset that
- *   inflates past the cap (no sentence is true of it, and the rescue that listed
- *   it was held to the same cap), and a pinned commit that is not a sha.
+ *   URL that is not the repository's, an integrity this build cannot compute (no
+ *   request is made) or bytes that do not match the integrity or sha256 (a
+ *   release download past the cap is one, since it cannot be the recorded asset),
+ *   a release asset that inflates past the cap (no sentence is true of it, and
+ *   the rescue that listed it was held to the same cap), and a pinned commit that
+ *   is not a sha.
  *
  * Every request takes the first answer it gets: a 429 or a 5xx is "not yet
  * read" at once and is not waited out, so a fetch in flight when the time budget
@@ -367,25 +371,39 @@ function registryTarballUrl(raw: string): string | null {
  */
 const INTEGRITY_ALGORITHMS = ['sha512', 'sha384', 'sha256', 'sha1'] as const
 
+/** The digests of one algorithm, as npm wrote them in base64. */
+interface Digests {
+  algorithm: (typeof INTEGRITY_ALGORITHMS)[number]
+  expected: string[]
+}
+
 /**
- * Whether `bytes` match `integrity`, an SRI string: one digest, or several
- * separated by white space, each `<algorithm>-<base64>` as npm writes
- * `dist.integrity`. `unsupported` is a string with no digest in an algorithm of
- * {@link INTEGRITY_ALGORITHMS}: there is nothing to check the bytes by, and
- * bytes that are not checked are not shown to be the listed artifact's.
+ * The digests `integrity` holds in the strongest algorithm of
+ * {@link INTEGRITY_ALGORITHMS} it holds any in, or null where it holds none.
+ * `integrity` is an SRI string: one digest, or several separated by white space,
+ * each `<algorithm>-<base64>` as npm writes `dist.integrity`.
+ *
+ * Read before the request, because null settles it: there is nothing to check
+ * the bytes by, bytes that are not checked are not shown to be the listed
+ * artifact's, and the gate admits any `[a-z0-9]+` algorithm, so a string this
+ * build cannot compute does reach here. Downloading 32 MiB to find that out
+ * would be done again every day.
  */
-function checkIntegrity(bytes: Uint8Array, integrity: string): 'match' | 'mismatch' | 'unsupported' {
+function strongestDigests(integrity: string): Digests | null {
   const digests = integrity.split(/\s+/).flatMap((token) => {
     const dash = token.indexOf('-')
     return dash === -1 ? [] : [{ algorithm: token.slice(0, dash), expected: token.slice(dash + 1) }]
   })
   for (const algorithm of INTEGRITY_ALGORITHMS) {
-    const candidates = digests.filter((digest) => digest.algorithm === algorithm)
-    if (candidates.length === 0) continue
-    const actual = createHash(algorithm).update(bytes).digest('base64')
-    return candidates.some(({ expected }) => expected === actual) ? 'match' : 'mismatch'
+    const expected = digests.filter((digest) => digest.algorithm === algorithm).map((digest) => digest.expected)
+    if (expected.length > 0) return { algorithm, expected }
   }
-  return 'unsupported'
+  return null
+}
+
+/** Whether `bytes` hash to one of `digests`. */
+function matchesDigests(bytes: Uint8Array, { algorithm, expected }: Digests): boolean {
+  return expected.includes(createHash(algorithm).update(bytes).digest('base64'))
 }
 
 /** What opening an archive for the icon came to. */
@@ -393,18 +411,16 @@ type Opened =
   | { kind: 'member'; member: Buffer }
   | { kind: 'missing' }
   | { kind: 'unpacks-too-large' }
-  | { kind: 'unreadable'; reason: string }
-
-/** `tar czf x.tgz ./package` writes `./package/…`; the leading `./` is no part of the path. */
-const withoutDotSlash = (path: string): string => path.replace(/^\.\//, '')
+  | { kind: 'unreadable' }
 
 /**
  * Inflate a gzipped tar and take the member at `<root>/<path>`, `<root>` being
- * the single first path segment every member shares (`package` for everything
- * `npm pack` writes, and anything else a tarball may be rooted at). Both
- * channels that read an icon from an archive are installed with the first
- * segment stripped, so the file the install carries at `<path>` is the member
- * under that root.
+ * the archive's one top-level directory, found as the harvest's own reader finds
+ * it ({@link singleRoot}): `package` for everything `npm pack` writes, and
+ * anything else a tarball may be rooted at, `./` spellings and a stray file at
+ * the top aside. Both channels that read an icon from an archive are installed
+ * with the first path component stripped, so the file the install carries at
+ * `<path>` is the member under that root.
  *
  * The inflate is bounded by `maxOutputLength`, which is `MAX_INFLATED_BYTES`
  * unless the transport lowers it (release-asset.ts keeps the arithmetic): a body
@@ -413,43 +429,55 @@ const withoutDotSlash = (path: string): string => path.replace(/^\.\//, '')
  * `unpacks-too-large`.
  *
  * `unreadable` is bytes that are not a gzipped tar this pipeline can read: the
- * inflate or the tar reader threw, or the members share no single top-level
- * directory. The reader is a small strict parser, and what it refuses (a `..`
- * member, a base-256 size) is as likely its limit as the archive's fault, so
- * the archive is not blamed. Several top-level entries are not what `npm pack`
+ * inflate or the tar reader threw, or the archive has no one top-level
+ * directory. The caller has checked the bytes against the digest or the sha256
+ * recorded for them, so that is a fixed property of an immutable key, recorded
+ * as "not read" and not found out again every day. The reader is a small strict
+ * parser, and what it refuses (a `..` member, a base-256 size) is as likely its
+ * limit as the archive's fault, so the sentence says what the build could not
+ * do and blames no one. Several top-level directories are not what `npm pack`
  * writes, and which of them an install keeps depends on the order of the
- * members, so no answer about the icon is true of them.
+ * members.
  *
- * The reader decodes names as ASCII, which drops the high bit of every byte of
- * a name written in UTF-8: an icon called `图标.svg` is a member called
- * `e\x1b>f \x07.svg` (measured on a tarball `npm pack` wrote), and looked up as
- * itself it would be reported missing from a package that ships it, a reason
- * that is false. So the path is looked for in that spelling as well as in its
- * own, which is what a reader that decodes UTF-8 would give. The reader also
- * skips the pax headers that carry a name past what a ustar header holds, 256
- * bytes, so a path that long is not found whatever the archive holds; an icon's
- * path is far from that.
+ * A name is looked up as the reader spells it: one character for each byte, so
+ * a declared path is looked up as `Buffer.from(path, 'utf8').toString('latin1')`
+ * and `图标.svg` is found where it is. Decoding names as ASCII, as the reader
+ * once did, dropped the high bit of every byte, which made `é.svg` (C3 A9) and
+ * `C).svg` one name and took the bytes of one for the other's.
+ *
+ * What the reader does not see is a name that does not fit a ustar header: 100
+ * bytes of name and 155 of prefix, which `npm pack` fills by splitting a path at
+ * a slash. A name past that comes with a pax header (`npm pack`: one file name
+ * past 100 bytes, about 33 CJK characters, or a path past 255) or, from GNU tar,
+ * an `L` entry (past 100), and the reader skips both, so the entry arrives under
+ * a cut name and an icon with a path that long is reported missing from a package
+ * that ships it. Not handled here: it takes the shared reader reading those
+ * headers.
  */
 function openMember(archive: Uint8Array, path: string, inflatedBytes: number): Opened {
   let files: Map<string, Buffer>
   try {
     files = readTar(gunzipSync(archive, { maxOutputLength: inflatedBytes }))
   } catch (error) {
+    // Swallows gunzip's own throws (not gzip, cut short, corrupt) and the tar
+    // reader's deliberate loudness, whose cause is the archive's or the
+    // reader's and is not told apart: either way the build could not read it,
+    // which is all the sentence for it says. Past the output bound is its own
+    // answer.
     if ((error as { code?: unknown }).code === 'ERR_BUFFER_TOO_LARGE') return { kind: 'unpacks-too-large' }
-    return { kind: 'unreadable', reason: `the archive could not be read as a gzipped tar archive by this pipeline: ${message(error)}` }
+    return { kind: 'unreadable' }
   }
-  const spellings = new Set([path, Buffer.from(path, 'utf8').toString('ascii')])
-  let root: string | undefined
+  // An archive with no member at all is readable, and has no icon.
+  if (files.size === 0) return { kind: 'missing' }
+  const rooted = singleRoot([...files.keys()].map(normalize))
+  if ('detail' in rooted) return { kind: 'unreadable' }
+  const wanted = `${rooted.root}/${Buffer.from(path, 'utf8').toString('latin1')}`
   let found: Buffer | undefined
   for (const [raw, member] of files) {
-    const name = withoutDotSlash(raw)
-    const head = name.slice(0, Math.max(0, name.indexOf('/')))
-    if (head === '' || (root !== undefined && head !== root)) {
-      return { kind: 'unreadable', reason: 'the members of the archive share no single top-level directory, so the icon cannot be placed in it' }
-    }
-    root = head
-    // The later of two spellings of one path wins, as when it is extracted.
-    if (spellings.has(name.slice(head.length + 1))) found = member
+    // A name that appears twice, `package/x` and `./package/x` say, is not what
+    // `npm pack` writes. The later one the reader returned is taken, which is no
+    // claim about which an install would keep.
+    if (normalize(raw) === wanted) found = member
   }
   return found === undefined ? { kind: 'missing' } : { kind: 'member', member: found }
 }
@@ -471,6 +499,11 @@ async function fromNpm(target: NpmTarget, label: string, shown: string, transpor
   if (url === null) {
     return notYetRead(`the tarball URL ${echo(target.tarball)} of ${subject} is not an https://${REGISTRY_HOST} URL, so it was not requested`)
   }
+  // Before the request, not after the body: see strongestDigests.
+  const digests = strongestDigests(target.integrity)
+  if (digests === null) {
+    return notYetRead(`the dist.integrity ${echo(target.integrity)} of ${subject} holds no digest in sha512, sha384, sha256 or sha1, so the tarball cannot be checked and was not requested`)
+  }
   // The registry's tarballs are public, so no token goes with the request.
   const response = await withTimeout(transport.fetchImpl, transport.tarballTimeoutMs, 'registry')(url)
   if (!response.ok) return notYetRead(`the registry answered ${response.status} for the tarball of ${subject}`)
@@ -479,11 +512,9 @@ async function fromNpm(target: NpmTarget, label: string, shown: string, transpor
   if (bytes === null) return notRead(iconDetail.packageTooLarge(name, version))
   // Before anything is inflated: the icon is the listed artifact's only if the
   // bytes are, and the catalog says "this version" for the icon as for the rest.
-  const verdict = checkIntegrity(bytes, target.integrity)
-  if (verdict === 'unsupported') {
-    return notYetRead(`the dist.integrity ${echo(target.integrity)} of ${subject} holds no digest in sha512, sha384, sha256 or sha1, so the tarball was not checked and not read`)
-  }
-  if (verdict === 'mismatch') return notYetRead(`the tarball of ${subject} does not match its dist.integrity`)
+  // It is also what lets an archive be called unreadable for good: bytes that
+  // are not the version's say nothing of the version.
+  if (!matchesDigests(bytes, digests)) return notYetRead(`the tarball of ${subject} does not match its dist.integrity`)
   const opened = openMember(bytes, target.path, inflatedBytes)
   switch (opened.kind) {
     case 'member':
@@ -493,7 +524,7 @@ async function fromNpm(target: NpmTarget, label: string, shown: string, transpor
     case 'unpacks-too-large':
       return notRead(iconDetail.packageUnpacksTooLarge(name, version))
     case 'unreadable':
-      return notYetRead(`${opened.reason} (${subject})`)
+      return notRead(iconDetail.packageUnreadable(name, version))
   }
 }
 
@@ -536,7 +567,13 @@ async function fromRelease(target: ReleaseTarget, label: string, shown: string, 
   // The parsed URL's own spelling, so what is requested is what was checked.
   const download = await downloadReleaseAsset(asset.href, transport.fetchImpl, transport.sleep, transport.tarballTimeoutMs, 'first-answer')
   if (download.outcome === 'not-found') return notYetRead(`the release asset of ${echo(target.repo)} answered 404`)
-  if (download.outcome === 'over-cap') return notRead(iconDetail.releaseTooLarge())
+  // The recorded sha256 was taken of an asset read under this same cap, so a
+  // download past it cannot be that asset: it has changed, which a sha256 that
+  // does not match says as well. Nothing is recorded for it, and no sentence of
+  // the table is true of it.
+  if (download.outcome === 'over-cap') {
+    return notYetRead(`the release asset of ${echo(target.repo)} is past the ${MAX_TARBALL_BYTES}-byte cap its recorded sha256 was taken under, so it is not the recorded asset`)
+  }
   if (sha256Hex(download.bytes) !== target.sha256) {
     return notYetRead(`the release asset of ${echo(target.repo)} does not hash to the recorded sha256`)
   }
@@ -548,9 +585,11 @@ async function fromRelease(target: ReleaseTarget, label: string, shown: string, 
     case 'missing':
       return refused(iconDetail.notInRelease(label, shown))
     case 'unpacks-too-large':
+      // No sentence is true of it, and the rescue that listed the entry was held
+      // to the same cap, so the harvest does not leave this state behind.
       return notYetRead(`the release asset of ${echo(target.repo)} inflates past the ${inflatedBytes}-byte cap, so it was not read`)
     case 'unreadable':
-      return notYetRead(`${opened.reason} (${echo(target.repo)})`)
+      return notRead(iconDetail.releaseUnreadable())
   }
 }
 

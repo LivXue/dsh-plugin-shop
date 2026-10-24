@@ -1,8 +1,40 @@
 import { describe, expect, it } from 'vitest'
 import { gzipSync } from 'node:zlib'
-import { declaredPatchFiles, MAX_INFLATED_BYTES, readPackedDeclarations, treePathOf, UNBUILT_FIELD_MAX_LENGTH, unbuiltFinding, verifyReleaseAsset } from '../src/release-asset.ts'
+import { declaredPatchFiles, MAX_INFLATED_BYTES, normalize, readPackedDeclarations, singleRoot, treePathOf, UNBUILT_FIELD_MAX_LENGTH, unbuiltFinding, verifyReleaseAsset } from '../src/release-asset.ts'
 import { packedTarball, rawTarball } from './packed-tarball.ts'
 
+
+// The archive's root, as the rescue finds it and as the icon step must: the
+// icon step reads an icon out of the same archives, so an asset this accepts
+// and that finds no root would leave its entry's icon unread for good.
+describe('singleRoot and normalize', () => {
+  it('finds the one top-level directory of what npm pack writes', () => {
+    expect(singleRoot(['package/package.json', 'package/lib/index.js'])).toEqual({ root: 'package' })
+  })
+
+  it('is not hindered by a file at the top beside that directory', () => {
+    // strip: 1 leaves such a file no path, so it lands nowhere; it is not a
+    // second root, and an archive that carries one is still installed.
+    expect(singleRoot(['package/package.json', 'README.md'])).toEqual({ root: 'package' })
+    expect(singleRoot(['README.md', 'package/package.json', 'LICENSE'])).toEqual({ root: 'package' })
+  })
+
+  it('has no root where there is no directory to strip, or where there are several', () => {
+    expect(singleRoot(['README.md'])).toMatchObject({ detail: expect.stringContaining('no top-level directory') })
+    expect(singleRoot([])).toMatchObject({ detail: expect.stringContaining('holds no files') })
+    expect(singleRoot(['a/x', 'b/y'])).toMatchObject({ detail: expect.stringContaining('2 top-level directories') })
+    // A member whose first segment is empty: what `.//x` is once normalized.
+    expect(singleRoot(['/x'])).toMatchObject({ detail: expect.stringContaining('no top-level directory') })
+  })
+
+  it('normalizes the leading ./ of a member and nothing else of it', () => {
+    expect(normalize('./package/x')).toBe('package/x')
+    expect(normalize('package/x')).toBe('package/x')
+    expect(normalize('.//x')).toBe('/x')
+    expect(normalize('package/./x')).toBe('package/./x')
+    expect(normalize('././package/x')).toBe('./package/x')
+  })
+})
 
 describe('verifyReleaseAsset', () => {
   // The acceptance cases below assert `toMatchObject({ ok: true })` rather than

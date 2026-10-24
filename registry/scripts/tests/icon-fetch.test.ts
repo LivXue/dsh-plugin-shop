@@ -19,7 +19,7 @@ import type { IconFetchResult, IconPlan, IconWork } from '../src/icon-plan.ts'
 import { githubIconKey, npmIconKey, releaseIconKey } from '../src/icon-state.ts'
 import { serializeIcons } from '../src/icons-assemble.ts'
 import type { IconsFile } from '../src/icons-assemble.ts'
-import { MAX_INFLATED_BYTES } from '../src/release-asset.ts'
+import { MAX_INFLATED_BYTES, readPackedDeclarations, verifyReleaseAsset } from '../src/release-asset.ts'
 import { rawTarball } from './packed-tarball.ts'
 import { headersThenBodyError, headersThenStalledBody } from './stalling-fetch.ts'
 
@@ -167,9 +167,8 @@ describe('the figures the module and its published sentences are held to', () =>
   // import them, so it writes the figures out in the sentences an author reads.
   // If a constant moves and the copy does not, an author is told a bound the
   // build does not apply; this is what makes one change drag the other.
-  it('packageTooLarge and releaseTooLarge name the cap a download is read under', () => {
+  it('packageTooLarge names the cap an npm tarball is read under', () => {
     expect(iconDetail.packageTooLarge('x', '1.0.0')).toContain(`the ${MAX_TARBALL_BYTES / MIB} MiB the catalog build downloads`)
-    expect(iconDetail.releaseTooLarge()).toContain(`the ${MAX_TARBALL_BYTES / MIB} MiB the catalog build downloads`)
   })
 
   it('packageUnpacksTooLarge names the cap an archive is inflated under', () => {
@@ -248,15 +247,48 @@ describe('fetchIcon: the listed npm tarball', () => {
     expect(textOf(result)).toBe('<svg/>')
   })
 
-  it('finds an icon whose file name is not ASCII, as the reader spells it', async () => {
-    // `readTar` decodes names as ASCII, so the member `package/assets/图标.svg`
-    // reaches the lookup as a different string; reported missing it would be a
-    // refusal that is false, of a package that ships the icon.
+  describe('a file name that is not ASCII', () => {
+    // `readTar` spells a name by its bytes, one character each, so the member
+    // `package/assets/图标.svg` reaches the lookup as the string those UTF-8 bytes
+    // make, and the declared path is looked for as the same bytes. Spelled any
+    // other way the icon is reported missing from a package that ships it, a
+    // reason that is false, or another file's bytes are taken for it.
     const path = 'assets/图标.svg'
-    const tarball = tarballOf({ 'package.json': '{}', [path]: SVG })
-    const { fetchImpl } = always(() => new Response(tarball))
-    const result = await fetchIcon(npmWork(tarball, { path }), transportOf(fetchImpl))
-    expect(textOf(result)).toBe(SVG)
+
+    it('finds the icon', async () => {
+      const tarball = tarballOf({ 'package.json': '{}', [path]: SVG })
+      const { fetchImpl } = always(() => new Response(tarball))
+      expect(textOf(await fetchIcon(npmWork(tarball, { path }), transportOf(fetchImpl)))).toBe(SVG)
+    })
+
+    it('finds it in a tarball `npm pack` wrote, pax header and all', async () => {
+      // `npm pack` 11.18.0 of a package whose icon is `assets/图标.svg` (the 42
+      // bytes below): node-tar writes the name in UTF-8 in the ustar header and
+      // again in a pax header, which the reader skips.
+      const tarball = Buffer.from(
+        'H4sIAAAAAAAC/+2VO07EMBCGU+cUlmuwx84DZUWoKekRhRVMNrB5KDabCETNIWg4CbeBczCGFeLZLdHuyl8zo/93YWv0ezpVXKlS8+69skvTNsGaAYA0jslvukNE6EVJCkKkKWCPTeLOQzAB18aqHq+yhkci5KNuCbeENqrWdEZo0exXRdvQPUKXujcVtqgKBgyc9uahoIzR1vDnh6eXx3tmlqUzL6qFNuiermx6Ru7CwLPxnKjxWKtz3X8a6NT5d3H5mn+ZxKiNPv//Dv69nbLzfPX/8x/pDkVGalvVOo+zTKQyAQiFIKa6QUX6jG85f859uvxDIr/nP4oPpN//U3CIoyZjvWhMTufWdjPOh2FgQ8TavuQSn8LdiudHPukej8ezU7wCF1ptMgAQAAA=',
+        'base64',
+      )
+      const { fetchImpl } = always(() => new Response(tarball))
+      const work: IconWork = { ...npmWork(tarball, { path }), target: { kind: 'npm', name: 'cn-icon', version: '1.0.0', tarball: NPM_URL, integrity: sriOf(tarball), path } }
+      expect(textOf(await fetchIcon(work, transportOf(fetchImpl)))).toBe('<svg xmlns="http://www.w3.org/2000/svg"/>\n')
+    })
+
+    it('does not take another file for it whose name has the same low bits', async () => {
+      // `é` is C3 A9, which with the high bit of each byte dropped is `C)`: a
+      // reader that decodes names as ASCII makes one name of `é.svg` and `C).svg`.
+      const tarball = tarballOf({ 'C).svg': '<svg id="not-the-declared-file"/>' })
+      const { fetchImpl } = always(() => new Response(tarball))
+      const result = await fetchIcon(npmWork(tarball, { path: 'é.svg' }), transportOf(fetchImpl))
+      expect(result).toEqual({ kind: 'refused', detail: iconDetail.notInPackage(LABEL, shownPath('é.svg'), 'x', '1.0.0') })
+    })
+
+    it('takes the declared file when an archive holds both', async () => {
+      const tarball = tarballOf({ 'é.svg': '<svg id="e-acute"/>', 'C).svg': '<svg id="c-paren"/>' })
+      const { fetchImpl } = always(() => new Response(tarball))
+      expect(textOf(await fetchIcon(npmWork(tarball, { path: 'é.svg' }), transportOf(fetchImpl)))).toBe('<svg id="e-acute"/>')
+      expect(textOf(await fetchIcon(npmWork(tarball, { path: 'C).svg' }), transportOf(fetchImpl)))).toBe('<svg id="c-paren"/>')
+    })
   })
 
   it('hands over a copy of the member, not a view that keeps the whole inflated archive alive', async () => {
@@ -290,13 +322,37 @@ describe('fetchIcon: the listed npm tarball', () => {
       ['md5', sriOf(tarball, 'md5')],
       ['sha224', sriOf(tarball, 'sha224')],
       ['sha3-256', sriOf(tarball, 'sha3-256')],
+      // The gate admits any `[a-z0-9]+` algorithm, so one the build cannot compute reaches here.
+      ['an algorithm no build computes', `sha999-${createHash('sha512').update(tarball).digest('base64')}`],
       ['no algorithm', `-${createHash('sha512').update(tarball).digest('base64')}`],
       ['no hyphen at all', createHash('sha512').update(tarball).digest('base64')],
       ['an empty string', ''],
-    ])('is not-yet-read for an integrity with %s', async (_label, integrity) => {
-      const result = await fetchIcon(npmWork(tarball, { integrity }), transportOf(serve.fetchImpl))
+    ])('is not-yet-read, and downloads nothing, for an integrity with %s', async (_label, integrity) => {
+      // The algorithm is read before the request: a tarball nothing can check
+      // is not worth 32 MiB, and would be asked for again tomorrow.
+      const { fetchImpl, calls } = always(() => new Response(tarball))
+      const result = await fetchIcon(npmWork(tarball, { integrity }), transportOf(fetchImpl))
       expect(result.kind).toBe('not-yet-read')
       expect(reasonOf(result)).toContain('sha512, sha384, sha256 or sha1')
+      expect(calls).toEqual([])
+    })
+
+    it('uses a digest it can compute from a list that also holds ones it cannot', async () => {
+      const { fetchImpl, calls } = always(() => new Response(tarball))
+      const integrity = `md5-${createHash('md5').update(other).digest('base64')} ${sriOf(tarball)}`
+      expect(textOf(await fetchIcon(npmWork(tarball, { integrity }), transportOf(fetchImpl)))).toBe(SVG)
+      expect(calls).toHaveLength(1)
+    })
+
+    it('calls bytes that do not match unverified, whatever they hold: only the listed bytes can be called unreadable', async () => {
+      // A mirror or an edge answering in the registry's place may serve anything.
+      // What it serves says nothing about the version, so it is "not yet read",
+      // never the "not read" that would be recorded for good.
+      const junk = Buffer.from('this is not a tarball')
+      const { fetchImpl } = always(() => new Response(junk))
+      const result = await fetchIcon(npmWork(junk, { integrity: sriOf(tarball) }), transportOf(fetchImpl))
+      expect(result.kind).toBe('not-yet-read')
+      expect(reasonOf(result)).toContain('dist.integrity')
     })
 
     it('judges a list of digests by its strongest, as SRI does', async () => {
@@ -470,36 +526,63 @@ describe('fetchIcon: the listed npm tarball', () => {
     })
   })
 
-  describe('an archive whose root cannot be told', () => {
-    // Several top-level entries are not what `npm pack` writes, and which of
-    // them an install would keep depends on the order of the members: nothing
-    // true can be said about the icon, so nothing is recorded and it is asked
-    // again, rather than the author being told a thing that may be false.
+  describe('a file at the top beside the one directory', () => {
+    // The root is the tarball's one top-level DIRECTORY, as the harvest's own
+    // reader finds it (`singleRoot`): npm and pnpm strip the first path
+    // component when they extract, so a file with none left lands nowhere. A
+    // hand-made tarball can carry one, and it must not hide an icon the install
+    // carries.
+    const members = { 'package/package.json': '{}', [`package/${PATH}`]: SVG, 'README.md': '# x' }
+
+    it('does not hide the icon', async () => {
+      const tarball = rawTarball(members)
+      const { fetchImpl } = always(() => new Response(tarball))
+      expect(textOf(await fetchIcon(npmWork(tarball), transportOf(fetchImpl)))).toBe(SVG)
+    })
+
+    it('does not hide it behind a ./ spelling either', async () => {
+      const tarball = rawTarball({ './package/package.json': '{}', [`./package/${PATH}`]: SVG, './README.md': '# x' })
+      const { fetchImpl } = always(() => new Response(tarball))
+      expect(textOf(await fetchIcon(npmWork(tarball), transportOf(fetchImpl)))).toBe(SVG)
+    })
+
+    it('is not taken for the icon: a path the install would not carry is missing', async () => {
+      const tarball = rawTarball({ 'package/package.json': '{}', 'icon.svg': SVG })
+      const { fetchImpl } = always(() => new Response(tarball))
+      const result = await fetchIcon(npmWork(tarball, { path: 'icon.svg' }), transportOf(fetchImpl))
+      expect(result).toEqual({ kind: 'refused', detail: iconDetail.notInPackage(LABEL, shownPath('icon.svg'), 'x', '1.0.0') })
+    })
+  })
+
+  describe('an archive without one top-level directory', () => {
+    // Several top-level directories are not what `npm pack` writes, and which
+    // of them an install keeps depends on the order of the members; no
+    // directory at all leaves nothing to land. The bytes are the listed
+    // version's, so that does not change: it is "not read", recorded with its
+    // sentence, and not downloaded again every day.
     it.each([
       ['two directories', { 'package/package.json': '{}', [`pkg/${PATH}`]: SVG }],
-      ['a file beside the directory', { [`package/${PATH}`]: SVG, 'README.md': '# x' }],
       ['only a file at the top', { 'icon.svg': SVG }],
-    ])('is not-yet-read for %s', async (_label, members) => {
+      ['a member whose first segment is empty', { './/package.json': '{}' }],
+    ])('is not-read for %s', async (_label, members) => {
       const tarball = rawTarball(members)
       const { fetchImpl } = always(() => new Response(tarball))
       const result = await fetchIcon(npmWork(tarball), transportOf(fetchImpl))
-      expect(result.kind).toBe('not-yet-read')
-      expect(reasonOf(result)).toContain('top-level directory')
+      expect(result).toEqual({ kind: 'not-read', detail: iconDetail.packageUnreadable('x', '1.0.0') })
     })
   })
 
   describe('an archive this pipeline cannot read', () => {
-    // A version's bytes never change, so these stay unreadable, and no sentence
-    // in the table is true of them: the reason is for the log.
+    // A version's bytes never change, so these stay unreadable once they have
+    // been shown to be the version's: "not read", with its sentence.
     it.each([
       ['bytes that are not gzip', Buffer.from('this is not a tarball')],
       ['a gzip stream cut short', tarballOf({ [PATH]: SVG }).subarray(0, 20)],
       ['a member that climbs out of the archive', rawTarball({ 'package/../escape.svg': SVG })],
-    ])('is not-yet-read for %s', async (_label, tarball) => {
+    ])('is not-read for %s', async (_label, tarball) => {
       const { fetchImpl } = always(() => new Response(tarball))
       const result = await fetchIcon(npmWork(tarball), transportOf(fetchImpl))
-      expect(result.kind).toBe('not-yet-read')
-      expect(reasonOf(result)).toContain('gzipped tar archive')
+      expect(result).toEqual({ kind: 'not-read', detail: iconDetail.packageUnreadable('x', '1.0.0') })
     })
   })
 
@@ -750,16 +833,21 @@ describe('fetchIcon: the release asset', () => {
     expect(reasonOf(result)).toContain('exceeded 60ms')
   })
 
-  it('is not-read, with exactly the sentence for the cap, when the asset announces more than it', async () => {
+  // The recorded sha256 was taken of an asset read under this same cap, so a
+  // download past it cannot be that asset: it has changed, which is what a
+  // sha256 that does not match says too. Nothing is recorded for it.
+  it('is not-yet-read, like a changed asset, when the asset announces more than the cap', async () => {
     const { fetchImpl } = always(() => new Response(asset, { headers: { 'content-length': String(MAX_TARBALL_BYTES + 1) } }))
     const result = await fetchIcon(releaseWork(asset), transportOf(fetchImpl))
-    expect(result).toEqual({ kind: 'not-read', detail: iconDetail.releaseTooLarge() })
+    expect(result.kind).toBe('not-yet-read')
+    expect(reasonOf(result)).toContain(`${MAX_TARBALL_BYTES}-byte`)
   })
 
-  it('is not-read, with the same sentence, when the body outgrows the cap while it is read', async () => {
+  it('is not-yet-read, with the same reason, when the body outgrows the cap while it is read', async () => {
     const body = streamOfZeros(MAX_TARBALL_BYTES + 8 * MIB)
     const result = await fetchIcon(releaseWork(asset), transportOf(always(body.make).fetchImpl))
-    expect(result).toEqual({ kind: 'not-read', detail: iconDetail.releaseTooLarge() })
+    expect(result.kind).toBe('not-yet-read')
+    expect(reasonOf(result)).toContain(`${MAX_TARBALL_BYTES}-byte`)
     expect(body.stats.cancelled).toBe(true)
   })
 
@@ -780,11 +868,43 @@ describe('fetchIcon: the release asset', () => {
     expect(reasonOf(result)).toContain('inflates past')
   })
 
-  it('is not-yet-read for an archive whose root cannot be told', async () => {
+  it('is not-read, with its sentence, for an asset without one top-level directory', async () => {
     const forked = rawTarball({ 'package/package.json': '{}', [`pkg/${PATH}`]: SVG })
     const { fetchImpl } = always(() => new Response(forked))
     const result = await fetchIcon(releaseWork(forked), transportOf(fetchImpl))
-    expect(reasonOf(result)).toContain('top-level directory')
+    expect(result).toEqual({ kind: 'not-read', detail: iconDetail.releaseUnreadable() })
+  })
+
+  it('is not-read, with its sentence, for an asset that is not a gzipped tar', async () => {
+    const junk = Buffer.from('this is not a tarball')
+    const { fetchImpl } = always(() => new Response(junk))
+    const result = await fetchIcon(releaseWork(junk), transportOf(fetchImpl))
+    expect(result).toEqual({ kind: 'not-read', detail: iconDetail.releaseUnreadable() })
+  })
+
+  it('is not-yet-read, not unreadable, for bytes that are not the recorded asset', async () => {
+    const junk = Buffer.from('this is not a tarball')
+    const { fetchImpl } = always(() => new Response(junk))
+    const result = await fetchIcon(releaseWork(junk, { sha256: sha256Hex(asset) }), transportOf(fetchImpl))
+    expect(result.kind).toBe('not-yet-read')
+  })
+
+  it('reads an asset the rescue accepted with a file at the top, as the rescue does', async () => {
+    // The harvest listed this entry from an asset `verifyReleaseAsset` accepts,
+    // and declared its icon from the manifest `readPackedDeclarations` read:
+    // the icon step reads the same layout the same way, or the icon of a
+    // rescued entry would stay "not yet read" for good.
+    const manifest = { name: 'plug', version: '1.0.0', icon: PATH, dsh: { bundle: { patch: './cordis.patch.yml' } } }
+    const stray = rawTarball({
+      'package/package.json': JSON.stringify(manifest),
+      'package/cordis.patch.yml': '- insert: []\n',
+      [`package/${PATH}`]: SVG,
+      'README.md': '# stray top-level file',
+    })
+    expect(verifyReleaseAsset(stray, 'plug').ok).toBe(true)
+    expect(readPackedDeclarations(stray, 'plug')).toMatchObject({ ok: true, declarations: { icon: PATH } })
+    const { fetchImpl } = always(() => new Response(stray))
+    expect(textOf(await fetchIcon(releaseWork(stray), transportOf(fetchImpl)))).toBe(SVG)
   })
 
   it('refuses a member past the bound with its size', async () => {

@@ -407,8 +407,15 @@ export const iconDetail = {
     `the published package ${name}@${version} is larger than the 32 MiB the catalog build downloads, so its icon was not read.`,
   packageUnpacksTooLarge: (name: string, version: string): string =>
     `the published package ${name}@${version} unpacks to more than the 64 MiB the catalog build reads, so its icon was not read.`,
-  releaseTooLarge: (): string =>
-    'the release asset is larger than the 32 MiB the catalog build downloads, so its icon was not read.',
+  // A tarball the build downloaded, checked against the digest npm lists, and
+  // still cannot open: not gzip, a tar its small reader refuses, or without the
+  // one top-level directory `npm pack` writes. Said as what the build could not
+  // do, and not as a fault of the package, since the reader's limits are as
+  // likely the cause as the archive.
+  packageUnreadable: (name: string, version: string): string =>
+    `the published package ${name}@${version} could not be read by the catalog build as a gzipped tar archive with one top-level directory, so its icon was not read.`,
+  releaseUnreadable: (): string =>
+    'the release asset could not be read by the catalog build as a gzipped tar archive with one top-level directory, so its icon was not read.',
   withheldByHand: (reason: string): string => `withheld by registry/withheld-icons.yml: ${reason}`,
   withheldForSize: (): string =>
     'withheld: the icons file reached its 16 MiB budget, and the largest icons give way first.',

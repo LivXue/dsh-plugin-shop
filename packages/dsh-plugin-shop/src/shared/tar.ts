@@ -4,11 +4,20 @@
  * pack` emits and refuses everything else loudly, because the alternative to
  * a small strict reader is a fourth runtime dependency (design §4). */
 
-/** Bytes up to the first NUL, as ASCII. Tar pads its fixed-width text fields
- * with NULs, so a plain toString would carry them into the path. */
+/** Bytes up to the first NUL, one character for each byte. Tar pads its
+ * fixed-width text fields with NULs, so a plain toString would carry them into
+ * the path.
+ *
+ * `latin1`, not `ascii`: a name is bytes, and `ascii` drops the high bit of
+ * every one, so a name written in UTF-8 came back as a different string (`é`,
+ * C3 A9, as `C)`) that could be another file's name. One character for each
+ * byte is lossless and is the same string for a name that is ASCII, which is
+ * every name the npm transport reads. A caller that wants the characters of a
+ * UTF-8 name decodes `Buffer.from(name, 'latin1')`, or looks a name up as
+ * `Buffer.from(wanted, 'utf8').toString('latin1')`. */
 function cstring(field: Buffer): string {
   const end = field.indexOf(0)
-  return field.subarray(0, end === -1 ? field.length : end).toString('ascii')
+  return field.subarray(0, end === -1 ? field.length : end).toString('latin1')
 }
 
 /** Tar sizes are octal text, NUL- or space-terminated. An unparseable size
@@ -40,6 +49,7 @@ function assertContained(path: string): string {
  * Directory entries and every non-regular type (symlinks, pax and GNU
  * extension headers) are skipped: npm packs regular files under `package/`,
  * and a catalog tarball that needs anything else is not one we published.
+ * Each path is spelled by its bytes, one character each ({@link cstring}).
  */
 export function readTar(buffer: Buffer): Map<string, Buffer> {
   const files = new Map<string, Buffer>()

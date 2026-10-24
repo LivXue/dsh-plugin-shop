@@ -163,8 +163,10 @@ function shapeOf(value: unknown): string {
 }
 
 /** `tar czf x.tgz ./package` emits `./package/…`, which `readTar` tolerates;
- * normalising here keeps the root rule below from seeing `.` as the root. */
-const normalize = (path: string): string => path.replace(/^\.\//, '')
+ * normalising here keeps the root rule below from seeing `.` as the root.
+ * Exported for the icon step (`icon-fetch.ts`), which reads the same archives
+ * and spells their members the same way. */
+export const normalize = (path: string): string => path.replace(/^\.\//, '')
 
 /** Why an asset whose members have no real top-level directory is refused.
  * Shared by the root-level-file case and the `.//`-spelling case below. */
@@ -194,8 +196,16 @@ const NO_TOP_LEVEL_DIRECTORY =
  * here, up front, with the same detail a root-level file gets. The returned
  * root is therefore always a real directory — `''` is a git tree's phrase,
  * never an archive's.
+ *
+ * A top-level FILE beside the one directory is no obstacle and is not counted
+ * a root: `strip: 1` leaves it no path, so it lands nowhere. Only an archive of
+ * files alone, with no directory to strip, has no root.
+ *
+ * Exported for the icon step (`icon-fetch.ts`), which must find the root of an
+ * archive as the rescue did, or an icon declared from a manifest this accepted
+ * would stay unread for good. `paths` are {@link normalize}d by the caller.
  */
-function singleRoot(paths: readonly string[]): { root: string } | { detail: string } {
+export function singleRoot(paths: readonly string[]): { root: string } | { detail: string } {
   const roots = new Set<string>()
   let rootLevel = false
   let emptyHead = false

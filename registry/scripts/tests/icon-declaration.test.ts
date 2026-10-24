@@ -555,7 +555,8 @@ describe('iconDetail', () => {
     ['wrongBytes, WebP', iconDetail.wrongBytes(EXPORT_LABEL, shown, 'WebP'), 'the "./icon" export "icons/logo.svg" does not hold WebP data, although its extension says it does.'],
     ['packageTooLarge', iconDetail.packageTooLarge('@x/y', '1.2.3'), 'the published package @x/y@1.2.3 is larger than the 32 MiB the catalog build downloads, so its icon was not read.'],
     ['packageUnpacksTooLarge', iconDetail.packageUnpacksTooLarge('@x/y', '1.2.3'), 'the published package @x/y@1.2.3 unpacks to more than the 64 MiB the catalog build reads, so its icon was not read.'],
-    ['releaseTooLarge', iconDetail.releaseTooLarge(), 'the release asset is larger than the 32 MiB the catalog build downloads, so its icon was not read.'],
+    ['packageUnreadable', iconDetail.packageUnreadable('@x/y', '1.2.3'), 'the published package @x/y@1.2.3 could not be read by the catalog build as a gzipped tar archive with one top-level directory, so its icon was not read.'],
+    ['releaseUnreadable', iconDetail.releaseUnreadable(), 'the release asset could not be read by the catalog build as a gzipped tar archive with one top-level directory, so its icon was not read.'],
     ['withheldByHand', iconDetail.withheldByHand('it shows a logo we may not use'), 'withheld by registry/withheld-icons.yml: it shows a logo we may not use'],
     ['withheldForSize', iconDetail.withheldForSize(), 'withheld: the icons file reached its 16 MiB budget, and the largest icons give way first.'],
   ])('%s', (_name, actual, expected) => {
