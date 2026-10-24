@@ -28,6 +28,46 @@ import { declaredPatchFiles, MAX_PATCH_BYTES, type PackedDeclarations, readPacke
 const GITHUB_API = 'https://api.github.com'
 const RAW_GITHUB = 'https://raw.githubusercontent.com'
 
+/**
+ * A name taken from a repository, written into the path of a URL: every
+ * `/`-separated segment percent-encoded, the slashes between them kept (a
+ * branch is `feature/x`, a directory `packages/a`).
+ *
+ * The name is a name and not a URL, and the URL parser reads it as one. It
+ * turns `%2e%2e`, `.%2E`, a tab between two dots and a backslash into `..` or
+ * `/`, and drops a tab wherever it stands, so a directory of a tree or a ref
+ * spelled that way climbs out of the repository the URL names. Git accepts every
+ * one of those spellings as the name of a tree entry, and `%2e%2e` as a
+ * component of a ref (a ref forbids a literal `..`, a leading dot, a control
+ * character and a backslash, and not a percent sign). That made this a way for a
+ * repository to have another's package.json read as its own manifest, at a sha
+ * it picks, while an install pulls its own directory. Encoded, the `%` of a
+ * literal `%2e%2e` is `%25`, and the host decodes the name back to the
+ * directory the repository really has.
+ *
+ * Only `.` and `..` themselves survive the encoding. Git forbids both as the
+ * name of a tree entry and of a ref component, and the committed record refuses
+ * a carried path that holds one (`hasNamedSegments`, repo-state.ts), so none
+ * reaches here.
+ *
+ * A name that is not well-formed UTF-16, a lone surrogate, becomes U+FFFD. It
+ * names nothing and is answered 404, where `encodeURIComponent` would throw, and
+ * a hostile name would fail the fetch of its whole repository.
+ */
+function encodePath(name: string): string {
+  return name.toWellFormed().split('/').map(encodeURIComponent).join('/')
+}
+
+/**
+ * The URL of the file at `path` in `repo` (`owner/slug`) at `ref`, a branch or a
+ * commit, on the raw host. The one place a raw URL is written: the repository,
+ * the ref and the path each go through {@link encodePath}, because each can hold
+ * a name a repository chose. Exported for the icon step (`icon-fetch.ts`).
+ */
+export function rawFileUrl(repo: string, ref: string, path: string): string {
+  return `${RAW_GITHUB}/${encodePath(repo)}/${encodePath(ref)}/${encodePath(path)}`
+}
+
 const SEARCH_PAGE_SIZE = 100
 /** GitHub's hard ceiling: 1,000 results per query, no page 11. */
 export const GITHUB_SEARCH_CAP = 1000
@@ -1425,7 +1465,7 @@ async function probeSubpackageCandidates(
         `dsh does not list a subpackage whose directory path is longer than ${SUBDIR_MAX_LENGTH} characters: the path identifies the entry and is published in the catalog and in this report.`))
       continue
     }
-    const subUrl = `${RAW_GITHUB}/${owner}/${slug}/${meta.defaultBranch}/${dir}/package.json`
+    const subUrl = rawFileUrl(`${owner}/${slug}`, meta.defaultBranch, `${dir}/package.json`)
     const subResponse = await fetchRobust(subUrl, fetchImpl, sleep, token, timeoutMs)
     // Same rule, third site: a 404 means the tree listed a path that is not
     // there, which is nothing to report. Anything else is a subpackage we
@@ -1567,7 +1607,7 @@ async function readPatchAtCommit(
   token: string | undefined,
   timeoutMs: number,
 ): Promise<{ answered: true; text: string | undefined } | { answered: false }> {
-  const url = `${RAW_GITHUB}/${fullName}/${commit}/${path.split('/').map(encodeURIComponent).join('/')}`
+  const url = rawFileUrl(fullName, commit, path)
   try {
     const response = await fetchRobust(url, fetchImpl, sleep, token, timeoutMs)
     if (!response.ok) return { answered: false }
@@ -1788,7 +1828,7 @@ async function projectRepoCandidates(
     return { ok: false, code: 'fetch-failed', detail: `unusable repository name ${meta.fullName}` }
   }
 
-  const rawUrl = `${RAW_GITHUB}/${owner}/${slug}/${meta.defaultBranch}/package.json`
+  const rawUrl = rawFileUrl(`${owner}/${slug}`, meta.defaultBranch, 'package.json')
   // No catch here on purpose. A deadline rejection propagates to harvestRepos,
   // whose existing catch is already the right handler for it: it publishes a
   // reason we wrote rather than a raw exception message under the repository's
@@ -2654,7 +2694,7 @@ async function rereadCandidate(
       return { outcome: 'updated', candidate: updated }
     }
     const path = candidate.subdir === undefined ? 'package.json' : `${candidate.subdir}/package.json`
-    const rawUrl = `${RAW_GITHUB}/${owner}/${slug}/${candidate.commit}/${path}`
+    const rawUrl = rawFileUrl(`${owner}/${slug}`, candidate.commit, path)
     const response = await fetchRobust(rawUrl, fetchImpl, sleep, token, timeoutMs, 'first-answer')
     if (!response.ok) {
       // The line fetchWithRetry draws: what it retries is the host unable to

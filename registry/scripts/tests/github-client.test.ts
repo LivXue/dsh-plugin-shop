@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, DECLARATIONS_REREAD_BUDGET_DEFAULT, DECLARATIONS_REREAD_FAILURE_LINES, DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES, DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_SEARCH_PHANTOMS, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, MAX_TREE_BYTES, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, TREE_REQUEST_TIMEOUT_MS, describeSearchPhantoms, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, parseRepoMeta, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
+import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, DECLARATIONS_REREAD_BUDGET_DEFAULT, DECLARATIONS_REREAD_FAILURE_LINES, DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES, DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_SEARCH_PHANTOMS, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, MAX_TREE_BYTES, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, TREE_REQUEST_TIMEOUT_MS, describeSearchPhantoms, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, parseRepoMeta, partitionTopic, rawFileUrl, searchReposByTopic } from '../src/github-client.ts'
 import { DECLARATIONS_RULE, diffRepoState, parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import { VERSION_MAX_LENGTH } from '../src/gate.ts'
 import type { RepoState } from '../src/repo-state.ts'
@@ -5499,5 +5499,263 @@ describe('the sizing read is bounded like the other large body, not like metadat
       // raise would re-measure none of the repositories the old cap excluded.
       expect(candidate?.sizeCappedAt).toBe(MAX_TREE_BYTES)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A raw URL is built from encoded segments (ruling R19).
+//
+// A name taken from a repository (a branch, a directory of its tree, a path in
+// the committed record) is a name and not a URL, and a URL parser reads it as
+// one: `%2e%2e`, `.%2E`, a tab between two dots and a backslash all become `..`
+// or `/` once `fetch` has parsed the string. Git accepts every one of them as
+// the name of a tree entry, and `%2e%2e` in a ref, so a repository could make
+// the harvest fetch ANOTHER repository's package.json at a sha of its choosing
+// and list it as its own manifest, while an install pulls the author's own
+// directory. Each test serves its stub by the URL as `fetch` parses it, so a URL
+// that climbs is answered with the victim's manifest, as GitHub would answer it.
+// ---------------------------------------------------------------------------
+
+describe('a raw GitHub URL encodes each path segment, so a name from a repository cannot leave it', () => {
+  const RAW = 'https://raw.githubusercontent.com/'
+  const HEAD = 'e'.repeat(40)
+  const VICTIM_SHA = 'f'.repeat(40)
+  const VICTIM_URL = `${RAW}victim/plugin/${VICTIM_SHA}/package.json`
+  const victimManifest = JSON.stringify({ name: 'borrowed-plugin', version: '1.0.0', dsh: { bundle: {} } })
+  const ownManifest = JSON.stringify({ name: 'own-plugin', version: '1.0.0', dsh: { bundle: {} } })
+  const monorepoRoot = JSON.stringify({ name: 'root', private: true, workspaces: ['packages/**'] })
+  const meta = { fullName: 'hostile/repo', defaultBranch: 'main', description: null, license: 'MIT', pushedAt: '2026-08-01T00:00:00Z', stars: null as number | null }
+
+  /**
+   * Names a git tree can hold that a URL parser reads as a climb, each as a path
+   * that climbs `pops` segments and then names `target`. `pops` counts the
+   * segments of the URL that precede it, the first of the path's own included.
+   * A backslash spelling is ONE name to git and several to a parser, so it
+   * spends one more climb on the name it starts with.
+   */
+  const spellings: { label: string; climbing: (pops: number, target: string) => string }[] = [
+    { label: 'percent-encoded dot-dots', climbing: (pops, target) => [...Array<string>(pops).fill('%2e%2e'), target].join('/') },
+    { label: 'half-encoded dot-dots, .%2E', climbing: (pops, target) => [...Array<string>(pops).fill('.%2E'), target].join('/') },
+    { label: 'half-encoded dot-dots, %2e.', climbing: (pops, target) => [...Array<string>(pops).fill('%2e.'), target].join('/') },
+    { label: 'dots with a tab between them', climbing: (pops, target) => [...Array<string>(pops).fill('.\t.'), target].join('/') },
+    { label: 'backslash separators', climbing: (pops, target) => `x${'\\..'.repeat(pops + 1)}\\${target.split('/').join('\\')}` },
+  ]
+
+  /** GitHub as a real client meets it: a request is routed by the URL as `fetch` parses it, not as the code wrote it. */
+  function github(serve: (wire: string) => Response | undefined) {
+    const requested: { written: string; wire: string }[] = []
+    const fetchImpl = (async (input: string | URL) => {
+      const written = String(input)
+      const wire = new URL(written).href
+      requested.push({ written, wire })
+      return serve(wire) ?? new Response('{"message":"Not Found"}', { status: 404 })
+    }) as unknown as typeof fetch
+    const raw = () => requested.filter(request => request.wire.startsWith(RAW))
+    return { fetchImpl, requested, raw }
+  }
+
+  /** The wire URLs of the raw requests that are not under `prefix`: none, where every read stayed in its repository. */
+  const leaving = (requests: { wire: string }[], prefix: string): string[] =>
+    requests.map(request => request.wire).filter(wire => !wire.startsWith(prefix))
+
+  /** A monorepo root at `main` whose tree holds `tree`, and the victim's manifest where the victim keeps it. */
+  const monorepo = (tree: string[], own: Record<string, string> = {}) => (wire: string): Response | undefined => {
+    if (wire === `${RAW}hostile/repo/main/package.json`) return new Response(monorepoRoot)
+    if (wire === 'https://api.github.com/repos/hostile/repo/commits/main') {
+      return new Response(JSON.stringify({ sha: HEAD, commit: { author: { date: '2026-08-01T12:00:00.000Z' } } }))
+    }
+    if (wire.startsWith('https://api.github.com/repos/hostile/repo/git/trees/')) {
+      return new Response(JSON.stringify({ truncated: false, tree: tree.map(path => ({ path, type: 'blob', size: 10 })) }))
+    }
+    if (wire === VICTIM_URL) return new Response(victimManifest)
+    return own[wire] === undefined ? undefined : new Response(own[wire])
+  }
+
+  describe('rawFileUrl', () => {
+    it('keeps the slashes between segments and encodes what each segment holds', () => {
+      expect(rawFileUrl('o/r', 'feature/x', 'a b/c#d?e.json')).toBe(`${RAW}o/r/feature/x/a%20b/c%23d%3Fe.json`)
+      expect(rawFileUrl('o/r', 'main', '图标/é.svg')).toBe(`${RAW}o/r/main/%E5%9B%BE%E6%A0%87/%C3%A9.svg`)
+      // The repository is encoded like the rest, though a real one needs none:
+      // the caller's `owner/slug` comes from a record, and the helper does not
+      // lean on it.
+      expect(rawFileUrl('ow ner/re?po', 'main', 'p.json')).toBe(`${RAW}ow%20ner/re%3Fpo/main/p.json`)
+    })
+
+    it('writes %2e%2e, a tab between dots and a backslash as the characters they are', () => {
+      expect(rawFileUrl('o/r', 'main', '%2e%2e/.%2E/%2e./.\t./a\\b')).toBe(`${RAW}o/r/main/%252e%252e/.%252E/%252e./.%09./a%5Cb`)
+    })
+
+    it('does not throw on a name that is not well-formed UTF-16, and reads it as U+FFFD', () => {
+      // An encoder that throws would turn a hostile name into a failed fetch of
+      // its whole repository, and enough of them into the systematic-failure
+      // bound; a path that names nothing is a 404, which the callers skip.
+      expect(rawFileUrl('o/r', 'main', 'a\ud800b/package.json')).toBe(`${RAW}o/r/main/a%EF%BF%BDb/package.json`)
+    })
+  })
+
+  describe('the subpackage probe, which reads a directory of the tree at the default branch', () => {
+    it.each(spellings)('keeps a directory spelled with $label inside the repository', async ({ climbing }) => {
+      const dir = `packages/${climbing(4, `victim/plugin/${VICTIM_SHA}`)}`
+      // The premise: written as it was, this directory is the victim's manifest.
+      expect(new URL(`${RAW}hostile/repo/main/${dir}/package.json`).href).toBe(VICTIM_URL)
+      const { fetchImpl, raw } = github(monorepo([`${dir}/package.json`]))
+      const result = await fetchRepoCandidate({ ...meta }, fetchImpl, sleep, 'token')
+      expect(leaving(raw(), `${RAW}hostile/repo/`)).toEqual([])
+      // The directory was asked for, under the repository, and nothing came of
+      // it: the only candidate is the root, which declares no bundle.
+      expect(raw().some(request => request.wire.includes('/main/packages/'))).toBe(true)
+      expect(result.ok && result.candidates.map(candidate => [candidate.name, candidate.hasBundle, candidate.subdir])).toEqual([['root', false, undefined]])
+    })
+
+    it('does not list the victim\'s manifest through the whole harvest either', async () => {
+      const dir = `packages/${spellings[0]?.climbing(4, `victim/plugin/${VICTIM_SHA}`)}`
+      const { fetchImpl, raw } = github(wire => monorepo([`${dir}/package.json`])(wire)
+        ?? searchItems(wire, [{ repo: 'hostile/repo', pushedAt: meta.pushedAt }]))
+      const result = await harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't' })
+      expect(leaving(raw(), `${RAW}hostile/repo/`)).toEqual([])
+      expect(Object.values(result.nextState).flatMap(entry => entry.candidates.map(candidate => candidate.name))).not.toContain('borrowed-plugin')
+    })
+
+    it('reads a directory literally named %2e%2e at its own path, written %252e%252e', async () => {
+      const own = `${RAW}hostile/repo/main/packages/%252e%252e/package.json`
+      const { fetchImpl, raw } = github(monorepo(['packages/%2e%2e/package.json'], { [own]: ownManifest }))
+      const result = await fetchRepoCandidate({ ...meta }, fetchImpl, sleep, 'token')
+      expect(raw().map(request => request.written)).toContain(own)
+      expect(leaving(raw(), `${RAW}hostile/repo/`)).toEqual([])
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        // The record keeps the name as the tree wrote it, not as the URL does.
+        expect(result.candidates.map(candidate => [candidate.name, candidate.subdir])).toEqual([['own-plugin', 'packages/%2e%2e']])
+      }
+    })
+
+    it('does not throw on a directory whose name is not well-formed, and skips what it names', async () => {
+      const { fetchImpl, raw } = github(monorepo(['packages/a\ud800b/package.json']))
+      const result = await fetchRepoCandidate({ ...meta }, fetchImpl, sleep, 'token')
+      expect(raw().map(request => request.written)).toContain(`${RAW}hostile/repo/main/packages/a%EF%BF%BDb/package.json`)
+      expect(result.ok && result.candidates.map(candidate => [candidate.name, candidate.hasBundle, candidate.subdir])).toEqual([['root', false, undefined]])
+    })
+  })
+
+  describe('the root manifest, which is read at the default branch', () => {
+    const branch = `%2e%2e/%2e%2e/victim/plugin/${VICTIM_SHA}`
+
+    it('keeps a default branch named like a climb inside the repository', async () => {
+      // The premise: written as it was, this branch is the victim's manifest.
+      expect(new URL(`${RAW}hostile/repo/${branch}/package.json`).href).toBe(VICTIM_URL)
+      const { fetchImpl, raw } = github(wire => (wire === VICTIM_URL ? new Response(victimManifest) : undefined))
+      const result = await fetchRepoCandidate({ ...meta, defaultBranch: branch }, fetchImpl, sleep, 'token')
+      expect(raw().map(request => request.written)).toEqual([`${RAW}hostile/repo/%252e%252e/%252e%252e/victim/plugin/${VICTIM_SHA}/package.json`])
+      expect(leaving(raw(), `${RAW}hostile/repo/`)).toEqual([])
+      expect(result.ok).toBe(false)
+    })
+
+    it('reads the manifest of a branch that really has that name, from its own repository', async () => {
+      const own = `${RAW}hostile/repo/%252e%252e/%252e%252e/victim/plugin/${VICTIM_SHA}/package.json`
+      const { fetchImpl } = github(wire => {
+        if (wire === own) return new Response(ownManifest)
+        // The head commit read is not under test, and answers whatever is asked.
+        if (wire.startsWith('https://api.github.com/')) return new Response(JSON.stringify({ sha: HEAD, commit: { author: { date: '2026-08-01T12:00:00.000Z' } }, tree: [] }))
+        return undefined
+      })
+      const result = await fetchRepoCandidate({ ...meta, defaultBranch: branch, fullName: 'hostile/repo' }, fetchImpl, sleep, 'token', false)
+      expect(result.ok && result.candidates.map(candidate => candidate.name)).toEqual(['own-plugin'])
+    })
+
+    it('still resolves a branch with a slash in it', async () => {
+      const { fetchImpl, raw } = github(wire => {
+        if (wire === `${RAW}hostile/repo/feature/x/package.json`) return new Response(ownManifest)
+        if (wire.startsWith('https://api.github.com/')) return new Response(JSON.stringify({ sha: HEAD, commit: { author: { date: '2026-08-01T12:00:00.000Z' } }, tree: [] }))
+        return undefined
+      })
+      const result = await fetchRepoCandidate({ ...meta, defaultBranch: 'feature/x' }, fetchImpl, sleep, 'token', false)
+      expect(raw().map(request => request.written)).toEqual([`${RAW}hostile/repo/feature/x/package.json`])
+      expect(result.ok && result.candidates.map(candidate => candidate.name)).toEqual(['own-plugin'])
+    })
+  })
+
+  describe('the declared patch file, which is read at the pinned commit', () => {
+    it('keeps a patch path spelled as a climb inside the repository', async () => {
+      const patchPath = spellings[0]?.climbing(3, `victim/plugin/${VICTIM_SHA}/cordis.patch.yml`) ?? ''
+      // The premise: written as it was, this path is the victim's file.
+      expect(new URL(`${RAW}hostile/repo/${HEAD}/${patchPath}`).href).toBe(`${RAW}victim/plugin/${VICTIM_SHA}/cordis.patch.yml`)
+      const manifest = JSON.stringify({ name: 'own-plugin', dsh: { bundle: { patch: `./${patchPath}` } } })
+      const { fetchImpl, raw } = github(wire => {
+        if (wire === `${RAW}hostile/repo/main/package.json`) return new Response(manifest)
+        if (wire === 'https://api.github.com/repos/hostile/repo/commits/main') {
+          return new Response(JSON.stringify({ sha: HEAD, commit: { author: { date: '2026-08-01T12:00:00.000Z' } } }))
+        }
+        if (wire === `https://api.github.com/repos/hostile/repo/git/trees/${HEAD}?recursive=1`) {
+          return new Response(JSON.stringify({ truncated: false, tree: [{ path: 'package.json', type: 'blob', size: 10 }, { path: patchPath, type: 'blob', size: 10 }] }))
+        }
+        if (wire === `${RAW}victim/plugin/${VICTIM_SHA}/cordis.patch.yml`) return new Response("- insert:\n    - id: x\n      name: 'own-plugin'\n")
+        return undefined
+      })
+      await fetchRepoCandidate({ ...meta }, fetchImpl, sleep, 'token', false)
+      expect(raw().some(request => request.written.includes('/cordis.patch.yml'))).toBe(true)
+      expect(leaving(raw(), `${RAW}hostile/repo/`)).toEqual([])
+    })
+  })
+
+  describe('the declarations re-read, which reads a carried subdir at its recorded commit', () => {
+    const SHA_REPO = 'c'.repeat(40)
+    const SHA_EVIL = 'd'.repeat(40)
+    const quietAt = '2026-08-01T00:00:00Z'
+    const repo = 'owner/repo'
+    const evilUrl = `${RAW}attacker/evil/${SHA_EVIL}/package.json`
+
+    /** A listable candidate recorded with a stale stamp, so that only the re-read is queued for it. */
+    const carried = (subdir: string): string => JSON.stringify({
+      [repo]: {
+        pushedAt: quietAt,
+        commit: SHA_REPO,
+        candidates: [{
+          name: 'the-plugin', repo, commit: SHA_REPO, version: SHA_REPO, publishedAt: null, repository: `https://github.com/${repo}`,
+          license: 'MIT', hasBundle: true, requiresBuild: false, hasWorkspaceDeps: false, catalog: null, description: 'x',
+          sizeProbed: true, entriesChecked: true, installSize: 4242, subdir,
+        }],
+      },
+    })
+
+    it.each(spellings)('keeps a carried subdir spelled with $label inside the keyed commit', async ({ climbing }) => {
+      const subdir = climbing(3, `attacker/evil/${SHA_EVIL}`)
+      // The record check admits it: these are names a tree can hold, which the
+      // writer stores (the check refuses an empty, `.` or `..` segment, and only those).
+      const state = parseRepoState(carried(subdir))
+      // The premise: written as it was, this subdir is the attacker's manifest.
+      expect(new URL(`${RAW}${repo}/${SHA_REPO}/${subdir}/package.json`).href).toBe(evilUrl)
+      const { fetchImpl, raw } = github(wire => {
+        const searched = searchItems(wire, [{ repo, pushedAt: quietAt }])
+        if (searched !== undefined) return searched
+        return wire === evilUrl ? new Response(JSON.stringify({ name: 'the-plugin', dsh: { bundle: {} } })) : undefined
+      })
+      const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
+      expect(result.rereadAttempted).toBe(1)
+      expect(leaving(raw(), `${RAW}${repo}/${SHA_REPO}/`)).toEqual([])
+      expect(result.rereadUpdated).toBe(0)
+    })
+
+    it('reads a carried subdir literally named %2e%2e at its own path, written %252e%252e', async () => {
+      const own = `${RAW}${repo}/${SHA_REPO}/packages/%252e%252e/package.json`
+      const { fetchImpl, raw } = github(wire => {
+        const searched = searchItems(wire, [{ repo, pushedAt: quietAt }])
+        if (searched !== undefined) return searched
+        return wire === own ? new Response(JSON.stringify({ name: 'the-plugin', dsh: { bundle: {} } })) : undefined
+      })
+      const result = await harvestRepos({ state: parseRepoState(carried('packages/%2e%2e')), budget: 5, fetchImpl, sleep, token: 't' })
+      expect(raw().map(request => request.written)).toEqual([own])
+      expect([result.rereadAttempted, result.rereadUpdated]).toEqual([1, 1])
+      expect(result.nextState[repo]?.candidates[0]?.subdir).toBe('packages/%2e%2e')
+    })
+  })
+
+  it('builds no raw URL by hand: the one template is rawFileUrl\'s', () => {
+    // A guard of the kind the body-cap scan is: the encoding is only as good as
+    // the call sites that remember it, so a raw URL is written in one place.
+    const written = githubClientSource.split('\n')
+      .filter(line => !/^\s*(\*|\/\/|\/\*)/.test(line))
+      .filter(line => line.includes('${RAW_GITHUB}'))
+    expect(written).toHaveLength(1)
+    expect(written[0]).toContain('encodePath(')
   })
 })
