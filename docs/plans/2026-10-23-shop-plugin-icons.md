@@ -315,9 +315,9 @@ git commit -m "feat(registry): an icon is at most 32 KiB and holds what its exte
 **Interfaces:**
 - Consumes: `readIconDeclaration`, `fileListIncludes`, `iconDetail`, `shownPath` (Task 2).
 - Produces:
-  - `Candidate.icon?: IconRead`, present only when it is not `none`.
+  - `Candidate.icon?: StoredIconRead`, the `IconRead` with no `none` member: present only when it is not `none`.
   - `Candidate.distTarball?: string`, present only when the icon is `declared` and `dist.tarball` is a string.
-  - `RepoCandidate.icon?: IconRead`, present only when it is not `none`.
+  - `RepoCandidate.icon?: StoredIconRead`, present only when it is not `none`.
   - `DECLARATIONS_RULE = 3`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -697,10 +697,10 @@ export async function harvestIcons(plan: IconPlan, transport: IconTransport, opt
   - **Reading the body.** A 404, a 429, a 5xx and a throw are all `not-yet-read`. A body over the cap is `not-read`, with `packageTooLarge`.
   - **Integrity.** It is verified as SRI: the algorithm before the first `-` (`sha512`, `sha384`, `sha256` or `sha1`), hashed with `node:crypto`, compared in base64. A mismatch, or an algorithm outside those four, is `not-yet-read`.
   - **Unpacking.** `gunzipSync(bytes, { maxOutputLength })`; an `ERR_BUFFER_TOO_LARGE` is `not-read`, with `packageUnpacksTooLarge`.
-  - **The icon member.** After `readTar`, the root is the single first path segment shared by every member, with any leading `./` stripped. A missing `<root>/<path>` is `refused`, with `notInPackage`.
+  - **The icon member.** After `readTar`, the root is the tarball's one top-level directory, found as `singleRoot` in `release-asset.ts` finds it (design §5.2): `package/` for everything `npm pack` writes, any leading `./` stripped, and a stray file at the top beside that directory no obstacle. An archive with no one top-level directory is `not-read`, with `packageUnreadable`. A missing `<root>/<path>` is `refused`, with `notInPackage`.
 - **GitHub raw.**
   - The URL is `${RAW_GITHUB}/${repo}/${commit}/${path}`, through `fetchRobust`.
-  - A 404 is `refused`, with `notAtCommit`. A 429 or 5xx is `not-yet-read`.
+  - A 404 is `refused`, with `notAtCommit`, except on the refetch of a key the record holds published (`expectSha256` set), where it is `not-yet-read` (design §5.2). A 429 or 5xx is `not-yet-read`.
   - The body is read with `readCappedBody(response, MAX_CATALOG_ICON_BYTES + 1)`. Over that is `refused`, with `tooLarge(label, shown, null)`.
 - **Release.**
   - The URL must pass `recordedReleaseUrl`, or the result is `not-yet-read`.

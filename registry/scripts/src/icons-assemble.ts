@@ -252,7 +252,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Read an icons file back from its text: the one a build published on an earlier
  * day, whose icons it reuses so that it need not fetch them again (design §5.1).
  *
- * Returns `null`, and never throws, for anything that is not what
+ * Returns `null`, and never throws, for anything that is not shaped like what
  * {@link serializeIcons} writes: text that is not JSON; anything but an object
  * with the two keys `icons` and `sources` and no other; an `icons` key that is
  * not a sha256 in lower-case hexadecimal; an icon that is not an

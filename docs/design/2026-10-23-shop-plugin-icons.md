@@ -294,8 +294,8 @@ the build when it starts, naming the variable, because a deadline that reads as
 NaN is no deadline and a count that reads as zero fetches nothing, each
 reported as a healthy run. A key past the budget is "not yet read": the entry
 publishes without an icon this build and is fetched on a later one, unless the
-sha256 its record names already has its bytes in hand this build, from
-yesterday's file or from another key's fetch. A sha256 names its bytes
+sha256 its record names already has its bytes in hand this build, from another
+key's fetch. A sha256 names its bytes
 whichever key they were read under, and a key names one immutable artifact
 (§5.1), so those bytes are that key's own icon too. A transport failure is
 "not yet read" too, never a refusal: a refusal is the author's to fix, and a
@@ -338,7 +338,9 @@ holds for it.
   encodings all reach the root element. Nothing past the root is looked at, so
   the encoding of the rest of the file is not validated. Measured on 2026-10-23
   with SVG files in an `<img>`: UTF-16 with a byte order mark, and a root
-  written `svg:svg`, draw in Chromium and Firefox; an ISO-8859-1 file that
+  written `svg:svg` and bound to the SVG namespace, draw in Chromium and Firefox
+  (an unbound one draws in neither, and the check, which does not read the
+  binding, accepts it at no cost); an ISO-8859-1 file that
   declares itself, with a byte past 0x7F, draws in Firefox only; UTF-16 without
   a byte order mark, the `<?` forms that XML 1.0 Appendix F detects included,
   draws in neither, and nor does UTF-32 with a byte order mark, so neither is
@@ -398,8 +400,9 @@ the npm entries, so the npm half of the icons file is about 1.1 MB of bytes,
 `ICONS_FILE_BUDGET_BYTES` = 16 MiB serialised stays as a backstop: it keeps
 the package inside both caps with the plugins file doubling, and at the
 measured average it holds about ten thousand icons. Past it, icons are kept
-smallest first (ties by key) and the rest are reported as withheld for size
-(§10). The report prints the file's size every build, so its growth is seen
+smallest first (ties by sha256, since an icon has one sha256 and any number of
+keys) and the rest are reported as withheld for size (§10). The report prints
+the file's size every build, so its growth is seen
 long before the budget binds.
 
 ### 6.3 Versions and transports

@@ -298,13 +298,16 @@ describe('sniffIconBytes: SVG, the encodings a browser reads', () => {
     ['UTF-16 big-endian with the same', utf16be(prolog('UTF-16'))],
     ['UTF-16 with a byte order mark after white space', utf16le(` ${BOM}${SVG_ROOT}`)],
     ['UTF-16 with a prefixed root', utf16le(`<s:svg xmlns:s="${SVG_NS}"/>`)],
-    // A browser decodes UTF-16 with replacement: a stray last byte, or a lone
-    // surrogate, becomes U+FFFD and the file is read on. Each of these has its
-    // root where the replacement cannot reach it, after it or past a comment.
-    ['UTF-16 little-endian with a stray byte after the root, which a browser decodes to U+FFFD', Buffer.concat([utf16le(SVG_ROOT), bytesOf(0x41)])],
-    ['UTF-16 big-endian with a stray byte after the root, which a browser decodes to U+FFFD', Buffer.concat([utf16be(SVG_ROOT), bytesOf(0x41)])],
-    ['UTF-16 little-endian with a lone high surrogate after the root, which a browser decodes to U+FFFD', Buffer.concat([utf16le(SVG_ROOT), bytesOf(0x00, 0xd8)])],
-    ['UTF-16 big-endian with a lone high surrogate after the root, which a browser decodes to U+FFFD', Buffer.concat([utf16be(SVG_ROOT), bytesOf(0xd8, 0x00)])],
+    // The decode replaces: a stray last byte, or a lone surrogate, becomes
+    // U+FFFD and the file is read on. A browser was measured to read on past
+    // such damage in some places and not in others, so these rows rest on the
+    // asymmetry and not on a browser's decoder: accepting a file a browser may
+    // not draw costs nothing. Each has its root where the replacement cannot
+    // reach it, after it or past a comment.
+    ['UTF-16 little-endian with a stray byte after the root, which the decode replaces with U+FFFD', Buffer.concat([utf16le(SVG_ROOT), bytesOf(0x41)])],
+    ['UTF-16 big-endian with a stray byte after the root, which the decode replaces with U+FFFD', Buffer.concat([utf16be(SVG_ROOT), bytesOf(0x41)])],
+    ['UTF-16 little-endian with a lone high surrogate after the root, which the decode replaces with U+FFFD', Buffer.concat([utf16le(SVG_ROOT), bytesOf(0x00, 0xd8)])],
+    ['UTF-16 big-endian with a lone high surrogate after the root, which the decode replaces with U+FFFD', Buffer.concat([utf16be(SVG_ROOT), bytesOf(0xd8, 0x00)])],
     ['UTF-16 little-endian with a lone low surrogate in a comment before the root', Buffer.concat([utf16le('<!--'), bytesOf(0x00, 0xdc), Buffer.from(`-->${SVG_ROOT}`, 'utf16le')])],
     ['ISO-8859-1 that says so, holding byte A9 in a comment and in a title', ISO_8859_1],
     ['UTF-8 holding text outside ASCII', NON_ASCII_UTF8],
