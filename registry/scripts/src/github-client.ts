@@ -2432,13 +2432,21 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
         // next run rather than written off.
         const message = error instanceof Error ? error.message : String(error)
         thrown += 1
-        thrownMessages.push(`${entry.repo}: ${message}`)
+        // Quoted, here and on the line below, because the message is not all
+        // ours: a subpackage read names the tree path it failed on, and a path
+        // is the author's, newline and all; V8's own JSON.parse error quotes
+        // the body it choked on raw. GitHub Actions runs a log line that opens
+        // with `::` as a workflow command, and JSON.stringify leaves no line
+        // break to open one. This message reaches the log too: the bound below
+        // throws with the first of them, and build.ts writes that error's
+        // message after its retry, as Node does when the build dies of it.
+        thrownMessages.push(`${JSON.stringify(entry.repo)}: ${JSON.stringify(message)}`)
         // The raw message is a diagnostic, not a verdict. It goes to stderr,
         // where whoever is reading the build can act on it — never into the
         // row, which is published to Pages under the repository's name and
         // would otherwise blame an author for what the comment above calls
         // our own defect.
-        process.stderr.write(`github: harvesting ${entry.repo} threw: ${message}\n`)
+        process.stderr.write(`github: harvesting ${JSON.stringify(entry.repo)} threw: ${JSON.stringify(message)}\n`)
         return {
           entry,
           result: {
@@ -2811,7 +2819,12 @@ function rereadPhase(timeBudgetMs: number, now: () => number): RereadPhase {
           // An answer, and a definite one: the host is up, whatever it said.
           assetChanged += 1
           consecutiveFailures = 0
-          process.stderr.write(`github: re-reading ${unit}: ${result.reason}, so the rescue is unverified for a full re-probe\n`)
+          // The unit is quoted, here and below: its subdir is a tree path, the
+          // author's, and a newline in it would open a log line of its own,
+          // which GitHub Actions runs as a workflow command when it starts with
+          // `::`. This reason is one of `unverified`'s own sentences; a failed
+          // read's, below, can quote a transport error or a manifest's text.
+          process.stderr.write(`github: re-reading ${JSON.stringify(unit)}: ${result.reason}, so the rescue is unverified for a full re-probe\n`)
           return
         case 'failed':
           consecutiveFailures += 1
@@ -2829,7 +2842,7 @@ function rereadPhase(timeBudgetMs: number, now: () => number): RereadPhase {
       // A diagnostic for whoever reads the build, never a row: the entry is
       // unchanged, so there is nothing to say about the repository.
       if (failed <= DECLARATIONS_REREAD_FAILURE_LINES) {
-        process.stderr.write(`github: re-reading the declarations of ${unit} failed, left as recorded for the next run: ${result.reason}\n`)
+        process.stderr.write(`github: re-reading the declarations of ${JSON.stringify(unit)} failed, left as recorded for the next run: ${JSON.stringify(result.reason)}\n`)
       }
     },
     get stopped() { return stopped },

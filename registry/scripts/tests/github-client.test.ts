@@ -3236,13 +3236,15 @@ describe('harvestRepos', () => {
         // re-requested every run.
         const state = recordedRescue(pin)
         const { fetchImpl } = rereadFetch(seen, url => (url === assetUrl ? asset() : undefined))
-        const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
+        const { value: result, stderr } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
         const recorded = state['r/rescued']?.candidates[0]
         if (recorded === undefined || recorded.release === undefined) throw new Error('fixture has no release')
         const { assetVerified: _was, ...unverified } = recorded.release
         expect(result.nextState['r/rescued']?.candidates).toEqual([{ ...recorded, release: unverified }])
         expect(result.nextState['r/rescued']?.candidates[0]).not.toHaveProperty('declarationsRule')
         expect([result.rereadUpdated, result.rereadFailed, result.rereadAssetChanged]).toEqual([0, 0, 1])
+        // Said on the log under the unit, quoted like every unit the phase writes.
+        expect(stderr).toContain('github: re-reading "r/rescued": the recorded release asset ')
         const next = diffRepoState(result.nextState, seen)
         expect(next.toFetch.map(e => [e.repo, e.backfillOnly])).toEqual([['r/rescued', true]])
         expect(next.toReread).toEqual([])
@@ -3367,8 +3369,10 @@ describe('harvestRepos', () => {
       expect(result.nextState['q/quiet']).toEqual(state['q/quiet'])
       expect(result.nextState['q/quiet']?.candidates[0]).not.toHaveProperty('declarationsRule')
       // The phase's only failure signal besides its counts, so it is pinned:
-      // a failed re-read writes a diagnostic naming the unit, never a row.
-      expect(stderr).toContain('github: re-reading the declarations of q/quiet failed')
+      // a failed re-read writes a diagnostic naming the unit, never a row. The
+      // unit is quoted, since a subdir is a tree path and a newline in one
+      // would open a log line of its own (the last describe of this file).
+      expect(stderr).toContain('github: re-reading the declarations of "q/quiet" failed')
       expect(result.nextState['q/quiet']?.failure).toBeUndefined()
       expect(result.failures).toEqual([])
       expect(result.thrown).toBe(0)
@@ -5946,5 +5950,121 @@ describe('an API URL encodes the branch name, so a ref cannot address another re
   it('spells the API host once, so that no route is written past the scan above', () => {
     const spelled = modules.flatMap(file => codeOf(file).split('\n').filter(line => line.includes('api.github.com/repos')).map(line => `${file}: ${line.trim()}`))
     expect(spelled).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A string from a repository that reaches the log is quoted.
+//
+// GitHub Actions reads a log line that opens with `::` as a workflow command:
+// `::error::` annotates the run, `::add-mask::` hides a value from the rest of
+// the log, `::stop-commands::` stops the runner reading commands at all. A tree
+// path is the author's, and git takes a newline in a directory name, so a path
+// written raw can open a line of its own. Three lines of the harvest can carry
+// one: the throw that ends one repository's fetch, the error that stops a
+// harvest whose throws are systematic (build.ts writes its message after the
+// retry, and Node writes it when the build dies), and a failed declarations
+// re-read, which names its `repo#subdir` unit.
+// ---------------------------------------------------------------------------
+
+describe('a tree path or repository written to the log is quoted, so it cannot start a workflow command', () => {
+  const HOSTILE = 'packages/a\n::error::x'
+  const HEAD = 'e'.repeat(40)
+  const quietAt = '2026-08-01T00:00:00Z'
+
+  /** Run `run` with stderr captured, its value or its rejection handed back with what it wrote. */
+  async function logged<T>(run: () => Promise<T>): Promise<{ value?: T; error?: unknown; stderr: string }> {
+    const lines: string[] = []
+    const write = process.stderr.write.bind(process.stderr)
+    process.stderr.write = ((chunk: string | Uint8Array) => { lines.push(String(chunk)); return true }) as typeof process.stderr.write
+    try {
+      return { value: await run(), stderr: lines.join('') }
+    } catch (error) {
+      return { error, stderr: lines.join('') }
+    } finally {
+      process.stderr.write = write
+    }
+  }
+
+  /** Every line written is one of the harvest's own, so none opens with `::`. */
+  function expectOnlyHarvestLines(stderr: string): void {
+    const lines = stderr.split('\n').filter(line => line !== '')
+    expect(lines.length).toBeGreaterThan(0)
+    for (const line of lines) expect(line).toMatch(/^github: /)
+  }
+
+  /**
+   * Every repository in `seen` a monorepo whose tree holds the hostile
+   * directory, and whose manifest there the raw host fails to serve: the
+   * subpackage read throws a message naming the path.
+   */
+  function monorepos(seen: readonly { repo: string; pushedAt: string }[]): typeof fetch {
+    return (async (url: string | URL) => {
+      const text = String(url)
+      const searched = searchItems(text, seen)
+      if (searched !== undefined) return searched
+      if (/^https:\/\/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/main\/package\.json$/.test(text)) {
+        return new Response(JSON.stringify({ private: true, workspaces: ['packages/*'] }), { status: 200 })
+      }
+      if (/^https:\/\/api\.github\.com\/repos\/[^/]+\/[^/]+\/commits\/main$/.test(text)) {
+        return new Response(JSON.stringify({ sha: HEAD, commit: { author: { date: '2026-08-02T00:00:00.000Z' } } }), { status: 200 })
+      }
+      if (/^https:\/\/api\.github\.com\/repos\/[^/]+\/[^/]+\/git\/trees\/main\?recursive=1$/.test(text)) {
+        return new Response(JSON.stringify({ tree: [{ path: 'package.json' }, { path: `${HOSTILE}/package.json` }] }), { status: 200 })
+      }
+      if (/^https:\/\/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/main\/packages\//.test(text)) {
+        return new Response('upstream error', { status: 500 })
+      }
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+  }
+
+  it('quotes the message of a repository whose subpackage read threw, path and all', async () => {
+    const seen = [{ repo: 'hostile/repo', pushedAt: '2026-08-02T00:00:00Z' }]
+    const { value: result, stderr } = await logged(() => harvestRepos({ state: {}, budget: 5, fetchImpl: monorepos(seen), sleep, token: 't' }))
+    expect(result?.thrown).toBe(1)
+    // The path was read and reached the log, escaped inside one quoted string.
+    expect(stderr).toContain('github: harvesting "hostile/repo" threw: "github raw returned 500 fetching hostile/repo/packages/a\\n::error::x/package.json"')
+    expectOnlyHarvestLines(stderr)
+  })
+
+  it('quotes each throw in the error that stops a systematic harvest, which the build writes to the log', async () => {
+    const seen = Array.from({ length: 40 }, (_, i) => ({ repo: `owner/repo-${i}`, pushedAt: '2026-08-02T00:00:00Z' }))
+    const { error, stderr } = await logged(() => harvestRepos({ state: {}, budget: 100, fetchImpl: monorepos(seen), sleep, token: 't' }))
+    expect(error).toBeInstanceOf(Error)
+    const message = (error as Error).message
+    expect(message).toMatch(/40 of 40 repositories threw/)
+    // The first throw, named in the message, was read: its path is in it, escaped.
+    expect(message).toContain('packages/a\\n::error::x/package.json')
+    expect(message).not.toMatch(/[\r\n]/)
+    expectOnlyHarvestLines(stderr)
+  })
+
+  it('quotes the repo#subdir unit and the reason of a failed declarations re-read', async () => {
+    const repo = 'owner/repo'
+    // A carried subpackage whose directory is the hostile one, and whose stamp is
+    // stale, so that the re-read is the only request it is queued for.
+    const state = parseRepoState(JSON.stringify({
+      [repo]: {
+        pushedAt: quietAt,
+        commit: HEAD,
+        candidates: [{
+          name: 'the-plugin', repo, commit: HEAD, version: HEAD, publishedAt: null, repository: `https://github.com/${repo}`,
+          license: 'MIT', hasBundle: true, requiresBuild: false, hasWorkspaceDeps: false, catalog: null, description: 'x',
+          sizeProbed: true, entriesChecked: true, installSize: 4242, subdir: HOSTILE,
+        }],
+      },
+    }))
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      const searched = searchItems(text, [{ repo, pushedAt: quietAt }])
+      if (searched !== undefined) return searched
+      if (text.startsWith(`https://raw.githubusercontent.com/${repo}/${HEAD}/packages/`)) return new Response('forbidden', { status: 403 })
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+    const { value: result, stderr } = await logged(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
+    expect([result?.rereadAttempted, result?.rereadFailed]).toEqual([1, 1])
+    expect(stderr).toContain('github: re-reading the declarations of "owner/repo#packages/a\\n::error::x" failed, left as recorded for the next run: "github raw returned 403"')
+    expectOnlyHarvestLines(stderr)
   })
 })
