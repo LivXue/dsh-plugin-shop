@@ -59,37 +59,44 @@ const UTF16_MARKS = [
 ] as const
 
 /**
- * Whether the bytes are the kind of file `mediaType` names.
+ * Whether some measured browser draws the bytes as an image of `mediaType`, the
+ * type the icon's extension names and the type its data URL carries (design
+ * §5.4).
  *
- * dsh chooses an icon's type by its extension and never sniffs, so a PNG named
- * `icon.svg` would only ever draw as a broken image there and as the default
- * artwork here. Refusing it costs nothing and tells the author why (design
- * §5.4). That holds only for bytes no browser draws as the type: the refusal
- * says the file does not hold what its extension promises. For SVG, which
- * browsers read in more than one encoding, design §5.4 gives what was measured
- * and the check follows it.
+ * dsh chooses an icon's type by its extension and never sniffs, and the
+ * browser it draws in does: measured with data URLs in an `<img>`, Chromium
+ * and Firefox draw a PNG, a JPEG or a WebP under any of the three raster
+ * types, and Firefox draws one under `image/svg+xml` too; neither draws SVG
+ * text under a raster type. So a raster is accepted whichever extension it
+ * carries, and SVG text only under `.svg`, and the data URL keeps the
+ * extension's type, as dsh does, so the icon draws in the shop wherever it
+ * draws on dsh's page. Of the four formats dsh names, what is refused is what
+ * neither browser draws, and the refusal can truly say that the file does not
+ * hold what its extension promises. A file of any other format is refused too,
+ * though GIF, BMP and ICO draw under a raster type: the check knows only those
+ * four, and the sentence is still true of such a file (design §5.4). For SVG,
+ * which browsers read in more than one encoding, design §5.4 gives what was
+ * measured, and the check follows it.
  *
  * A type check and no more, and not a sanitiser: an SVG is defended by
- * reaching the page only as an image's `src` (§8.5). PNG, JPEG and WebP are
- * read for their opening bytes and nothing past them: PNG is its eight-byte
- * signature, JPEG is {@link JPEG_START}, and WebP is `RIFF`, a four-byte size
- * and `WEBP`. SVG is a first element named `svg`
- * ({@link startsWithSvgElement}), found in a text built from the whole file
- * ({@link svgText}), so the bytes must already be held to
+ * reaching the page only as an image's `src` (§8.5). A raster is read for its
+ * opening bytes and nothing past them ({@link isRaster}). SVG is a first
+ * element named `svg` ({@link startsWithSvgElement}), found in a text built
+ * from the whole file ({@link svgText}), so the bytes must already be held to
  * {@link MAX_CATALOG_ICON_BYTES}, as {@link checkIconBytes} holds them before
  * it asks.
  */
 export function sniffIconBytes(bytes: Uint8Array, mediaType: IconMediaType): boolean {
-  switch (mediaType) {
-    case 'image/png':
-      return hasBytesAt(bytes, 0, PNG_SIGNATURE)
-    case 'image/jpeg':
-      return hasBytesAt(bytes, 0, JPEG_START)
-    case 'image/webp':
-      return hasBytesAt(bytes, 0, RIFF) && hasBytesAt(bytes, 8, WEBP)
-    case 'image/svg+xml':
-      return startsWithSvgElement(svgText(bytes))
-  }
+  if (isRaster(bytes)) return true
+  return mediaType === 'image/svg+xml' && startsWithSvgElement(svgText(bytes))
+}
+
+/**
+ * Whether the bytes open as one of the three rasters: PNG's eight-byte
+ * signature, {@link JPEG_START}, or `RIFF`, a four-byte size and `WEBP`.
+ */
+function isRaster(bytes: Uint8Array): boolean {
+  return hasBytesAt(bytes, 0, PNG_SIGNATURE) || hasBytesAt(bytes, 0, JPEG_START) || (hasBytesAt(bytes, 0, RIFF) && hasBytesAt(bytes, 8, WEBP))
 }
 
 /** Whether `bytes` holds `expected` from `offset` on. A file too short to reach it does not. */
