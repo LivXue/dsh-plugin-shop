@@ -17,6 +17,7 @@ import {
 import type { IconTransport } from '../src/icon-fetch.ts'
 import type { IconFetchResult, IconPlan, IconWork } from '../src/icon-plan.ts'
 import { githubIconKey, npmIconKey, releaseIconKey } from '../src/icon-state.ts'
+import { describeLostIconsFile } from '../src/pipeline.ts'
 import { serializeIcons } from '../src/icons-assemble.ts'
 import type { IconsFile } from '../src/icons-assemble.ts'
 import { MAX_INFLATED_BYTES, readPackedDeclarations, verifyReleaseAsset } from '../src/release-asset.ts'
@@ -711,6 +712,19 @@ describe('fetchIcon: the file at a pinned commit', () => {
       expect(result).toEqual({ kind: 'refused', detail: iconDetail.notAtCommit(LABEL, SHOWN, 'owner/repo', COMMIT) })
     })
 
+    it('is not-yet-read, and refuses nothing, when it answers 404 for a key the record holds published', async () => {
+      // The record holds the key published, so the file was read at this very
+      // commit, and a commit does not change: a 404 now is the host, or the
+      // repository gone or made private, and not the file. A refusal would be
+      // recorded over the published row for good.
+      const { fetchImpl, calls } = always(() => new Response('404: Not Found', { status: 404 }))
+      const work: IconWork = { ...githubWork(), expectSha256: sha256Hex(new TextEncoder().encode(SVG)) }
+      const result = await fetchIcon(work, transportOf(fetchImpl))
+      expect(result).toEqual({ kind: 'not-yet-read', reason: expect.stringContaining('404') })
+      expect(result.kind === 'not-yet-read' && result.reason).toContain(JSON.stringify(`owner/repo@${COMMIT}`))
+      expect(calls).toHaveLength(1)
+    })
+
     it.each([401, 403, 429, 500, 503])('is not-yet-read when it answers %i, after one request', async status => {
       // Taken at its first answer: a fetch in flight when the time budget runs
       // out finishes in one attempt, not in a ladder of waits, and the key is
@@ -989,13 +1003,29 @@ describe('readPublishedIcons', () => {
     expect(await readPublishedIcons(fetchImpl, BASE)).toEqual(empty)
   })
 
+  // An index with no `icons` key is what a build that published no icon
+  // writes: the day every listed icon was withheld, say. That is an answer, an
+  // empty file, and not a failure: read as null it made the next build's report
+  // say the file could not be read. It answered null until 2026-10-24.
+  const noPointer = JSON.stringify({ schemaVersion: 5, builtAt: 'x', count: 0, rejected: 0, plugins: { url: 'p.json', sha256: '0'.repeat(64) } })
+
+  it('returns an empty file for an index without an icons pointer, after one request', async () => {
+    const { fetchImpl, calls } = pages({ 'index.json': noPointer })
+    expect(await readPublishedIcons(fetchImpl, BASE)).toEqual({ icons: {}, sources: {} })
+    expect(calls).toHaveLength(1)
+  })
+
+  it('leaves the report no line saying a file was lost, the day after a build that published none', async () => {
+    const { fetchImpl } = pages({ 'index.json': noPointer })
+    const read = await readPublishedIcons(fetchImpl, BASE)
+    // The record still holds a published icon, withheld yesterday, so a read
+    // that failed would be a loss worth a line.
+    const record = new Map([[npmIconKey('x', '1.0.0', PATH), { outcome: 'published' as const, sha256: sha256Hex(new TextEncoder().encode(SVG)), mediaType: 'image/svg+xml' as const, bytes: SVG.length }]])
+    expect(describeLostIconsFile(record, read, { fetch: [], deferred: [] }, new Map())).toBeNull()
+    expect(describeLostIconsFile(record, null, { fetch: [], deferred: [] }, new Map())).not.toBeNull()
+  })
+
   describe('answers null, and never throws', () => {
-    it('for an index without icons, after one request', async () => {
-      const index = JSON.stringify({ schemaVersion: 5, builtAt: 'x', count: 0, rejected: 0, plugins: { url: 'p.json', sha256: '0'.repeat(64) } })
-      const { fetchImpl, calls } = pages({ 'index.json': index })
-      expect(await readPublishedIcons(fetchImpl, BASE)).toBeNull()
-      expect(calls).toHaveLength(1)
-    })
 
     it.each([
       ['icons that is a string', '"icons.json"'],

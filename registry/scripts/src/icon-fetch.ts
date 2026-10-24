@@ -179,13 +179,18 @@ const refused = (detail: string): IconFetchResult => ({ kind: 'refused', detail 
  * (design §5.1). The index is read from `baseUrl`, its `icons` pointer followed,
  * and the file checked against the sha256 the pointer names.
  *
- * Returns `null`, and never throws, for anything short of a file that checks out:
- * a host that does not answer, answers a status, serves too much (the index is
- * read under 64 KiB, the file under 24 MiB), serves text that is no index or no
- * icons file, serves a file whose sha256 is not the pointer's, or has no `icons`
- * pointer at all, as the index of a build that published none has not. A caller
- * reads that as no published file and fetches what it would have reused, which
- * costs requests and nothing else.
+ * An index with no `icons` key at all is what a build that published no icon
+ * writes (the day every listed icon was withheld, say), and it is an answer: the
+ * empty file, after one request. Read as a failure, it had the next build's
+ * report say the file could not be read (`describeLostIconsFile`).
+ *
+ * Returns `null`, and never throws, for anything else short of a file that
+ * checks out: a host that does not answer, answers a status, serves too much
+ * (the index is read under 64 KiB, the file under 24 MiB), serves text that is
+ * no index or no icons file, serves an `icons` pointer that is not one, or
+ * serves a file whose sha256 is not the pointer's. A caller reads that as no
+ * published file and fetches what it would have reused, which costs requests
+ * and nothing else.
  *
  * The pointer stays under the base. It is read from a file on the published
  * host, and a pointer to another host, or above the base on this one, would have
@@ -226,7 +231,11 @@ async function readPublished(timed: typeof fetch, baseUrl: string): Promise<Icon
   if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`
   const index = await getCapped(timed, new URL('index.json', base).href, PUBLISHED_INDEX_MAX_BYTES)
   if (index === null) return null
-  const pointer = iconsPointer(JSON.parse(new TextDecoder().decode(index)) as unknown)
+  const parsed = JSON.parse(new TextDecoder().decode(index)) as unknown
+  if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) && !Object.hasOwn(parsed, 'icons')) {
+    return { icons: {}, sources: {} }
+  }
+  const pointer = iconsPointer(parsed)
   if (pointer === null) return null
   const target = new URL(pointer.url, base)
   if (target.origin !== base.origin || !target.pathname.startsWith(base.pathname)) return null
@@ -303,15 +312,17 @@ function holdsBytesOf(dataUrl: string, sha256: string): boolean {
  *   request is made) or bytes that do not match the integrity or sha256 (a
  *   release download past the cap is one, since it cannot be the recorded asset),
  *   a release asset that inflates past the cap (no sentence is true of it, and
- *   the rescue that listed it was held to the same cap), and a pinned commit that
- *   is not a sha.
+ *   the rescue that listed it was held to the same cap), a pinned commit that
+ *   is not a sha, and a 404 for a raw file the record holds published.
  *
  * Every request takes the first answer it gets: a 429 or a 5xx is "not yet
  * read" at once and is not waited out, so a fetch in flight when the time budget
  * runs out finishes in one attempt (see {@link ICON_FETCH_TIME_BUDGET_MS_DEFAULT}).
  *
- * `work.expectSha256` is not read here. It is for the fold, which records the
- * bytes under the sha256 they have.
+ * `work.expectSha256` is read for one thing, that the record holds the key
+ * published, which turns a raw 404 into an answer about the host rather than
+ * the file ({@link fromGithub}). The sha256 itself is for the fold, which
+ * records the bytes under the sha256 they have.
  * @param work - one fetch of a plan.
  * @param transport - how to reach the network.
  */
@@ -324,7 +335,7 @@ export async function fetchIcon(work: IconWork, transport: IconTransport): Promi
       case 'npm':
         return await fromNpm(target, label, shown, transport)
       case 'github':
-        return await fromGithub(target, label, shown, transport)
+        return await fromGithub(target, label, shown, transport, work.expectSha256 !== undefined)
       case 'release':
         return await fromRelease(target, label, shown, transport)
     }
@@ -529,7 +540,11 @@ async function fromNpm(target: NpmTarget, label: string, shown: string, transpor
   }
 }
 
-async function fromGithub(target: GithubTarget, label: string, shown: string, transport: IconTransport): Promise<IconFetchResult> {
+/**
+ * The file at a pinned commit. `published` says the record holds the key
+ * published: the file was read at this commit on an earlier build.
+ */
+async function fromGithub(target: GithubTarget, label: string, shown: string, transport: IconTransport, published: boolean): Promise<IconFetchResult> {
   const { repo, commit } = target
   // A key names one immutable artifact only if the commit is one: a branch name
   // would name whatever it pointed at the day it was read.
@@ -548,9 +563,17 @@ async function fromGithub(target: GithubTarget, label: string, shown: string, tr
     transport.timeoutMs,
     'first-answer',
   )
-  if (response.status === 404) return refused(iconDetail.notAtCommit(label, shown, repo, commit))
-  // Only a 404 is an answer about the file. A 403 from a blocking edge or a
-  // 429 is a statement about this request.
+  if (response.status === 404) {
+    // A 404 is an answer about the file on its first read alone. A file the
+    // record holds published was read at this commit before, and a commit does
+    // not change, so a 404 on the refetch says the host, or a repository gone
+    // or made private, which the other channels' misses already are: recorded
+    // as a refusal, it would replace the published row for good.
+    if (published) return notYetRead(`github raw answered 404 for ${echo(`${repo}@${commit}`)}, where the file was read before, so the answer is not about the file`)
+    return refused(iconDetail.notAtCommit(label, shown, repo, commit))
+  }
+  // No other status is an answer about the file. A 403 from a blocking edge or
+  // a 429 is a statement about this request.
   if (!response.ok) return notYetRead(`github raw answered ${response.status} for ${echo(`${repo}@${commit}`)}`)
   const bytes = await readCappedBody(response, MAX_CATALOG_ICON_BYTES + 1)
   // The read stopped at the bound and never learned the size, which is not a

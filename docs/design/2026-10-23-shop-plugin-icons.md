@@ -255,7 +255,11 @@ Only keys no row knows are fetched for the first time.
   `raw.githubusercontent.com/<owner>/<slug>/<commit>/<path>`, through
   `fetchRobust` and `readCappedBody` at 32 KiB + 1. The declaration was read
   at the branch head (§4); if the path is missing at the commit, that is a
-  refusal that names the commit, and the next commit is a new key.
+  refusal that names the commit, and the next commit is a new key. A key the
+  record holds published was read at that commit before, so a 404 on its
+  refetch (§5.1) is the host, or a repository gone or made private, and not
+  the file: it is "not yet read" (§5.3), and the record keeps the key
+  published.
 - **A release-rescued entry: the recorded release asset** (the entry's
   `tarball.url`), which the icon step downloads itself through the harvest's
   `downloadReleaseAsset` and its 300-second deadline, checks against the
@@ -529,8 +533,10 @@ x@1.0.0 could not be read by the catalog build as a gzipped tar archive with
 one top-level directory, so its icon was not read." (a release asset says "the
 release asset" for "the published package x@1.0.0"). When the published icons
 file cannot be read while the record holds published icons (§5.1), the section
-ends with one line saying so, how many icons were fetched again within the
-budget and how many the budget turned away. These rows are
+ends with one line saying so, how many of their fetches the budgets started and
+how many they turned away, a fetch the time budget never started among the
+latter. An index with no icons pointer is not such a file: a build that
+published no icon writes it, and it reads as an empty file. These rows are
 not rejections: the entry is
 listed, the new code space is the icon section's own, and none of it touches
 the rejection codes the published report already carries.

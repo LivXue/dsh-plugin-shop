@@ -790,10 +790,31 @@ describe('the icon step rides the daily build (design 2026-10-23-shop-plugin-ico
       expect(readFileSync(join(cwd, 'registry', 'icon-state.json'), 'utf8')).toBe(PUBLISHED_RECORD)
       const report = readFileSync(out(cwd, 'report.md'), 'utf8')
       expect(report).toContain('Declared 1: published 0, withheld by hand 0, withheld for size 0, refused 0, not read 0, not yet read 1. Icons file: none.\n')
+      // The line counts the fetches the budgets started, which a plan's fetch
+      // the time budget never reached is not (describeLostIconsFile).
       expect(report.endsWith(
-        '\nThe published icons file could not be read, so icons recorded as published were fetched again: 0 within this build\'s budget, 1 turned away by it.\n',
+        '\nThe published icons file could not be read, so icons recorded as published were fetched again: 0 started within this build\'s budgets, 1 turned away by them.\n',
       )).toBe(true)
       expect(run.stderr).toContain('The published icons file could not be read')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('says no file was lost the day after a build that published none, though the record holds the icon', () => {
+    // Yesterday every icon was withheld, so its index points at no icons file.
+    // That is an answer, the empty file, and the line about a file that could
+    // not be read is not true of it.
+    const cwd = workspace({ record: PUBLISHED_RECORD })
+    try {
+      const run = buildFrom(cwd, [{ contains: 'v1/index.json', body: { schemaVersion: 5 } }], { ICON_FETCH_BUDGET: '0' })
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      expect(run.urls).toEqual([INDEX_URL])
+      const report = readFileSync(out(cwd, 'report.md'), 'utf8')
+      expect(report).toContain('Declared 1: published 0, withheld by hand 0, withheld for size 0, refused 0, not read 0, not yet read 1. Icons file: none.\n')
+      expect(report).not.toContain('could not be read')
+      expect(run.stderr).not.toContain('The published icons file could not be read')
+      expect(readFileSync(join(cwd, 'registry', 'icon-state.json'), 'utf8')).toBe(PUBLISHED_RECORD)
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }

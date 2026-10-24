@@ -554,7 +554,9 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // defect and not an author's, and the two tripwires below.
   const iconSubjectList = iconSubjects(selectedEntries, candidates, repoCandidates)
   // Yesterday's icons file, for the bytes of every icon the record already holds.
-  // Null when it cannot be read, which costs fetches and nothing else.
+  // The empty file when yesterday's index points at none, as a build that
+  // published no icon leaves it; null when it cannot be read, which costs
+  // fetches and nothing else.
   const publishedIcons = await readPublishedIcons(fetch)
   // The plan and the fold are handed the same record, file and withheld rows: a
   // plan made from one set and folded against another would reuse an icon the
@@ -613,7 +615,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   const iconsFile = iconFold.file === null ? null : serializeIcons(iconFold.file)
   if (iconsFile !== null) writeFileSync(join(OUT_DIR, iconsFile.fileName), iconsFile.json)
   const iconsFileBytes = iconsFile === null ? null : Buffer.byteLength(iconsFile.json)
-  const iconsLostNote = describeLostIconsFile(iconState, publishedIcons, iconPlan)
+  const iconsLostNote = describeLostIconsFile(iconState, publishedIcons, iconPlan, iconResults)
   process.stderr.write(`icons: ${Object.entries(iconFold.counts).map(([name, count]) => `${name} ${count}`).join(', ')}; icons file: ${iconsFile === null ? 'none' : `${iconsFile.fileName}, ${iconsFileBytes} bytes`}\n`)
   if (iconsLostNote !== null) process.stderr.write(`icons: ${iconsLostNote}\n`)
 

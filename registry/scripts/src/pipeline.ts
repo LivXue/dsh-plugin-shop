@@ -5,7 +5,7 @@ import { emit, SCHEMA_VERSION, type Artifacts, type IconsPointer, type StarsPoin
 import { compareStrings, firstSeenKey, installIdentity } from './identity.ts'
 import { acceptedNpmRepositories, npmShadowOf } from './npm-shadow.ts'
 import type { RegistryConfig } from './config.ts'
-import type { IconPlan } from './icon-plan.ts'
+import type { IconFetchResult, IconPlan } from './icon-plan.ts'
 import type { IconKey, IconOutcome } from './icon-state.ts'
 import type { IconsFile } from './icons-assemble.ts'
 import type { Candidate, Entry, Rejection, RepoCandidate } from './types.ts'
@@ -161,24 +161,33 @@ export function parseBudgetVariable(name: string, raw: string | undefined, fallb
  *
  * Said only when the file is missing AND the record holds a published row: a
  * first run has no record, and a record of refusals loses nothing with the file.
+ * An index with no icons pointer is not a missing file: `readPublishedIcons`
+ * answers it with the empty file, since a build that published no icon (every
+ * one withheld, say) writes exactly that index, and no line here is true of it.
+ *
  * A fetch counts as a refetch when the plan expects a sha256 of it, which it
- * does exactly for a key the record holds published. A key the record has never
- * met is a first read, and the budget turning it away is the section's `not yet
- * read`, not a loss.
+ * does exactly for a key the record holds published, and as started when
+ * `harvestIcons` answered for it, whatever the answer. A refetch the time
+ * budget never started has no answer, and was turned away as surely as a key
+ * past the count budget. A key the record has never met is a first read, and
+ * the budgets turning it away is the section's `not yet read`, not a loss.
  * @param state - the committed record, `icon-state.json`.
  * @param published - what `readPublishedIcons` returned.
  * @param plan - from `planIconWork` on the same record and file.
+ * @param results - what `harvestIcons` answered: one result for each fetch it started.
  */
 export function describeLostIconsFile(
   state: ReadonlyMap<IconKey, IconOutcome>,
   published: IconsFile | null,
   plan: Pick<IconPlan, 'fetch' | 'deferred'>,
+  results: ReadonlyMap<IconKey, IconFetchResult>,
 ): string | null {
   if (published !== null) return null
   if (![...state.values()].some(row => row.outcome === 'published')) return null
-  const refetched = plan.fetch.filter(work => work.expectSha256 !== undefined).length
-  const turnedAway = plan.deferred.filter(key => state.get(key)?.outcome === 'published').length
-  return `The published icons file could not be read, so icons recorded as published were fetched again: ${refetched} within this build's budget, ${turnedAway} turned away by it.`
+  const refetches = plan.fetch.filter(work => work.expectSha256 !== undefined)
+  const started = refetches.filter(work => results.has(work.key)).length
+  const turnedAway = refetches.length - started + plan.deferred.filter(key => state.get(key)?.outcome === 'published').length
+  return `The published icons file could not be read, so icons recorded as published were fetched again: ${started} started within this build's budgets, ${turnedAway} turned away by them.`
 }
 
 /**

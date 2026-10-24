@@ -6,7 +6,7 @@ import { assertIconsInFile, describeLostIconsFile, describeRereadStopped, parseB
 import { parseRegistryConfig } from '../src/config.ts'
 import { lockNpmNames, SCHEMA_VERSION, type IconsPointer } from '../src/emit.ts'
 import { sha256Hex } from '../src/icon-bytes.ts'
-import { planIconWork, type IconSubject } from '../src/icon-plan.ts'
+import { planIconWork, type IconFetchResult, type IconSubject } from '../src/icon-plan.ts'
 import { npmIconKey, type IconKey, type IconOutcome } from '../src/icon-state.ts'
 import type { IconsFile } from '../src/icons-assemble.ts'
 import type { Candidate, Rejection, RepoCandidate } from '../src/types.ts'
@@ -1443,38 +1443,51 @@ describe('describeLostIconsFile', () => {
   const record = new Map<IconKey, IconOutcome>(['a', 'b', 'c'].map(name => [KEY(name), publishedRow(name)]))
   const emptyFile: IconsFile = { icons: {}, sources: {} }
   const plan = (published: IconsFile | null, budget: number) => planIconWork(subjects, record, published, new Map(), budget)
+  /** What `harvestIcons` answers when it starts the fetches of `names` and no others: one result for each. */
+  const started = (...names: string[]) => new Map<IconKey, IconFetchResult>(names.map(name => [KEY(name), { kind: 'not-yet-read', reason: 'a timeout' }]))
 
-  it('says how many recorded icons were fetched again within the budget, and how many it turned away', () => {
+  // The counts are of fetches the build STARTED. A plan's fetch the time budget
+  // ran out before starting has no result, and was turned away as surely as a
+  // key past the count budget; the line used to count it as fetched again.
+  it('says how many recorded icons were fetched again within the budgets, and how many they turned away', () => {
     // With the file gone every recorded key is fetched again, in key order, so
     // a and b fit the budget of two and c does not. d was never recorded: its
     // fetch is a first read, not a refetch, and it is turned away without
     // being counted either way.
-    expect(describeLostIconsFile(record, null, plan(null, 2))).toBe(
-      'The published icons file could not be read, so icons recorded as published were fetched again: 2 within this build\'s budget, 1 turned away by it.',
+    expect(describeLostIconsFile(record, null, plan(null, 2), started('a', 'b'))).toBe(
+      'The published icons file could not be read, so icons recorded as published were fetched again: 2 started within this build\'s budgets, 1 turned away by them.',
+    )
+  })
+
+  it('counts a planned refetch the time budget never started as turned away, not as fetched', () => {
+    // All four fit the count budget; the time budget ran out after a's fetch
+    // had started, so b and c never were, and d's is no refetch either way.
+    expect(describeLostIconsFile(record, null, plan(null, 4), started('a'))).toBe(
+      'The published icons file could not be read, so icons recorded as published were fetched again: 1 started within this build\'s budgets, 2 turned away by them.',
     )
   })
 
   it('does not count the fetch of a key the record has never met as a refetch', () => {
-    expect(describeLostIconsFile(record, null, plan(null, 4))).toBe(
-      'The published icons file could not be read, so icons recorded as published were fetched again: 3 within this build\'s budget, 0 turned away by it.',
+    expect(describeLostIconsFile(record, null, plan(null, 4), started('a', 'b', 'c', 'd'))).toBe(
+      'The published icons file could not be read, so icons recorded as published were fetched again: 3 started within this build\'s budgets, 0 turned away by them.',
     )
   })
 
   it('still says so when the record names icons that no listing wants any more', () => {
     // Nothing is left to fetch, and the file was still lost: the line is the
     // only trace of it in the report.
-    expect(describeLostIconsFile(record, null, planIconWork([], record, null, new Map(), 10))).toBe(
-      'The published icons file could not be read, so icons recorded as published were fetched again: 0 within this build\'s budget, 0 turned away by it.',
+    expect(describeLostIconsFile(record, null, planIconWork([], record, null, new Map(), 10), started())).toBe(
+      'The published icons file could not be read, so icons recorded as published were fetched again: 0 started within this build\'s budgets, 0 turned away by them.',
     )
   })
 
   it('says nothing when the published file was read', () => {
-    expect(describeLostIconsFile(record, emptyFile, plan(emptyFile, 4))).toBeNull()
+    expect(describeLostIconsFile(record, emptyFile, plan(emptyFile, 4), started('a', 'b', 'c', 'd'))).toBeNull()
   })
 
   it('says nothing on a first run, which has no record to lose', () => {
     const none = new Map<IconKey, IconOutcome>()
-    expect(describeLostIconsFile(none, null, planIconWork(subjects, none, null, new Map(), 4))).toBeNull()
+    expect(describeLostIconsFile(none, null, planIconWork(subjects, none, null, new Map(), 4), started('a', 'b', 'c', 'd'))).toBeNull()
   })
 
   it('says nothing when the record holds no published row, whatever became of the file', () => {
@@ -1484,7 +1497,7 @@ describe('describeLostIconsFile', () => {
       [KEY('a'), { outcome: 'refused', detail: 'icon ./icon.svg is not in the published package' }],
       [KEY('b'), { outcome: 'not-read', detail: 'the published package b@1.0.0 is too large' }],
     ])
-    expect(describeLostIconsFile(sad, null, planIconWork(subjects, sad, null, new Map(), 4))).toBeNull()
+    expect(describeLostIconsFile(sad, null, planIconWork(subjects, sad, null, new Map(), 4), started('a', 'b', 'c', 'd'))).toBeNull()
   })
 })
 
