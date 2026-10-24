@@ -543,11 +543,44 @@ function mediaTypeOf(path: string): IconMediaType | undefined {
 /**
  * More entries than any real `files` list holds, and longer than any real
  * entry, so that past either the list is not read. With a path of at most
- * {@link MAX_ICON_PATH_LENGTH} they bound a match at some 256 * 256 * 4096
- * steps; `files` is hostile input and a manifest may be a megabyte of it.
+ * {@link MAX_ICON_PATH_LENGTH} they bound one entry's walk at some 256 * 4096
+ * steps, and a list at 256 times that, which {@link MAX_FILES_MATCH_STEPS}
+ * then cuts short; `files` is hostile input and a manifest may be a megabyte
+ * of it.
  */
 const MAX_FILES_ENTRIES = 256
 const MAX_FILES_ENTRY_LENGTH = 256
+
+/**
+ * The most turns of the two walks below, {@link globMatches} and
+ * {@link nameMatches}, that one call of {@link fileListIncludes} takes, counted
+ * across all of its entries. Past it the list is not read and the file is
+ * included, as for a list past the bounds above.
+ *
+ * Those bounds hold one walk to the product of its lengths, and the product is
+ * no small number for a list built to reach it. 256 entries of a star, 254
+ * `a`s and a `b`, against a path of 4,092 `a`s and `.svg`, kept one call busy
+ * for 1.2 seconds of blocking CPU (measured 2026-10-24): each entry's star
+ * slides one character along the path and reads its 254 `a`s again after every
+ * slide, a million turns an entry and 259 million in all. Any repository that
+ * carries the topic can hand the harvest that list in its root manifest and in
+ * each of up to eight subpackages', on every full fetch and every re-read.
+ *
+ * A million turns took 4 to 15 ms of the same CPU, depending on the shape. A
+ * list as long as {@link MAX_FILES_ENTRIES} allows, of globs with a `**`
+ * between directories that reach into the path's (icon-declaration.test.ts
+ * reads one), spent about 4,500 of them, so no list an author writes comes
+ * near it.
+ */
+export const MAX_FILES_MATCH_STEPS = 1_000_000
+
+/**
+ * What is left of one call's {@link MAX_FILES_MATCH_STEPS}, spent a turn at a
+ * time by both walks. Below zero, the call has stopped reading.
+ */
+export interface MatchSteps {
+  left: number
+}
 
 /**
  * Glob syntax beyond `*` and `**`: the `?`, character classes, braces,
@@ -597,19 +630,25 @@ const UNREAD_GLOB_SYNTAX = /[?[\]{}()\\]/
  * - A list or entry past the bounds above is not read, nor is a path past
  *   {@link MAX_ICON_PATH_LENGTH}. Matching is not done by a regular expression
  *   built from the entry, whose worst case is exponential, but by walking both
- *   with a bounded backtrack: at worst the product of their lengths.
+ *   with a bounded backtrack: at worst the product of their lengths. Nor is a
+ *   list whose walks would take more than {@link MAX_FILES_MATCH_STEPS} turns
+ *   between them, which is where a product that large is cut short.
  *
  * @param files - the manifest's `files`, untrusted: any JSON value.
  * @param path - normalised and POSIX-separated, as an {@link IconDeclaration}'s.
+ * @param steps - the call's budget of turns. Callers leave it out; a test
+ *   hands one in to read what the call spent.
  */
-export function fileListIncludes(files: unknown, path: string): boolean {
+export function fileListIncludes(files: unknown, path: string, steps: MatchSteps = { left: MAX_FILES_MATCH_STEPS }): boolean {
   if (!Array.isArray(files) || files.length > MAX_FILES_ENTRIES || path.length > MAX_ICON_PATH_LENGTH) return true
   if (!files.every((entry) => typeof entry === 'string')) return true
   const segments = path.toLowerCase().split('/')
   let included = false
   for (const entry of files as readonly string[]) {
     const excludes = entry.startsWith('!')
-    const matched = entryMatches(excludes ? entry.slice(1) : entry, segments)
+    const matched = entryMatches(excludes ? entry.slice(1) : entry, segments, steps)
+    // A spent budget leaves the answer unknown, and an unknown answer includes.
+    if (steps.left < 0) return true
     // An entry that cannot be read (`undefined`) counts as a match for an
     // include and as no match for an exclude.
     if (matched ?? !excludes) included = !excludes
@@ -619,9 +658,10 @@ export function fileListIncludes(files: unknown, path: string): boolean {
 
 /**
  * Whether one `files` entry, without its `!`, matches a path, or `undefined`
- * where the entry is one this does not read.
+ * where the entry is one this does not read. A glob's answer means nothing once
+ * `steps` is spent, and the caller reads `steps` first.
  */
-function entryMatches(entry: string, path: readonly string[]): boolean | undefined {
+function entryMatches(entry: string, path: readonly string[], steps: MatchSteps): boolean | undefined {
   if (entry.length > MAX_FILES_ENTRY_LENGTH || UNREAD_GLOB_SYNTAX.test(entry)) return undefined
   // Empty segments (`a//b`, a trailing or a leading slash) are no segments, and
   // a leading `.` is the package root. `path` is lower-cased by the caller.
@@ -635,26 +675,29 @@ function entryMatches(entry: string, path: readonly string[]): boolean | undefin
   // npm packs everything below `dir/*`, not only the children of `dir`, and
   // everything for a lone `*`, an include or a `!`.
   if (parts[parts.length - 1] === '*') parts[parts.length - 1] = '**'
-  return globMatches(parts, path)
+  return globMatches(parts, path, steps)
 }
 
 /**
  * Whether glob segments match path segments, a `**` segment standing for any
  * number of them, none included. Walks both once, and where a segment fails
  * goes back only to the latest `**`: at worst the product of the lengths, with
- * nothing exponential in it however the entry is written.
+ * nothing exponential in it however the entry is written. Each turn spends one
+ * of `steps`, and the walk stops when they are spent, its answer then
+ * meaningless.
  */
-function globMatches(pattern: readonly string[], path: readonly string[]): boolean {
+function globMatches(pattern: readonly string[], path: readonly string[], steps: MatchSteps): boolean {
   let at = 0
   let from = 0
   let globstar = -1
   let resume = 0
   while (from < path.length) {
+    if (--steps.left < 0) return false
     const part = pattern[at]
     if (part === '**') {
       globstar = at++
       resume = from
-    } else if (part !== undefined && nameMatches(part, path[from] ?? '')) {
+    } else if (part !== undefined && nameMatches(part, path[from] ?? '', steps)) {
       at++
       from++
     } else if (globstar !== -1) {
@@ -671,14 +714,15 @@ function globMatches(pattern: readonly string[], path: readonly string[]): boole
 /**
  * Whether a glob segment matches a path segment: `*` for any run of
  * characters, none included, and every other character for itself. The same
- * walk as {@link globMatches}, one level down.
+ * walk as {@link globMatches}, one level down, spending the same `steps`.
  */
-function nameMatches(pattern: string, name: string): boolean {
+function nameMatches(pattern: string, name: string, steps: MatchSteps): boolean {
   let at = 0
   let from = 0
   let star = -1
   let resume = 0
   while (from < name.length) {
+    if (--steps.left < 0) return false
     if (pattern[at] === '*') {
       star = at++
       resume = from

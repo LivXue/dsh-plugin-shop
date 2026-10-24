@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   EXPORT_CONDITIONS,
   ICON_MEDIA_TYPES,
+  MAX_FILES_MATCH_STEPS,
   MAX_ICON_PATH_LENGTH,
   fileListIncludes,
   iconDetail,
@@ -505,6 +506,52 @@ describe('fileListIncludes', () => {
 
   it('reads an entry far past any real one as one it cannot read', () => {
     expect(fileListIncludes([`${'a/'.repeat(50_000)}x`], 'icon.svg')).toBe(true)
+  })
+
+  // Inside the bounds a walk still costs the product of its lengths, and a list
+  // built to reach it pays that once per entry: the first shape below kept one
+  // call busy for 1.2 s of blocking CPU before a call had a budget of steps.
+  // Past the budget the list is not read, which includes the file, as a list
+  // past the bounds above does.
+  describe('a budget of matching steps', () => {
+    /** The most entries, each a star that slides along the path and reads 254 more characters after every slide. */
+    const slidingStars = (count: number) => Array.from({ length: count }, () => `*${'a'.repeat(254)}b`)
+    /** The longest path the reader keeps, all of it one name the stars slide along. */
+    const longName = `${'a'.repeat(MAX_ICON_PATH_LENGTH - '.svg'.length)}.svg`
+
+    it('reads a list that would spend more than the budget as including the file', () => {
+      const steps = { left: MAX_FILES_MATCH_STEPS }
+      expect(fileListIncludes(slidingStars(256), longName, steps)).toBe(true)
+      // Stopped at the budget: the one turn past it is the one that found it spent.
+      expect(steps.left).toBe(-1)
+    })
+
+    it('is what decides that list: read whole, two of its entries alone answer otherwise, past the budget', () => {
+      const steps = { left: Number.MAX_SAFE_INTEGER }
+      expect(fileListIncludes(slidingStars(2), longName, steps)).toBe(false)
+      expect(Number.MAX_SAFE_INTEGER - steps.left).toBeGreaterThan(MAX_FILES_MATCH_STEPS)
+    })
+
+    it('stops a list of double stars that backtracks over a thousand directories the same way', () => {
+      const deepPath = `${Array.from({ length: 1_000 }, () => 'a').join('/')}/${'a'.repeat(2_000)}.svg`
+      const steps = { left: MAX_FILES_MATCH_STEPS }
+      expect(fileListIncludes(Array.from({ length: 256 }, () => `**/*${'a'.repeat(100)}/**/b*`), deepPath, steps)).toBe(true)
+      expect(steps.left).toBe(-1)
+    })
+
+    it('reads an ordinary list exactly, and in a small part of the budget', () => {
+      // A list as long as the bound allows, of globs that reach into the path's
+      // directories, whose last entry decides: the answer is the list's own, not
+      // the budget's.
+      const forms = ['dist/**/*.js', '**/*.d.ts', 'src/**', '!**/*.test.js', 'icons/*.png', 'README*', 'assets/**/*.svg', '!assets/**/dark/**']
+      const files = Array.from({ length: 256 }, (_, index) => forms[index % forms.length])
+      const path = 'assets/icons/dark/mode/icon.svg'
+      const excluding = { left: MAX_FILES_MATCH_STEPS }
+      expect(fileListIncludes(files, path, excluding)).toBe(false)
+      const including = { left: MAX_FILES_MATCH_STEPS }
+      expect(fileListIncludes(files.slice(0, -1), path, including)).toBe(true)
+      for (const steps of [excluding, including]) expect(MAX_FILES_MATCH_STEPS - steps.left).toBeLessThan(MAX_FILES_MATCH_STEPS / 100)
+    })
   })
 })
 
