@@ -511,10 +511,13 @@ A new review file, `registry/withheld-icons.yml`, empty, in the shape of
 same `npmNameOrRepo` grammar), a repeated identity throws, as in every review
 file. A withheld entry is published without an icon, so it draws the default,
 and the report names it with its reason. It never touches the listing; that
-stays `denied.yml`'s job. A row that names no listed entry is reported with the
-other review files' rows that matched nothing, because a mistyped name loads,
-fires on nothing and leaves the icon published; a repository is keyed by its
-`owner/repo`, so a row that names its bundle name is reported too.
+stays `denied.yml`'s job. A row that names no listed entry is reported after
+the other review files' rows that matched nothing, under a heading of its own,
+because a mistyped name loads, fires on nothing and leaves the icon published;
+a repository is keyed by its `owner/repo`, so a row that names its bundle name
+is reported too. The heading is its own because theirs says no harvested
+candidate matched, which is untrue of a row naming a plugin the gate turned
+away.
 
 ## 10. The build report
 
