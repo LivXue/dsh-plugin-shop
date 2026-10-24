@@ -766,9 +766,12 @@ keywords:dsh-plugin publisher axis — vocabulary 3775, 38 pinned,
 the count is the population seeding reads, which leaves every carrier out
 (`2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`, §4.1). When a
 run releases pins seeding no longer names, through complete seeding or a
-judged pin (§3's amendments), `build.ts` adds
-`released N pin(s) seeding no longer names` to the line, in the build
-report and the CI log.
+judged pin (§3's amendments), `build.ts` adds the count and the exit to
+the line, in the build report and the CI log:
+`released N pin(s) seeding no longer names, the keyword counted whole inside
+its window`, or `released N judged pin(s) seeding no longer names`. One
+report releases through one exit only. (Amended 2026-10-22, PR #108
+review: both exits used to print the first half alone.)
 
 **The inputs are reported, not only the results.** An empty vocabulary is a
 legal no-op: 0.8.1 shipped one and CI was green while the axis did nothing.

@@ -942,6 +942,26 @@ describe('applyAxisReport', () => {
     expect(after.released).toEqual(['judged-gone'])
   })
 
+  it('names the exit its releases left through: complete seeding inside the window, a judged probe past it', () => {
+    // One report releases through one exit only. Complete seeding is claimed
+    // only by a keyword inside its window, where nothing is probed and so
+    // nothing is judged; past the window only a judged pin can leave. The two
+    // exits rest on different evidence, so the report line says which one a
+    // count came through (PR #108 review).
+    const inside = applyAxisReport(
+      base({ pinned: { k: ['gone', 'still'] } }),
+      outcome({ seedingComplete: true, seeded: ['still'] }),
+    )
+    expect(inside.released).toEqual(['gone'])
+    expect(inside.releaseExit).toBe('complete-seeding')
+    const past = applyAxisReport(
+      base({ pinned: { k: ['judged-gone', 'kept'] } }),
+      outcome({ seeded: ['kept'], judged: ['judged-gone'] }),
+    )
+    expect(past.released).toEqual(['judged-gone'])
+    expect(past.releaseExit).toBe('judged')
+  })
+
   it('lets a seed take the slot a release freed in the same run', () => {
     // Release comes before pinning for the reason eviction does: at the bound,
     // pinning first refuses a new residue owner while a pin that no longer
