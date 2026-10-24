@@ -231,12 +231,22 @@ Only keys no row knows are fetched for the first time.
   (64 MiB), unpacked with `readTar` (`packages/dsh-plugin-shop/src/shared/tar.ts`,
   which `release-asset.ts` already imports), and the member at
   `<root>/<path>` taken, `<root>` being the tarball's single top-level
-  directory (`package/` for everything `npm pack` writes). Verifying the
-  integrity is what makes the icon provably the listed artifact's: the catalog
-  says "this version", and so does its icon. The build downloads no npm
-  tarball today, so this is new traffic, bounded by §5.3 and paid once per
-  version thanks to §5.1. A package past either cap is "not read" (§10), not
-  refused: its author did nothing wrong.
+  directory (`package/` for everything `npm pack` writes), found as the
+  rescue's own reader finds it (`singleRoot` in `release-asset.ts`), so a
+  stray file at the top beside that directory is no obstacle: `strip: 1`
+  leaves it no path to land at. Names are compared as `readTar` spells them,
+  one character for each byte, so a declared path in UTF-8 is looked up as
+  the same bytes. Verifying the integrity is what makes the icon provably the
+  listed artifact's: the catalog says "this version", and so does its icon.
+  The algorithm is read before the request, and a digest in none of sha512,
+  sha384, sha256 or sha1 (the gate admits any `[a-z0-9]+`) is "not yet read"
+  without a download. The build downloads no npm tarball today, so this is new
+  traffic, bounded by §5.3 and paid once per version thanks to §5.1. A package
+  past either cap is "not read" (§10), not refused: its author did nothing
+  wrong. So is a tarball that matched its digest and still cannot be read as a
+  gzipped tar archive with one top-level directory: the bytes are the
+  version's and will not read better tomorrow, so the key is recorded and not
+  downloaded again every day.
 - **A git-installed GitHub entry: the file at the pinned commit**,
   `raw.githubusercontent.com/<owner>/<slug>/<commit>/<path>`, through
   `fetchRobust` and `readCappedBody` at 32 KiB + 1. The declaration was read
@@ -248,7 +258,9 @@ Only keys no row knows are fetched for the first time.
   entry's `tarball.sha256`, and unpacks under the same bounds as an npm
   tarball. One request per new key: rescued entries are few, and handing bytes
   over from the harvest's own read would couple the two steps for no
-  measurable saving.
+  measurable saving. A download past `MAX_TARBALL_BYTES` cannot be the recorded
+  asset, whose sha256 was taken under the same cap: it has changed, and is "not
+  yet read" as a sha256 that does not match is.
 - **Only what the install would install.** pnpm installs a git dependency the
   way `npm pack` would pack it, so a GitHub package.json `files` list that
   leaves the icon out means dsh never sees it: refused, with a detail that
@@ -473,13 +485,18 @@ stays `denied.yml`'s job.
 
 A section for icons. One line of counts: declared, published, withheld by
 hand (§9), withheld for size (§6.2), refused, not read (a package past §5.2's
-caps), not yet read (§5.3), and the icons file's size. Then one row per
+caps, or one that cannot be read as a gzipped tar archive with one top-level
+directory), not yet read (§5.3), and the icons file's size. Then one row per
 refused, withheld or not-read icon, with an author-readable detail in the
 idiom of the rejection table: "icon ./assets/logo.gif is not
 SVG, PNG, JPEG or WebP", "icon ./icon.png is 61 KiB; the shop shows icons of
 at most 32 KiB", "icon must be a non-empty string", "icon data:image/svg+xml…
 is not a file path in the package", "icon ../shared/icon.svg leaves the
-package", "icon ./icon.svg is not in the published package". These rows are
+package", "icon ./icon.svg is not in the published package", and, for a
+package that matched its digest and cannot be opened, "the published package
+x@1.0.0 could not be read by the catalog build as a gzipped tar archive with
+one top-level directory, so its icon was not read." (a release asset says "the
+release asset" for "the published package x@1.0.0"). These rows are
 not rejections: the entry is
 listed, the new code space is the icon section's own, and none of it touches
 the rejection codes the published report already carries.

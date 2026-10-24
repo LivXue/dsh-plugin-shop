@@ -1062,6 +1062,120 @@ describe('a carried declarations record is checked on the way in', () => {
   })
 })
 
+describe('a carried candidate\'s location is checked on the way in', () => {
+  // The repository, the subpackage directory and the declared icon path (the
+  // last checked with the icon record above) are joined into the path a raw
+  // file is read from, by the icon step and by the declarations re-read alike.
+  // A URL parser reads `..` in that path as a direction and `?` as the start of
+  // a query, and encoding a segment leaves `..` alone, so a hand-edited record
+  // could aim a read at a file of another repository. This build writes none
+  // of these shapes; a malformed registry file throws.
+  const rowFor = (key: string, extra: Record<string, unknown>): string => JSON.stringify({
+    [key]: { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [{ ...candidate(key), ...extra }] },
+  })
+
+  it.each([
+    // What the review measured: this reads the file of another repository at a sha of the attacker's choosing.
+    ['a subdir that climbs out of the repository into another', `../../../attacker/evil/${'d'.repeat(40)}`],
+    ['a subdir that is a dot-dot alone', '..'],
+    ['a subdir that is a dot alone', '.'],
+    ['a subdir with a dot segment', 'packages/./a'],
+    ['a subdir with a dot-dot segment', 'packages/../a'],
+    ['a subdir with an empty segment', 'packages//a'],
+    ['a subdir that starts at the root', '/packages/a'],
+    ['a subdir that ends in a slash', 'packages/a/'],
+    ['an empty subdir', ''],
+  ])('throws on %s', (_label, subdir) => {
+    expect(() => parseRepoState(rowFor('a/one', { subdir }))).toThrow('a/one has a candidate with a malformed subdir')
+  })
+
+  it.each([
+    ['a number', 7],
+    ['null', null],
+    ['a list of names', ['packages', 'a']],
+    ['an object', {}],
+  ])('throws on a subdir that is %s', (_label, subdir) => {
+    expect(() => parseRepoState(rowFor('a/one', { subdir }))).toThrow('a/one has a candidate with a malformed subdir')
+  })
+
+  it('checks the pre-subpackage shape, a single candidate, the same way', () => {
+    const text = JSON.stringify({ 'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidate: { ...candidate('a/one'), subdir: '..' } } })
+    expect(() => parseRepoState(text)).toThrow('a/one has a candidate with a malformed subdir')
+  })
+
+  it.each([
+    // The state key is the repository, so these are keys too; the shape is what is wrong with them.
+    ['a repository whose name is a dot-dot', 'owner/..'],
+    ['a repository whose name is a dot', 'owner/.'],
+    ['a repository that pushes the path into a query', 'owner/repo?x='],
+    ['a repository with a fragment', 'owner/repo#x'],
+    ['a repository with a space', 'owner/re po'],
+    ['a repository with a percent escape', 'owner/%2e%2e'],
+    ['a repository with a backslash', 'owner\\repo'],
+    ['a repository with a newline', 'owner/re\npo'],
+    ['a repository with one segment', 'owner'],
+    ['a repository with three segments', 'owner/repo/extra'],
+    ['a repository with an empty owner', '/repo'],
+    ['a repository with an empty name', 'owner/'],
+    ['an empty repository', ''],
+  ])('throws on %s, though it is its own key', (_label, repo) => {
+    expect(() => parseRepoState(rowFor(repo, { repo }))).toThrow(`${repo} has a candidate with a malformed repo`)
+  })
+
+  it.each([
+    ['another repository', 'b/two'],
+    ['the same repository in another case', 'A/one'],
+    ['a path under the repository', 'a/one/extra'],
+  ])('throws on a candidate whose repo is %s than its key', (_label, repo) => {
+    expect(() => parseRepoState(rowFor('a/one', { repo }))).toThrow('a/one has a candidate with a malformed repo')
+  })
+
+  it.each([
+    ['not a string', 7],
+    ['null', null],
+  ])('throws on a candidate whose repo is %s', (_label, repo) => {
+    expect(() => parseRepoState(rowFor('a/one', { repo }))).toThrow('a/one has a candidate with a malformed repo')
+  })
+
+  it('throws on a candidate with no repo at all', () => {
+    const { repo: _repo, ...without } = candidate('a/one')
+    const text = JSON.stringify({ 'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [without] } })
+    expect(() => parseRepoState(text)).toThrow('a/one has a candidate with a malformed repo')
+  })
+
+  it('accepts the locations the harvest writes', () => {
+    const rows: [string, Record<string, unknown>][] = [
+      ['a/one', {}],
+      ['a/one', { subdir: 'packages/a' }],
+      ['a/one', { subdir: 'apps/desktop/bundled-server/plugins/dsh-better-sidebar-skills' }],
+      // Names that only look like directions: a dot-leading directory is how `.github` is written.
+      ['a/one', { subdir: '.github/plugins/a' }],
+      ['a/one', { subdir: 'pkg..a/b...' }],
+      ['a/one', { subdir: '...' }],
+      ['some-org.name/repo_name.js', {}],
+      ['A-B_c.d/E.F-g_h', { subdir: 'x' }],
+      ['0xdenny218/stc-go', {}],
+      ['a/.github', {}],
+    ]
+    for (const [key, extra] of rows) {
+      const parsed = parseRepoState(rowFor(key, extra))
+      expect(parsed[key]?.candidates[0]?.repo, key).toBe(key)
+      expect(parsed[key]?.candidates[0]?.subdir, JSON.stringify(extra)).toBe(extra.subdir)
+    }
+  })
+
+  it('does not hold an entry\'s own commit to a sha: an entry that recorded a failure has none', () => {
+    // Left out on purpose, with the candidate's: both readers that build a URL
+    // from a commit test it against forty hexadecimal digits before the request
+    // (`rereadCandidate`, and the icon step), and a failed fetch records no
+    // commit at all, so the check would refuse the committed file.
+    const text = JSON.stringify({
+      'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit: '', candidates: [], failure: { code: 'no-manifest', detail: 'x' } },
+    })
+    expect(parseRepoState(text)['a/one']?.commit).toBe('')
+  })
+})
+
 describe('the committed harvest memory', () => {
   it('still parses registry/repo-state.json, which the stamp check must not turn into a build that cannot start', () => {
     // The file is a build input committed daily, and every record in it

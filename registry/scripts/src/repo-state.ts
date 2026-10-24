@@ -198,8 +198,8 @@ function reboundCarriedSize(candidate: RepoCandidate): RepoCandidate {
 
 /**
  * Refuse a carried candidate whose `peers`, `compatibility`, `dshPeers`,
- * `manifestVersion`, `icon` or declarations stamp is a shape this build never
- * writes, and return it typed.
+ * `manifestVersion`, `icon`, declarations stamp, `repo` or `subdir` is a shape
+ * this build never writes, and return it typed.
  *
  * Every field just named rides the bare cast `parseRepoState` revives
  * candidates with, and none is re-derived on the way out: whatever `tier.ts`
@@ -235,20 +235,36 @@ function reboundCarriedSize(candidate: RepoCandidate): RepoCandidate {
  * later must not turn every row written under the old one into a build that
  * cannot start; the payload budget in `repo-gate.ts` still measures whatever a
  * carried row would publish.
- * @param repo - the state key, for the error.
+ *
+ * The location is held to a shape too, as the declared icon path is
+ * ({@link isIconRecord}), because two readers build the URL of a raw file out
+ * of it: `rereadCandidate` (the manifest, at the recorded commit and subdir)
+ * and the icon step (the icon, at the same commit). The candidate's `repo` must
+ * be its state key and two names of letters, digits, `.`, `_` and `-`;
+ * `subdir`, where present, a path of names ({@link hasNamedSegments}). A URL
+ * parser reads `..` in a path as a direction and `?` as the start of a query,
+ * and encoding a segment leaves `..` alone, so a hand-edited record (a pull
+ * request can edit this file) could aim a read at a file of another
+ * repository, at a commit of its choosing. This build writes none of these
+ * shapes, so they are not bounds a later build might lower. The commit is not
+ * held to a sha here: an entry that recorded a failure has none, and both
+ * readers test the candidate's before they ask for anything.
+ * @param repo - the state key, for the error, and what the candidate's `repo` must be.
  * @param candidate - one carried candidate, unvalidated.
  */
 function checkCarriedDeclarations(repo: string, candidate: unknown): RepoCandidate {
   if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
     throw new Error(`repo-state.json: ${repo} has a candidate that is not an object`)
   }
-  const { peers, compatibility, declarationsRule, dshPeers, manifestVersion, icon } = candidate as {
+  const { peers, compatibility, declarationsRule, dshPeers, manifestVersion, icon, subdir, repo: recordedRepo } = candidate as {
     peers?: unknown
     compatibility?: unknown
     declarationsRule?: unknown
     dshPeers?: unknown
     manifestVersion?: unknown
     icon?: unknown
+    subdir?: unknown
+    repo?: unknown
   }
   if (peers !== undefined && !isStringArray(peers)) {
     throw new Error(`repo-state.json: ${repo} has a candidate with a malformed peers record`)
@@ -280,7 +296,26 @@ function checkCarriedDeclarations(repo: string, candidate: unknown): RepoCandida
   if (icon !== undefined && !isIconRecord(icon)) {
     throw new Error(`repo-state.json: ${repo} has a candidate with a malformed icon record`)
   }
+  // The state key is the repository, so the candidate's `repo` is the key, and
+  // the key is then the shape a repository's full name has.
+  if (recordedRepo !== repo || !isRepoFullName(repo)) {
+    throw new Error(`repo-state.json: ${repo} has a candidate with a malformed repo`)
+  }
+  if (subdir !== undefined && !(typeof subdir === 'string' && hasNamedSegments(subdir))) {
+    throw new Error(`repo-state.json: ${repo} has a candidate with a malformed subdir`)
+  }
   return candidate as RepoCandidate
+}
+
+/**
+ * Two names, `owner/slug`, each of the letters, digits, `.`, `_` and `-` a
+ * GitHub login and repository name are made of, and neither a dot nor a
+ * dot-dot, which that alphabet alone would admit.
+ */
+const REPO_FULL_NAME = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
+
+function isRepoFullName(value: string): boolean {
+  return REPO_FULL_NAME.test(value) && hasNamedSegments(value)
 }
 
 function isStringArray(value: unknown): value is string[] {

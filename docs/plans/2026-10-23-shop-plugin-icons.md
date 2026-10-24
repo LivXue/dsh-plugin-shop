@@ -181,7 +181,8 @@ export function shownPath(value: string): string // JSON.stringify of the value,
 | `wrongBytes(label, shown, typeName)` | `${label} ${shown} does not hold ${typeName} data, although its extension says it does.` (`typeName`: `SVG`, `PNG`, `JPEG`, `WebP`) |
 | `packageTooLarge(name, version)` | `the published package ${name}@${version} is larger than the 32 MiB the catalog build downloads, so its icon was not read.` |
 | `packageUnpacksTooLarge(name, version)` | `the published package ${name}@${version} unpacks to more than the 64 MiB the catalog build reads, so its icon was not read.` |
-| `releaseTooLarge()` | `the release asset is larger than the 32 MiB the catalog build downloads, so its icon was not read.` |
+| `packageUnreadable(name, version)` | `the published package ${name}@${version} could not be read by the catalog build as a gzipped tar archive with one top-level directory, so its icon was not read.` |
+| `releaseUnreadable()` | `the release asset could not be read by the catalog build as a gzipped tar archive with one top-level directory, so its icon was not read.` |
 | `withheldByHand(reason)` | `withheld by registry/withheld-icons.yml: ${reason}` |
 | `withheldForSize()` | `withheld: the icons file reached its 16 MiB budget, and the largest icons give way first.` |
 
@@ -703,7 +704,7 @@ export async function harvestIcons(plan: IconPlan, transport: IconTransport, opt
   - The body is read with `readCappedBody(response, MAX_CATALOG_ICON_BYTES + 1)`. Over that is `refused`, with `tooLarge(label, shown, null)`.
 - **Release.**
   - The URL must pass `recordedReleaseUrl`, or the result is `not-yet-read`.
-  - The download goes through `downloadReleaseAsset`. Over the cap is `not-read`, with `releaseTooLarge`. A missing asset or a sha mismatch is `not-yet-read`.
+  - The download goes through `downloadReleaseAsset`. A missing asset, a sha mismatch or a download over the cap is `not-yet-read`: an asset over the cap cannot be the recorded one, whose sha was taken under the same cap (fix round 1, M8).
   - The asset is unpacked like an npm tarball. A missing member is `refused`, with `notInRelease`.
 - **`harvestIcons`.** Runs `plan.fetch` with `concurrency` workers, and starts no new fetch after `deadlineMs`, measured with `performance.now()` from the call. Unstarted keys get no result.
 

@@ -522,7 +522,7 @@ describe('planIconWork: what is asked for', () => {
 
   it.each<[what: string, row: IconOutcome]>([
     ['refused', { outcome: 'refused', detail: iconDetail.notString() }],
-    ['not read', { outcome: 'not-read', detail: iconDetail.releaseTooLarge() }],
+    ['not read', { outcome: 'not-read', detail: iconDetail.releaseUnreadable() }],
   ])('does not ask again for a key recorded %s', (_what, row) => {
     // Neither a refusal nor a package past the caps changes without a new
     // version, commit or tarball, which is a new key; and yesterday's file may
@@ -1094,9 +1094,9 @@ describe('foldIconResults: the record that goes forward', () => {
     const live = npmSubject('live')
     const gone = npmKey('gone')
     const stale: IconOutcome = { outcome: 'refused', detail: iconDetail.notString() }
-    const state = stateOf([keyOf(live), { outcome: 'not-read', detail: iconDetail.releaseTooLarge() }], [gone, stale])
+    const state = stateOf([keyOf(live), { outcome: 'not-read', detail: iconDetail.releaseUnreadable() }], [gone, stale])
     const { fold } = runDay([live], { state })
-    expect(fold.nextState).toEqual(stateOf([keyOf(live), { outcome: 'not-read', detail: iconDetail.releaseTooLarge() }]))
+    expect(fold.nextState).toEqual(stateOf([keyOf(live), { outcome: 'not-read', detail: iconDetail.releaseUnreadable() }]))
   })
 
   it('keeps the rows of keys it did not read this build: withheld, deferred and unreachable ones among them', () => {
@@ -1120,7 +1120,7 @@ describe('foldIconResults: the record that goes forward', () => {
       results: resultsOf(
         [npmKey('a'), bytesResult(svgOf('a'))],
         [npmKey('b'), bytesResult(PNG)],
-        [npmKey('c'), { kind: 'not-read', detail: iconDetail.releaseTooLarge() }],
+        [npmKey('c'), { kind: 'not-read', detail: iconDetail.releaseUnreadable() }],
       ),
     })
     expect(fold.nextState.size).toBe(3)
@@ -1624,12 +1624,12 @@ describe('whatever a day brings', () => {
         if (record === 'published' || record === 'published-lost') state.set(subject.key, publishedRow(bytes))
         if (record === 'published') held.push([subject.key, bytes])
         if (record === 'refused') state.set(subject.key, { outcome: 'refused', detail: iconDetail.notString() })
-        if (record === 'not-read') state.set(subject.key, { outcome: 'not-read', detail: iconDetail.releaseTooLarge() })
+        if (record === 'not-read') state.set(subject.key, { outcome: 'not-read', detail: iconDetail.releaseUnreadable() })
         const answer = draw.from(ANSWERS)
         if (answer === 'bytes') results.set(subject.key, bytesResult(draw.from(POOL)))
         if (answer === 'wrong-bytes') results.set(subject.key, bytesResult(PNG))
         if (answer === 'refused') results.set(subject.key, { kind: 'refused', detail: iconDetail.notString() })
-        if (answer === 'not-read') results.set(subject.key, { kind: 'not-read', detail: iconDetail.releaseTooLarge() })
+        if (answer === 'not-read') results.set(subject.key, { kind: 'not-read', detail: iconDetail.releaseUnreadable() })
         if (answer === 'not-yet-read') results.set(subject.key, { kind: 'not-yet-read', reason: 'a timeout' })
       }
       // Yesterday's file may be gone, and may label the bytes it holds as another type.

@@ -123,9 +123,10 @@ export const HARVEST_TOPICS: readonly string[] = ['dsh-plugin', 'deepseek-harnes
  *
  * The icon step downloads under the same bound, a release asset and the npm
  * tarball it reads an icon from alike (`icon-fetch.ts`), and states it as "32 MiB"
- * in the sentences an author reads (`iconDetail.packageTooLarge` and
- * `releaseTooLarge`); the test that holds those sentences to this constant fails
- * until both have moved.
+ * in the sentence an author reads about a package (`iconDetail.packageTooLarge`);
+ * the test that holds that sentence to this constant fails until both have
+ * moved. A release asset past it cannot be the one whose sha256 was recorded,
+ * which was taken under the same bound, so the icon step has no sentence for it.
  */
 export const MAX_TARBALL_BYTES = 32 * 1024 * 1024
 
@@ -292,12 +293,14 @@ export function isBundleName(value: unknown): value is string {
  * (`'ladder'`), or takes the first answer it gets (`'first-answer'`).
  *
  * Every read whose answer decides what is listed rides the ladder: a status
- * that says "not this time" is worth several waits there. Only the
- * declarations re-read takes the first answer. A failure there changes nothing
- * and is asked again next run, so a wait buys it nothing; and a read with no
- * status ladder ends within its own deadlines, which is what bounds how far
- * the re-read can overrun its time budget, since a read in flight cannot be
- * interrupted (see {@link DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT}).
+ * that says "not this time" is worth several waits there. The declarations
+ * re-read and the icon step (`icon-fetch.ts`) take the first answer. A failure
+ * there changes nothing and is asked again next run, so a wait buys it
+ * nothing; and a read with no status ladder ends within its own deadlines,
+ * which is what bounds how far each can overrun its time budget, since a read
+ * in flight cannot be interrupted (see
+ * {@link DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT} and, in `icon-fetch.ts`,
+ * `ICON_FETCH_TIME_BUDGET_MS_DEFAULT`).
  */
 type StatusRetry = 'ladder' | 'first-answer'
 
@@ -1088,8 +1091,8 @@ type AssetDownload =
  * wherever it runs. Each caller decides what a non-`bytes` outcome means: the
  * probe reads both as "no release"; the re-read reads both, like bytes that
  * miss the pin, as the recorded asset being gone, and unverifies the rescue for
- * a full re-probe; the icon step reads a 404 as an asset it has not read yet
- * and one past the cap as an icon it cannot read.
+ * a full re-probe; the icon step reads both as an asset it has not read yet,
+ * since the recorded one is neither: it was found, and measured under the cap.
  *
  * It sends no token, to any URL, and there is no parameter to pass one: a
  * public release asset needs none, and the one rule that keeps the job's
