@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { assertIconsInFile, describeLostIconsFile, describeRereadStopped, parseBudgetVariable, repoPeersEmitted, runPipeline, selectEntries, unmatchedRegistryNotes, withholdRepoPeers } from '../src/pipeline.ts'
+import { assertIconsInFile, budgetBeforeDeadline, describeLostIconsFile, describeRereadStopped, parseBudgetVariable, parseDeadlineVariable, repoPeersEmitted, runPipeline, selectEntries, unmatchedRegistryNotes, withholdRepoPeers } from '../src/pipeline.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import { lockNpmNames, SCHEMA_VERSION, type IconsPointer } from '../src/emit.ts'
 import { sha256Hex } from '../src/icon-bytes.ts'
@@ -1416,6 +1416,54 @@ describe('parseBudgetVariable (the icon step\'s two budgets)', () => {
 
   it('quotes the value back, because the operator cannot see it in a log line that says nothing was fetched', () => {
     expect(() => parseBudgetVariable('ICON_FETCH_TIME_BUDGET_MS', '15 minutes', 900_000)).toThrow(/got "15 minutes"/)
+  })
+})
+
+describe('parseDeadlineVariable (the catalog job\'s deadline)', () => {
+  // Unset on every local run and in every test, and no step is cut short
+  // then. Set, it is held to the budgets' contract, because it fails open the
+  // same way: `deadline - now` is NaN for a value that is no number, and a cap
+  // of NaN caps nothing.
+  it('reads milliseconds since the epoch, and answers null when the variable is unset', () => {
+    expect(parseDeadlineVariable('CATALOG_JOB_DEADLINE_MS', '1761284280000')).toBe(1_761_284_280_000)
+    expect(parseDeadlineVariable('CATALOG_JOB_DEADLINE_MS', undefined)).toBeNull()
+    expect(parseDeadlineVariable('CATALOG_JOB_DEADLINE_MS', '0')).toBe(0)
+  })
+
+  it('throws on every value that would fail open, naming the variable and quoting the value back', () => {
+    for (const raw of ['abc', '', ' ', '-1', '1.5', 'Infinity', 'NaN', '1e400', String(Number.MAX_SAFE_INTEGER + 1), '1761284280000%3N']) {
+      expect(() => parseDeadlineVariable('CATALOG_JOB_DEADLINE_MS', raw), `${JSON.stringify(raw)} must throw`)
+        .toThrow(new RegExp(`^CATALOG_JOB_DEADLINE_MS must be a non-negative safe integer; got ${JSON.stringify(raw).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`))
+    }
+  })
+})
+
+describe('budgetBeforeDeadline', () => {
+  const MINUTE = 60_000
+  const deadline = 1_761_284_280_000
+
+  it('is the budget when there is no deadline', () => {
+    expect(budgetBeforeDeadline(15 * MINUTE, null, deadline + 60 * MINUTE)).toBe(15 * MINUTE)
+  })
+
+  it('is the budget when the deadline leaves more time than that', () => {
+    expect(budgetBeforeDeadline(15 * MINUTE, deadline, deadline - 40 * MINUTE)).toBe(15 * MINUTE)
+    expect(budgetBeforeDeadline(15 * MINUTE, deadline, deadline - 15 * MINUTE)).toBe(15 * MINUTE)
+  })
+
+  it('is the time left when the deadline leaves less', () => {
+    expect(budgetBeforeDeadline(15 * MINUTE, deadline, deadline - 4 * MINUTE)).toBe(4 * MINUTE)
+    expect(budgetBeforeDeadline(15 * MINUTE, deadline, deadline - 1)).toBe(1)
+  })
+
+  it('is zero, which starts nothing, at the deadline and past it', () => {
+    expect(budgetBeforeDeadline(15 * MINUTE, deadline, deadline)).toBe(0)
+    expect(budgetBeforeDeadline(15 * MINUTE, deadline, deadline + 3 * MINUTE)).toBe(0)
+  })
+
+  it('never raises a budget of zero, which is an instruction to start nothing', () => {
+    expect(budgetBeforeDeadline(0, deadline, deadline - 60 * MINUTE)).toBe(0)
+    expect(budgetBeforeDeadline(0, null, deadline)).toBe(0)
   })
 })
 

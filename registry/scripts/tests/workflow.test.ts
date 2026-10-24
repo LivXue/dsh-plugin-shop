@@ -1070,3 +1070,68 @@ describe('SHOP_EMIT_REPO_PEERS is read once, at job level', () => {
     expect(buildJob().env).toEqual(expect.any(Object))
   })
 })
+
+// ---------------------------------------------------------------------------
+// The job's own deadline (design 2026-10-23-shop-plugin-icons §5.3).
+//
+// A job killed at `timeout-minutes` publishes nothing and commits no state.
+// The first step writes the moment the catalog build must be done by into
+// `$GITHUB_ENV`, and build.ts cuts the declarations re-read and the icon step
+// to the time left before it. A deadline counted from a different timeout than
+// the job's own would cut too early or, worse, too late, and nothing but this
+// test keeps the two numbers in step.
+// ---------------------------------------------------------------------------
+
+describe('the catalog job writes its own deadline before any other step runs', () => {
+  const doc = parse(workflow) as { jobs?: { build?: { 'timeout-minutes'?: unknown; steps?: unknown[] } } }
+  const job = doc.jobs?.build
+  const first = Array.isArray(job?.steps) ? job.steps[0] as { run?: unknown; env?: Record<string, unknown> } | undefined : undefined
+  const env = first?.env ?? {}
+
+  it('is the first step, so every step after it, build:catalog among them, reads it', () => {
+    expect(buildSteps[0]?.run).toMatch(/CATALOG_JOB_DEADLINE_MS=.*>> "\$GITHUB_ENV"/)
+    expect(buildSteps.filter(step => step.run?.includes('CATALOG_JOB_DEADLINE_MS') === true)).toHaveLength(1)
+    expect(buildCatalogStep.index).toBeGreaterThan(0)
+  })
+
+  it('counts it from the job\'s own timeout-minutes', () => {
+    expect(typeof job?.['timeout-minutes']).toBe('number')
+    expect(Number(env.JOB_TIMEOUT_MINUTES)).toBe(job?.['timeout-minutes'])
+  })
+
+  it('reserves a few minutes of the job, and no more, for the steps after the build', () => {
+    const reserve = Number(env.RESERVE_MINUTES)
+    expect(Number.isInteger(reserve)).toBe(true)
+    expect(reserve).toBeGreaterThan(0)
+    expect(reserve).toBeLessThan(10)
+  })
+
+  it('writes the time it runs at plus the timeout less the reserve, in milliseconds, as one line of $GITHUB_ENV', () => {
+    // The step's own script, run the way GitHub runs a `run:` block, with its
+    // own `env:` and a file standing in for $GITHUB_ENV.
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-deadline-'))
+    try {
+      const script = join(dir, 'step.sh')
+      const githubEnv = join(dir, 'github-env')
+      writeFileSync(script, `${String(first?.run)}\n`)
+      writeFileSync(githubEnv, '')
+      const before = Date.now()
+      const result = spawnSync('bash', ['-e', script], {
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ENV: githubEnv, JOB_TIMEOUT_MINUTES: String(env.JOB_TIMEOUT_MINUTES), RESERVE_MINUTES: String(env.RESERVE_MINUTES) },
+      })
+      const after = Date.now()
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0)
+      const written = readFileSync(githubEnv, 'utf8')
+      expect(written).toMatch(/^CATALOG_JOB_DEADLINE_MS=\d+\n$/)
+      const deadline = Number(written.slice('CATALOG_JOB_DEADLINE_MS='.length).trim())
+      const span = (Number(env.JOB_TIMEOUT_MINUTES) - Number(env.RESERVE_MINUTES)) * 60_000
+      // `date` is read once, between the two readings of this process's clock;
+      // a second of slack for the clocks' resolutions.
+      expect(deadline).toBeGreaterThanOrEqual(before + span - 1_000)
+      expect(deadline).toBeLessThanOrEqual(after + span + 1_000)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

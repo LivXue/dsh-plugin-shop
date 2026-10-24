@@ -74,15 +74,16 @@ export const ICON_FETCH_BUDGET_DEFAULT = 1500
  * The longest the icon fetches keep STARTING in one run when
  * `ICON_FETCH_TIME_BUDGET_MS` is unset: 15 minutes (design §5.3).
  *
- * `daily.yml` bounds the build job at 180 minutes, and a daily run takes about
- * 105 of them. So the budget, the published file's reads and the fetches still
- * in flight when it runs out must fit in what the run leaves:
- *
- *   105m  the daily run without this step
- * +   4m  the two reads of the published icons file, at most 120 seconds each
- * +  15m  this budget, spent in full
- * +   5m  at most one fetch in flight per worker when it runs out
- * = 129m  51m inside the bound.
+ * What the step can add to the run: its two reads of the published icons file
+ * ({@link PUBLISHED_REQUEST_TIMEOUT_MS} each), this budget spent in full, and
+ * at most one fetch in flight per worker when it runs out (below). `daily.yml`
+ * bounds the job at 180 minutes, and the job already takes over two hours
+ * without the step (DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT's comment
+ * measures it and does the sum). So the sum is not left to fit by itself: on
+ * the daily run build.ts cuts this budget to the time left before the job's
+ * own deadline, less a reserve for the fetches' last request and the rest of
+ * the build, and a run that reaches the step late starts fewer fetches, or
+ * none, and still publishes.
  *
  * A fetch in flight costs at most 5 minutes because each takes the first answer
  * it gets, without a status ladder to wait out: a tarball or an asset is one
@@ -150,9 +151,11 @@ const PUBLISHED_ICONS_MAX_BYTES = ICONS_FILE_BUDGET_BYTES * 1.5
  * The icons file is under 24 MiB, so this is a floor of some 200 KB/s for the
  * largest file it admits, where a real one is a couple of megabytes. A read that
  * runs out of time is a published file the build could not use, which only costs
- * it a fetch for every icon it would have reused.
+ * it a fetch for every icon it would have reused. Exported for build.ts, which
+ * counts the two reads in what has to follow the declarations re-read before
+ * the job's deadline.
  */
-const PUBLISHED_REQUEST_TIMEOUT_MS = 120_000
+export const PUBLISHED_REQUEST_TIMEOUT_MS = 120_000
 
 /** The registry's host, which an npm tarball is read from and from nowhere else. */
 const REGISTRY_HOST = 'registry.npmjs.org'

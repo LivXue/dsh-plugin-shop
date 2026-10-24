@@ -292,7 +292,11 @@ gives way to the environment variable of the same name without `_DEFAULT`,
 `REPO_BACKFILL_BUDGET` is: a value that is not a non-negative safe integer stops
 the build when it starts, naming the variable, because a deadline that reads as
 NaN is no deadline and a count that reads as zero fetches nothing, each
-reported as a healthy run. A key past the budget is "not yet read": the entry
+reported as a healthy run. On the daily run the wall-clock budget, like the
+declarations re-read's, is also cut to the time left before the job's own
+deadline (`CATALOG_JOB_DEADLINE_MS`, written by the workflow's first step), less
+a reserve for what must still follow it, so a run that reaches the step late
+fetches less and still publishes. A key past the budget is "not yet read": the entry
 publishes without an icon this build and is fetched on a later one, unless the
 sha256 its record names already has its bytes in hand this build, from another
 key's fetch. A sha256 names its bytes

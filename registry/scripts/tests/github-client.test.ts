@@ -3738,6 +3738,102 @@ describe('harvestRepos', () => {
       expect(result.nextState).toEqual(state)
     })
 
+    // The daily build hands the phase the time its job has left (`timeLeftMs`),
+    // and only the phase can ask it at the right moment: the re-read starts
+    // after the search and every full fetch, half an hour or more after the
+    // harvest was called.
+    describe('the time the job has left (timeLeftMs)', () => {
+      it.each([0, -90_000])('starts nothing when its phase starts with %i ms left, and defers every repository unchanged', async (left) => {
+        const { state, seen } = carriedRepos('s/late', 6)
+        const { fetchImpl, requested } = rereadFetch(seen, () => new Response(JSON.stringify({ name: 'x' }), { status: 200 }))
+        const { value: result, stderr } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't', timeLeftMs: () => left }))
+        expect(requested).toEqual([])
+        expect(result.rereadStopped).toBe('time-budget')
+        expect([result.rereadAttempted, result.rereadUpdated, result.rereadFailed, result.rereadDeferred]).toEqual([0, 0, 0, 6])
+        expect(result.nextState).toEqual(state)
+        expect(stderr).toContain(`github: the declarations re-read stopped after 0 of 6 repositories because its 0 ms budget, cut from ${DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT} ms to the time the job had left, was spent`)
+      })
+
+      it('spends only the time it has left when that is less than its budget', async () => {
+        // The stalled fake of the time-budget test above, with the default
+        // ten-minute budget: one minute left, a minute a request, so one
+        // batch and no more.
+        let clock = 0
+        const { state, seen } = carriedRepos('s/stalled', 10)
+        const requested = new Set<string>()
+        const fetchImpl = (async (url: string | URL) => {
+          const text = String(url)
+          const searched = searchItems(text, seen)
+          if (searched !== undefined) return searched
+          requested.add(repoOf(text))
+          clock += 60_000
+          return new Promise<Response>(() => {})
+        }) as unknown as typeof fetch
+        const { value: result, stderr } = await quietly(() => harvestRepos({
+          state, budget: 5, fetchImpl, sleep, token: 't', timeoutMs: 5, now: () => clock, timeLeftMs: () => 60_000,
+        }))
+        expect([...requested].sort()).toEqual(['s/stalled-00', 's/stalled-01', 's/stalled-02', 's/stalled-03'])
+        expect([result.rereadAttempted, result.rereadDeferred]).toEqual([4, 6])
+        expect(stderr).toContain(`because its 60000 ms budget, cut from ${DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT} ms to the time the job had left, was spent`)
+      })
+
+      it('keeps its own budget when the job has more time left than that', async () => {
+        let clock = 0
+        const { state, seen } = carriedRepos('s/stalled', 10)
+        const requested = new Set<string>()
+        const fetchImpl = (async (url: string | URL) => {
+          const text = String(url)
+          const searched = searchItems(text, seen)
+          if (searched !== undefined) return searched
+          requested.add(repoOf(text))
+          clock += 60_000
+          return new Promise<Response>(() => {})
+        }) as unknown as typeof fetch
+        const { value: result, stderr } = await quietly(() => harvestRepos({
+          state, budget: 5, fetchImpl, sleep, token: 't', timeoutMs: 5, rereadTimeBudgetMs: 1, now: () => clock, timeLeftMs: () => 10 * 60 * 60_000,
+        }))
+        expect([result.rereadAttempted, result.rereadDeferred]).toEqual([4, 6])
+        expect(stderr).toContain('because its 1 ms budget was spent')
+      })
+
+      it('asks once, when its phase starts: after every full fetch, before its first read', async () => {
+        // `n/new` is fetched in full (the record has never met it) and
+        // `q/quiet` is only re-read, so the order of the requests shows when
+        // the time left was asked.
+        const recorded = unstamped('q/quiet', commitA, { name: 'quiet' })
+        const state: RepoState = { 'q/quiet': { pushedAt: quietAt, commit: commitA, candidates: [recorded] } }
+        const seen = [{ repo: 'n/new', pushedAt: quietAt }, { repo: 'q/quiet', pushedAt: quietAt }]
+        const events: string[] = []
+        const fetchImpl = (async (url: string | URL) => {
+          const text = String(url)
+          const searched = searchItems(text, seen)
+          if (searched !== undefined) return searched
+          events.push(text)
+          if (text.includes('/n/new/')) return new Response('404: Not Found', { status: 404 })
+          if (text === `https://raw.githubusercontent.com/q/quiet/${commitA}/package.json`) {
+            return new Response(JSON.stringify({ name: 'quiet', dsh: { bundle: {} } }), { status: 200 })
+          }
+          throw new Error(`unrouted: ${text}`)
+        }) as unknown as typeof fetch
+        const asked = (): number => { events.push('asked'); return 60_000 }
+        const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't', timeLeftMs: asked }))
+        expect(events.filter(event => event === 'asked')).toHaveLength(1)
+        const at = events.indexOf('asked')
+        expect(events.slice(0, at).length).toBeGreaterThan(0)
+        expect(events.slice(0, at).every(event => event.includes('/n/new/'))).toBe(true)
+        expect(events.slice(at + 1)).toEqual([`https://raw.githubusercontent.com/q/quiet/${commitA}/package.json`])
+        expect([result.rereadAttempted, result.rereadUpdated]).toEqual([1, 1])
+      })
+
+      it.each([Number.NaN, Number.POSITIVE_INFINITY])('refuses an answer of %s, which would cap nothing', async (left) => {
+        const { state, seen } = carriedRepos('s/odd', 2)
+        const { fetchImpl, requested } = rereadFetch(seen, () => new Response('{}', { status: 200 }))
+        await expect(quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't', timeLeftMs: () => left })))
+          .rejects.toThrow(/timeLeftMs answered .*, which is not a finite number of milliseconds/)
+        expect(requested).toEqual([])
+      })
+    })
+
     it.each([
       ['answers 503', () => new Response('unavailable', { status: 503 }), 1],
       ['answers 429', () => new Response('slow down', { status: 429 }), 1],

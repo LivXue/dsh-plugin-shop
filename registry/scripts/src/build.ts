@@ -17,11 +17,11 @@ import { basename, join } from 'node:path'
 import { loadRegistryConfig, serializeFirstSeen } from './config.ts'
 import { describeDepartures, parseDepartureSummary, type DepartureSummary } from './departures.ts'
 import { applyConfirmations, bootstrapFeedState, describeFeedCoverage, describeFeedRun, feedCarriersByKeyword, parseFeedCoverage, parseFeedRunReport, parseFeedState, serializeFeedState, type FeedInput, type FeedRead, type FeedState } from './feed-state.ts'
-import { fetchStarCounts, fetchArchivedFlags } from './github-stars.ts'
+import { fetchStarCounts, fetchArchivedFlags, STARS_BUDGET_MS, STARS_REQUEST_TIMEOUT_MS } from './github-stars.ts'
 import { GITHUB_REQUEST_TIMEOUT_MS, HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, TARBALL_REQUEST_TIMEOUT_MS, describeSearchPhantoms, harvestRepos, parseHarvestBudget } from './github-client.ts'
 import { applyArchivedFlags, applyForkFlags, layerArchivedFlags, layerForkFlags, parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
-import { ICON_FETCH_BUDGET_DEFAULT, ICON_FETCH_CONCURRENCY, ICON_FETCH_TIME_BUDGET_MS_DEFAULT, harvestIcons, readPublishedIcons } from './icon-fetch.ts'
+import { ICON_FETCH_BUDGET_DEFAULT, ICON_FETCH_CONCURRENCY, ICON_FETCH_TIME_BUDGET_MS_DEFAULT, PUBLISHED_REQUEST_TIMEOUT_MS, harvestIcons, readPublishedIcons } from './icon-fetch.ts'
 import { foldIconResults, iconSubjects, planIconWork, renderIconSection } from './icon-plan.ts'
 import { parseIconState, serializeIconState, type IconKey, type IconOutcome } from './icon-state.ts'
 import { serializeIcons } from './icons-assemble.ts'
@@ -29,7 +29,7 @@ import { accountForDepartures, fetchCandidates, searchByKeywords, describePublis
 import { confirmCarriers, harvestFeed } from './npm-feed.ts'
 import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, mergePublishers, parsePublisherState, retainPinned, serializePublisherState } from './publisher-state.ts'
 import { pagesArtifactNames, pagesPointerOf } from './pages-artifacts.ts'
-import { assertIconsInFile, describeLostIconsFile, describeRereadStopped, parseBudgetVariable, repoPeersEmitted, runPipeline, selectEntries, withholdRepoPeers } from './pipeline.ts'
+import { assertIconsInFile, budgetBeforeDeadline, describeLostIconsFile, describeRereadStopped, parseBudgetVariable, parseDeadlineVariable, repoPeersEmitted, runPipeline, selectEntries, withholdRepoPeers } from './pipeline.ts'
 import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
 import { assembleStarsForEntries, serializeStars } from './stars-assemble.ts'
 import type { Candidate, Rejection, RepoCandidate } from './types.ts'
@@ -50,6 +50,17 @@ import type { Candidate, Rejection, RepoCandidate } from './types.ts'
 // registry/scripts/tests/strip-types.test.ts derives the entry-point list and
 // holds every member of it to both halves of this.
 if (basename(process.argv[1] ?? '') === 'build.ts') {
+  // The clock, read exactly once, here at the start, and never again: every
+  // time the build needs is this reading plus what the monotonic clock has
+  // counted since, which no step of the system clock can move. `builtAt` is
+  // taken from the two after the harvest, where it always was, so the published
+  // moment does not move; the job's deadline is measured against them before
+  // the harvest as well, where the declarations re-read needs it.
+  const clockMs = Date.now()
+  const clockAt = performance.now()
+  /** Milliseconds since the epoch, now, from the one reading of the clock. */
+  const nowMs = (): number => clockMs + (performance.now() - clockAt)
+
   // `classify.ts` writes the harvest it already paid for; the workflow passes it
   // here so the daily run does not fetch the ecosystem twice.
   const harvestFromIndex = process.argv.indexOf('--harvest-from')
@@ -115,6 +126,42 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // reported as a healthy run.
   const iconFetchBudget = parseBudgetVariable('ICON_FETCH_BUDGET', process.env.ICON_FETCH_BUDGET, ICON_FETCH_BUDGET_DEFAULT)
   const iconFetchTimeBudgetMs = parseBudgetVariable('ICON_FETCH_TIME_BUDGET_MS', process.env.ICON_FETCH_TIME_BUDGET_MS, ICON_FETCH_TIME_BUDGET_MS_DEFAULT)
+  // The catalog job's own deadline: the moment this build must be done by for
+  // the steps after it to fit inside the job's `timeout-minutes`. The daily
+  // workflow's first step writes it and keeps that arithmetic; a local run has
+  // none, and nothing is cut short. A job killed at its limit publishes nothing
+  // and commits no state, which is what the cuts below exist to prevent.
+  const jobDeadlineMs = parseDeadlineVariable('CATALOG_JOB_DEADLINE_MS', process.env.CATALOG_JOB_DEADLINE_MS)
+  // Two steps read the deadline, the declarations re-read and the icon step,
+  // and each stops STARTING work early enough that everything still to come is
+  // done by it: its own last request, which it lets finish, and every later
+  // step of this build, none of which reads the deadline. Measured from this
+  // build's own stderr lines on the last three catalog runs before the icon
+  // step existed (2026-10-21 to 2026-10-23):
+  //
+  //   after the GitHub half             took          counted here as
+  //   the flags pass, archived and fork 3m44s-4m30s   6 minutes: it has no budget
+  //   the repo-state write, stars pass  1m08s-1m13s   the stars pass's own bound
+  //   the pipeline, emit and writes     1.1s-1.2s     1 minute
+  //
+  // The stars pass's bound is STARS_BUDGET_MS and one STARS_REQUEST_TIMEOUT_MS.
+  // The icon step adds its two reads of the published icons file, each bounded
+  // by PUBLISHED_REQUEST_TIMEOUT_MS. The re-read and the icon fetches each let
+  // at most one request per worker run past their cut, by at most
+  // TARBALL_REQUEST_TIMEOUT_MS, since every one takes its first answer
+  // (DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT and
+  // ICON_FETCH_TIME_BUDGET_MS_DEFAULT say why). So the icon fetches stop
+  // starting 6 minutes before the deadline (their last request and the emit),
+  // and the re-read 26.5 minutes before it (its last read, the flags and stars
+  // passes, the two reads, and the emit, the icon step then starting nothing).
+  // On the measured runs neither cut would bind, by the arithmetic in
+  // DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT's comment; they bind when the
+  // harvest has run long.
+  const EMIT_ALLOWANCE_MS = 60_000
+  const FLAGS_PASS_ALLOWANCE_MS = 6 * 60_000
+  const iconStepReserveMs = TARBALL_REQUEST_TIMEOUT_MS + EMIT_ALLOWANCE_MS
+  const rereadReserveMs = TARBALL_REQUEST_TIMEOUT_MS + FLAGS_PASS_ALLOWANCE_MS + STARS_BUDGET_MS + STARS_REQUEST_TIMEOUT_MS
+    + 2 * PUBLISHED_REQUEST_TIMEOUT_MS + EMIT_ALLOWANCE_MS
 
   let candidates: Candidate[]
   let rejections: Rejection[]
@@ -346,6 +393,9 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     const repos = await harvestRepos({
       state: repoState, budget, fetchImpl: fetch, token: ghToken, probeSubpackages,
       retryAfterMs: 30_000,
+      // Asked when the re-read starts, which is after every full fetch: the
+      // time left to its cut, rereadReserveMs before the job's deadline.
+      ...(jobDeadlineMs === null ? {} : { timeLeftMs: () => jobDeadlineMs - rereadReserveMs - nowMs() }),
     })
     if (repos.firstAttemptError !== null) {
       process.stderr.write(`github: first attempt failed (${repos.firstAttemptError}); retried once after 30s\n`)
@@ -439,10 +489,12 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // see. GraphQL therefore covers only the npm pool (~4k points), which a
   // dedicated read-only PAT (STARS_TOKEN, 5k points/hour) absorbs; the
   // Actions GITHUB_TOKEN's ~1k quota would not.
-  // The single clock read, moved above the stars step: selectEntries needs the
-  // build date to stamp `added`, and the stars step needs to know which
-  // candidates are ENTRIES before it asks GraphQL about any of them.
-  const builtAt = new Date().toISOString()
+  // The build date, here above the stars step: selectEntries needs it to stamp
+  // `added`, and the stars step needs to know which candidates are ENTRIES
+  // before it asks GraphQL about any of them. Taken from the clock's one
+  // reading at the start and the time counted since, so it is the moment it
+  // always was, after the harvest, and the clock is still read only once.
+  const builtAt = new Date(nowMs()).toISOString()
   // The catalog this build will publish, decided before the network step.
   // runPipeline re-derives it from the same inputs and cannot disagree
   // (pipeline.test.ts asserts the equality).
@@ -563,6 +615,11 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // fold then has no bytes for.
   const iconPlan = planIconWork(iconSubjectList, iconState, publishedIcons, config.withheldIcons, iconFetchBudget)
   process.stderr.write(`icons: ${iconPlan.reuse.length} reused, ${iconPlan.fetch.length} to fetch, ${iconPlan.deferred.length} past the budget\n`)
+  // The fetches' time budget, cut to what the job has left: they stop starting
+  // iconStepReserveMs before the job's deadline, so their last request and the
+  // rest of this build are done by it. Measured here, after the published
+  // file's reads, because harvestIcons counts its budget from its own call.
+  const iconTimeBudgetMs = budgetBeforeDeadline(iconFetchTimeBudgetMs, jobDeadlineMs === null ? null : jobDeadlineMs - iconStepReserveMs, nowMs())
   const iconResults = await harvestIcons(
     iconPlan,
     {
@@ -574,14 +631,15 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
       timeoutMs: GITHUB_REQUEST_TIMEOUT_MS,
       tarballTimeoutMs: TARBALL_REQUEST_TIMEOUT_MS,
     },
-    { concurrency: ICON_FETCH_CONCURRENCY, deadlineMs: iconFetchTimeBudgetMs },
+    { concurrency: ICON_FETCH_CONCURRENCY, deadlineMs: iconTimeBudgetMs },
   )
   // The plan's fetches the time budget ran out before starting have no result
   // at all, and the fold reads them as "not yet read" like the rest. Said here,
   // because the report's count cannot tell them from a fetch that failed.
   const iconsNotStarted = iconPlan.fetch.length - iconResults.size
   if (iconsNotStarted > 0) {
-    process.stderr.write(`icons: ${iconsNotStarted} of ${iconPlan.fetch.length} planned fetches were not started: the time budget of ${iconFetchTimeBudgetMs} ms ran out\n`)
+    const cut = iconTimeBudgetMs < iconFetchTimeBudgetMs ? `, cut from ${iconFetchTimeBudgetMs} ms to the time the job had left,` : ''
+    process.stderr.write(`icons: ${iconsNotStarted} of ${iconPlan.fetch.length} planned fetches were not started: the time budget of ${iconTimeBudgetMs} ms${cut} ran out\n`)
   }
   // A fetch that said nothing about its artifact is recorded nowhere, and its
   // reason is for the log alone (IconFetchResult): ten of them, in plan order so
@@ -619,12 +677,12 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   process.stderr.write(`icons: ${Object.entries(iconFold.counts).map(([name, count]) => `${name} ${count}`).join(', ')}; icons file: ${iconsFile === null ? 'none' : `${iconsFile.fileName}, ${iconsFileBytes} bytes`}\n`)
   if (iconsLostNote !== null) process.stderr.write(`icons: ${iconsLostNote}\n`)
 
-  // The clock, read exactly once, and passed down. First-seen bookkeeping moved
-  // into the pipeline: which candidates are ENTRIES is a policy question the
-  // gate answers, and stamping every harvested candidate here dated packages
-  // that were never listed (B-9). The appended file is written back after the
-  // pipeline, so the daily commit carries both the new dates and the manifest
-  // lock together.
+  // The build date, from the clock's one reading, passed down. First-seen
+  // bookkeeping moved into the pipeline: which candidates are ENTRIES is a
+  // policy question the gate answers, and stamping every harvested candidate
+  // here dated packages that were never listed (B-9). The appended file is
+  // written back after the pipeline, so the daily commit carries both the new
+  // dates and the manifest lock together.
 
   // v5 is a release-time flag (design §3.5): `theme` is a new enum value and an
   // old client's zod enum rejects a catalog containing it wholesale, so the flag
