@@ -283,6 +283,18 @@ const entrySchema = z.object({
   // §1.1). github entries only; additive and optional, so it rides every
   // schemaVersion and this schema strips it for a client that predates it.
   forked: z.boolean().optional(),
+  // The sha256 that keys this entry's icon in the catalog's icons sidecar
+  // (registry `Entry.icon`; design 2026-10-23-shop-plugin-icons §6.1). Additive
+  // and optional, so it rides every schemaVersion and this schema strips it
+  // for a client that predates it (§6.3). Declared because this schema drops a
+  // key it does not know: an undeclared icon would be published and then lost
+  // by every shop, which is what `catalog-parity.test.ts` refuses.
+  //
+  // Held to the one grammar the registry writes (`assertCatalogInvariants`),
+  // like `tarball.sha256`, because the value only ever keys a lookup. The cost
+  // is the same too — a value outside it fails the throwing `parse` and costs
+  // the whole data file — which is why the build stops on one first.
+  icon: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 }).superRefine((entry, ctx) => {
   // The install spec differs by source, so the grammar does too. Refusing at
   // this boundary prevents catalog bytes from reaching the process layer.

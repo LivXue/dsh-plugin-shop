@@ -37,12 +37,18 @@
  * @module pages-artifacts
  */
 
+import type { IconsPointer } from './emit.ts'
+
 /** The emitted pointer, as far as this module needs to read it. */
 export interface PagesPointer {
   plugins: { url: string }
   /** Absent when the build published no sidecar — the stars fetch is
    * advisory, and a failure publishes without it. */
   stars?: { url: string }
+  /** Absent when the build published no icons file — the icon step is advisory
+   * too (an icon never blocks a listing, design 2026-10-23-shop-plugin-icons
+   * §2, decision 6), and a build that read none writes none. */
+  icons?: IconsPointer
 }
 
 /**
@@ -71,8 +77,11 @@ export const PAGES_ONLY_FILES: readonly string[] = ['badge.json', 'report.md', '
 
 /**
  * The machine-readable artifacts: the pointer, the content-addressed data
- * file, and the stars sidecar when this build produced one. Both transports
- * carry all of these, which is why they are stated once.
+ * file, and the stars and icons sidecars when this build produced them. Both
+ * transports carry all of these, which is why they are stated once: the icons
+ * file reaches Pages and the npm package together, or a shop that raced to the
+ * npm origin would find the index naming a file the package does not hold
+ * (design 2026-10-23-shop-plugin-icons §6.3).
  * @param pointer - the emitted `index.json`, which names the addressed files.
  * @returns a fresh array of file names, relative to `v1/`.
  */
@@ -81,6 +90,7 @@ function dataFileNames(pointer: PagesPointer): string[] {
     'index.json',
     pointer.plugins.url,
     ...(pointer.stars === undefined ? [] : [pointer.stars.url]),
+    ...(pointer.icons === undefined ? [] : [pointer.icons.url]),
   ]
 }
 

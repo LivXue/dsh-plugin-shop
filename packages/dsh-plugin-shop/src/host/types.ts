@@ -126,6 +126,13 @@ export interface CatalogEntry {
    * nothing reads it here yet — it is telemetry the catalog publishes, not a
    * gate, a badge, or an install decision. */
   forked?: boolean
+  /** The sha256 that keys this entry's icon in the catalog's icons sidecar
+   * (registry `Entry.icon`; design 2026-10-23-shop-plugin-icons §6.1). Present
+   * exactly when the build published an icon for the entry. The bytes are not
+   * on the entry but in the sidecar, which holds each distinct icon once, so
+   * this is only the key. Additive and optional, so it rides every
+   * schemaVersion. */
+  icon?: string
 }
 
 export interface DeniedEntry { name: string; detail: string; replacement?: string }

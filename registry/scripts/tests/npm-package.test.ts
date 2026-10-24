@@ -67,7 +67,7 @@ describe('catalogPackageFiles', () => {
     count: 8897,
     pluginsFileName: 'plugins.abc123.json',
     starsFileName: 'stars.def456.json',
-    shas: { plugins: 'abc123', stars: 'def456' },
+    shas: { plugins: 'abc123', stars: 'def456', icons: 'ghi789' },
   }
 
   it('declares the package with the given version and ships only v1', () => {
@@ -92,7 +92,9 @@ describe('catalogPackageFiles', () => {
 
   it('records the content hashes so the next build can decide to skip', () => {
     const manifest = JSON.parse(catalogPackageFiles(input).packageJson) as Record<string, unknown>
-    expect(manifest.catalogShas).toEqual({ plugins: 'abc123', stars: 'def456' })
+    // The icons hash is one of them: the next build reads it back to tell an
+    // icons-only change from nothing to publish.
+    expect(manifest.catalogShas).toEqual({ plugins: 'abc123', stars: 'def456', icons: 'ghi789' })
   })
 
   it('records the build time so the next publish can refuse to go backwards', () => {
@@ -102,9 +104,16 @@ describe('catalogPackageFiles', () => {
 
   it('records a null stars hash when the build published no sidecar', () => {
     const manifest = JSON.parse(
-      catalogPackageFiles({ ...input, starsFileName: null, shas: { plugins: 'abc123', stars: null } }).packageJson,
+      catalogPackageFiles({ ...input, starsFileName: null, shas: { plugins: 'abc123', stars: null, icons: 'ghi789' } }).packageJson,
     ) as Record<string, unknown>
-    expect(manifest.catalogShas).toEqual({ plugins: 'abc123', stars: null })
+    expect(manifest.catalogShas).toEqual({ plugins: 'abc123', stars: null, icons: 'ghi789' })
+  })
+
+  it('records a null icons hash when the build published no icons file', () => {
+    const manifest = JSON.parse(
+      catalogPackageFiles({ ...input, shas: { plugins: 'abc123', stars: 'def456', icons: null } }).packageJson,
+    ) as Record<string, unknown>
+    expect(manifest.catalogShas).toEqual({ plugins: 'abc123', stars: 'def456', icons: null })
   })
 
   it('names both data files in the entry point', () => {
@@ -114,7 +123,7 @@ describe('catalogPackageFiles', () => {
   })
 
   it('omits the stars accessor when the build published no sidecar', () => {
-    const indexJs = catalogPackageFiles({ ...input, starsFileName: null, shas: { plugins: 'abc123', stars: null } }).indexJs
+    const indexJs = catalogPackageFiles({ ...input, starsFileName: null, shas: { plugins: 'abc123', stars: null, icons: 'ghi789' } }).indexJs
     expect(indexJs).not.toContain('stars.')
     expect(indexJs).toContain('starsPath = null')
   })
@@ -135,10 +144,10 @@ describe('catalogPackageFiles', () => {
 })
 
 describe('catalogPublishDecision', () => {
-  const shas = { plugins: 'abc123', stars: 'def456' }
+  const shas = { plugins: 'abc123', stars: 'def456', icons: 'ghi789' }
   const published = {
     version: '2026.903.5',
-    shas: { plugins: 'older-plugins', stars: 'older-stars' },
+    shas: { plugins: 'older-plugins', stars: 'older-stars', icons: 'older-icons' },
     builtAt: '2026-09-03T09:27:42.934Z',
   }
   const newer = { builtAt: '2026-09-04T03:17:00.000Z', shas }
@@ -151,9 +160,64 @@ describe('catalogPublishDecision', () => {
     expect(catalogPublishDecision(newer, published)).toEqual({ kind: 'publish' })
   })
 
-  it('skips when both content hashes match the published version', () => {
+  it('skips when every content hash matches the published version', () => {
     const decision = catalogPublishDecision({ ...newer, shas: published.shas }, published)
     expect(decision.kind).toBe('skip')
+  })
+
+  // The decision reads three hashes and any one of them moving is a change. The
+  // icons hash is the one added last, so it is the one a skip could forget: a
+  // build whose only difference is the icons file would then go unpublished,
+  // and the package would go on serving the old file while Pages serves the
+  // new one.
+  it.each(['plugins', 'stars', 'icons'] as const)('publishes when only the %s hash moved', (moved) => {
+    const decision = catalogPublishDecision({ ...newer, shas: { ...published.shas, [moved]: 'moved' } }, published)
+    expect(decision).toEqual({ kind: 'publish' })
+  })
+
+  describe('an icons hash that is absent', () => {
+    // A hash is absent when the build published no icons file (`null`), and on
+    // every version published before the sidecar existed, whose `catalogShas`
+    // has no such key (`undefined`). Both say "no icons file", so they are one
+    // state; the stars hash is already read this way for the `null` half.
+    const withoutIcons = { plugins: 'same-plugins', stars: 'same-stars' }
+    const publishedBase = { version: '2026.903.5', builtAt: '2026-09-03T09:27:42.934Z' }
+
+    it.each([
+      ['null on both sides', { icons: null }, { icons: null }],
+      ['absent on both sides', {}, {}],
+      ['a null build against a version that predates the sidecar', {}, { icons: null }],
+      ['an absent build against a version that recorded none', { icons: null }, {}],
+    ])('skips when it is %s', (_label, publishedIcons, localIcons) => {
+      const decision = catalogPublishDecision(
+        { builtAt: '2026-09-04T03:17:00.000Z', shas: { ...withoutIcons, ...localIcons } },
+        { ...publishedBase, shas: { ...withoutIcons, ...publishedIcons } },
+      )
+      expect(decision.kind).toBe('skip')
+    })
+
+    it.each([
+      ['the build publishes its first icons file', { icons: null }, { icons: 'ghi789' }],
+      ['the build publishes its first icons file against a version that predates the sidecar', {}, { icons: 'ghi789' }],
+      ['the build publishes no icons file where the version carried one', { icons: 'ghi789' }, { icons: null }],
+      ['the build omits the key where the version carried a file', { icons: 'ghi789' }, {}],
+    ])('publishes when %s', (_label, publishedIcons, localIcons) => {
+      const decision = catalogPublishDecision(
+        { builtAt: '2026-09-04T03:17:00.000Z', shas: { ...withoutIcons, ...localIcons } },
+        { ...publishedBase, shas: { ...withoutIcons, ...publishedIcons } },
+      )
+      expect(decision).toEqual({ kind: 'publish' })
+    })
+
+    it('still refuses a stale build whose only difference is the icons hash', () => {
+      // The ordering guard is about the build, not about which file moved: an
+      // icons-only change does not excuse publishing a tree nobody rebuilt.
+      const decision = catalogPublishDecision(
+        { builtAt: '2026-09-02T08:32:15.310Z', shas: { ...withoutIcons, icons: 'ghi789' } },
+        { ...publishedBase, shas: { ...withoutIcons, icons: null } },
+      )
+      expect(decision.kind).toBe('refuse')
+    })
   })
 
   // The regression this guard exists for. At 2026-09-03T16:46Z a

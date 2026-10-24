@@ -18,8 +18,9 @@ export interface CatalogPackageInput {
   starsFileName: string | null
   /** The content hashes this build produced. Published as `catalogShas` so
    * the next build can decide whether anything changed by reading the
-   * packument, instead of downloading and unpacking the previous tarball. */
-  shas: { plugins: string; stars: string | null }
+   * packument, instead of downloading and unpacking the previous tarball.
+   * `icons` is `null` when the build published no icons file. */
+  shas: { plugins: string; stars: string | null; icons?: string | null }
 }
 
 export interface CatalogPackageFiles {
@@ -52,7 +53,10 @@ export function nextCatalogVersion(today: Date, publishedLatest: string | null):
 /** A published version of the catalog package, as read from the packument. */
 export interface PublishedCatalog {
   version: string
-  shas: { plugins: string; stars: string | null }
+  /** `icons` is absent on every version published before the icons sidecar
+   * existed and `null` on one that carried none: both say "no icons file", and
+   * {@link catalogPublishDecision} reads them as one. */
+  shas: { plugins: string; stars: string | null; icons?: string | null }
   /** The build that version carries. `null` for one published before
    * `catalogBuiltAt` was recorded — there is nothing to order against. */
   builtAt: string | null
@@ -61,7 +65,7 @@ export interface PublishedCatalog {
 /** The build sitting in `dist/v1`, as read from its `index.json`. */
 export interface LocalCatalog {
   builtAt: string
-  shas: { plugins: string; stars: string | null }
+  shas: { plugins: string; stars: string | null; icons?: string | null }
 }
 
 /** Publish it, skip it, or refuse it. `refuse` fails the run. */
@@ -75,10 +79,16 @@ export type CatalogPublishDecision =
  *
  * Two guards, in this order:
  *
- * 1. **Identical content is nothing to publish.** Both hashes matching the
- *    published version means the ecosystem did not move; the daily build
- *    exits 0 with nothing to do. Checked first so a tree that is BOTH stale
- *    and content-identical is a no-op rather than a failure.
+ * 1. **Identical content is nothing to publish.** The plugins, stars and
+ *    icons hashes all matching the published version means the ecosystem did
+ *    not move; the daily build exits 0 with nothing to do. Checked first so a
+ *    tree that is BOTH stale and content-identical is a no-op rather than a
+ *    failure. The icons hash is one of the three because the icons file is
+ *    addressed by its own hash like the stars sidecar: a build that differs
+ *    from the published one in that file alone is a different catalog, and
+ *    skipping it would leave the package serving the old icons while Pages
+ *    serves the new. A hash absent on one side only is a change, and absent on
+ *    both is equal (see {@link PublishedCatalog}).
  * 2. **The build must move forward.** A `dist/v1` older than the published
  *    `latest` is a tree that was never rebuilt, and publishing it moves
  *    `latest` backwards. On 2026-09-03T16:46Z exactly that happened: a
@@ -100,7 +110,8 @@ export function catalogPublishDecision(
 ): CatalogPublishDecision {
   if (published !== null
     && published.shas.plugins === local.shas.plugins
-    && published.shas.stars === local.shas.stars) {
+    && published.shas.stars === local.shas.stars
+    && (published.shas.icons ?? null) === (local.shas.icons ?? null)) {
     return { kind: 'skip', reason: `catalog unchanged since ${published.version} — nothing to publish` }
   }
 
