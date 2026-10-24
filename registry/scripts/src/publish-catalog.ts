@@ -7,8 +7,8 @@
  *
  *   node --experimental-strip-types registry/scripts/src/publish-catalog.ts [--dry-run]
  *
- * Skips when the published `latest` already carries the same plugins and
- * stars hashes. Exits 0 on a skip: an unchanged catalog is a success, not a
+ * Skips when the published `latest` already carries the same plugins, stars
+ * and icons hashes. Exits 0 on a skip: an unchanged catalog is a success, not a
  * failure. Refuses, non-zero, when `dist/v1` is older than that `latest` —
  * a tree nobody rebuilt, which the hash check cannot distinguish from a
  * fresh one (see `catalogPublishDecision`).
@@ -76,10 +76,15 @@ if (basename(process.argv[1] ?? '') === 'publish-catalog.ts') {
     count: number
     plugins: { url: string; sha256: string }
     stars?: { url: string; sha256: string }
+    icons?: { url: string; sha256: string }
   }
 
   const pointer = JSON.parse(readFileSync(join(OUT_DIR, 'index.json'), 'utf8')) as Pointer
-  const shas = { plugins: pointer.plugins.sha256, stars: pointer.stars?.sha256 ?? null }
+  const shas = {
+    plugins: pointer.plugins.sha256,
+    stars: pointer.stars?.sha256 ?? null,
+    icons: pointer.icons?.sha256 ?? null,
+  }
 
   /** The published `latest`: the hashes it was built from, and the build time
    * it carries. Absent when the package has never been published — the first
@@ -92,7 +97,7 @@ if (basename(process.argv[1] ?? '') === 'publish-catalog.ts') {
     const packument = await response.json() as {
       'dist-tags'?: { latest?: string }
       versions?: Record<string, {
-        catalogShas?: { plugins: string; stars: string | null }
+        catalogShas?: { plugins: string; stars: string | null; icons?: string | null }
         catalogBuiltAt?: string
       }>
     }

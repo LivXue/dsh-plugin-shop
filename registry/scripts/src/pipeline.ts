@@ -1,8 +1,8 @@
 import { gate, type Accepted } from './gate.ts'
 import { gateRepo, type RepoAccepted } from './repo-gate.ts'
 import { assignTier, assignRepoTier } from './tier.ts'
-import { emit, SCHEMA_VERSION, type Artifacts, type StarsPointer } from './emit.ts'
-import { compareStrings, firstSeenKey } from './identity.ts'
+import { emit, SCHEMA_VERSION, type Artifacts, type IconsPointer, type StarsPointer } from './emit.ts'
+import { compareStrings, firstSeenKey, installIdentity } from './identity.ts'
 import { acceptedNpmRepositories, npmShadowOf } from './npm-shadow.ts'
 import type { RegistryConfig } from './config.ts'
 import type { Candidate, Entry, Rejection, RepoCandidate } from './types.ts'
@@ -283,6 +283,15 @@ export function selectEntries(
  *   name that could not be turned into a candidate at all (e.g. a failed fetch); merged
  *   into the emitted report alongside every rejection this function produces itself.
  * @param stars - optional pointer to a published stars sidecar, passed through to emit.
+ * @param icons - the icon step's output when it published an icons file: the
+ *   `pointer` the index carries, and `byIdentity`, the sha256 that keys each
+ *   listed entry's icon in that file, by the entry's install identity. An
+ *   entry the map names gets `icon`; an identity that is no entry's changes
+ *   nothing, so an icon decides nothing about what is listed. The icon is set
+ *   after the gate, which is why the payload budget never counts it.
+ *   `byIdentity` is read by a lookup per entry and never iterated: its order
+ *   is the order the icon step met the entries in, which follows the input,
+ *   and no artifact may depend on that.
  * @returns the artifacts to publish and commit, and the first-seen rows to write back.
  */
 export function runPipeline(
@@ -293,10 +302,20 @@ export function runPipeline(
   preexistingRejections: Rejection[] = [],
   stars: StarsPointer | null = null,
   schemaVersion: number = SCHEMA_VERSION,
+  icons: { pointer: IconsPointer; byIdentity: ReadonlyMap<string, string> } | null = null,
 ): PipelineResult {
   const selected = selectEntries(candidates, repoCandidates, config, builtAt)
   const rejections: Rejection[] = [...preexistingRejections, ...selected.rejections]
-  const entries = selected.entries
+  // After `selectEntries` and not inside it: the gate measures an entry's
+  // payload against `ENTRY_PAYLOAD_MAX_BYTES` from the candidate, so an icon
+  // attached here is never counted and can never delist the entry that
+  // declares it (design 2026-10-23-shop-plugin-icons §6.1).
+  const entries = icons === null
+    ? selected.entries
+    : selected.entries.map((entry): Entry => {
+      const icon = icons.byIdentity.get(installIdentity(entry))
+      return icon === undefined ? entry : { ...entry, icon }
+    })
   const firstSeen = selected.firstSeen
 
   // Report-only diagnostics. They ride `report.md`, never the hashed data,
@@ -319,7 +338,7 @@ export function runPipeline(
   }
   notes.push(...unmatchedRegistryNotes(candidates, repoCandidates, config))
   return {
-    ...emit(entries, rejections, builtAt, stars, schemaVersion, config.notAShop, notes),
+    ...emit(entries, rejections, builtAt, stars, schemaVersion, config.notAShop, notes, icons?.pointer ?? null),
     firstSeen,
   }
 }

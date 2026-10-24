@@ -717,4 +717,21 @@ export interface Entry {
    * predates it strips the key (consumer zod is non-strict by design).
    */
   forked?: true
+  /**
+   * The sha256 that keys this entry's icon in the icons sidecar
+   * (`icons.<sha256>.json`, design 2026-10-23-shop-plugin-icons §6.1), present
+   * exactly when the build published an icon for the entry. The bytes are not
+   * here but in the sidecar, which holds each distinct icon once: an entry's
+   * payload is capped at `ENTRY_PAYLOAD_MAX_BYTES` and an icon may outgrow the
+   * cap. This is the key a reader looks them up by.
+   *
+   * The build's value and not the author's. The author declares a path
+   * ({@link Candidate.icon}); the icon step reads that file, and `runPipeline`
+   * sets this from the step's map once the gate has run, so the budget never
+   * counts it and an icon can never delist the entry that declares it.
+   *
+   * Additive and optional, so it rides every schemaVersion: a client that
+   * predates it strips the key (consumer zod is non-strict by design).
+   */
+  icon?: string
 }

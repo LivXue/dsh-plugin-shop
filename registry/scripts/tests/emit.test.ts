@@ -149,6 +149,28 @@ describe('emit publisher', () => {
     expect(pluginsJson).not.toContain('forked')
   })
 
+  it('publishes the icon sha256 at every schemaVersion, on both channels', () => {
+    // Additive and optional (design 2026-10-23-shop-plugin-icons §6.3), so it
+    // rides every version for the reason the cases above give: a shop that
+    // predates the key strips it and draws the entry as it does today, while a
+    // gate on the version NUMBER would be what breaks one. Pinned in the
+    // published bytes, because `emit` is the only module that treats entries
+    // differently per schemaVersion and so the only place a gate can strand a
+    // field.
+    const icon = 'a'.repeat(64)
+    const entries = [{ ...entry('dsh-a'), icon }, { ...repoEntry('dsh-b', 'you/dsh-b'), icon }]
+    for (const version of [SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, CATALOG_SCHEMA_VERSION]) {
+      const { pluginsJson } = emit(entries, [], '2026-08-26T00:00:00.000Z', null, version)
+      const parsed = JSON.parse(pluginsJson) as { plugins: { icon?: string }[] }
+      expect(parsed.plugins.map(p => p.icon), `stripped at schemaVersion ${version}`).toEqual([icon, icon])
+    }
+  })
+
+  it('emits no icon key for an entry without one', () => {
+    const { pluginsJson } = emit([entry('dsh-a'), repoEntry('dsh-b', 'you/dsh-b')], [], '2026-08-26T00:00:00.000Z')
+    expect(pluginsJson).not.toContain('"icon"')
+  })
+
   it('publishes peers on a GITHUB entry at every schemaVersion', () => {
     // Additive and optional, and new to this channel on 2026-09-24. Pinned in
     // the published bytes for the reason the size cases above give: emit is
@@ -428,6 +450,48 @@ describe('emit', () => {
     const omitted = emit(entries, [], '2026-08-26T00:00:00.000Z')
     expect('stars' in (JSON.parse(omitted.indexJson) as object)).toBe(false)
   })
+
+  describe('the icons pointer', () => {
+    const BUILT_AT = '2026-08-26T00:00:00.000Z'
+    const icons = { url: `icons.${'f'.repeat(64)}.json`, sha256: 'f'.repeat(64) }
+    const stars = { url: 'stars.abc.json', sha256: 'abc' }
+    // `emit`'s eighth parameter, named once so each case says what it varies.
+    const emitWith = (pointer: typeof icons | null, starsPointer: typeof stars | null = null) =>
+      emit([entry('dsh-a')], [], BUILT_AT, starsPointer, SCHEMA_VERSION, new Set(), [], pointer)
+
+    it('emits an icons pointer when one is supplied and omits it when null', () => {
+      const parsed = JSON.parse(emitWith(icons).indexJson) as { icons?: { url: string; sha256: string } }
+      expect(parsed.icons).toEqual(icons)
+
+      expect('icons' in (JSON.parse(emitWith(null).indexJson) as object)).toBe(false)
+      // Omitted altogether, which is every caller that predates the sidecar.
+      const omitted = emit([entry('dsh-a')], [], BUILT_AT)
+      expect('icons' in (JSON.parse(omitted.indexJson) as object)).toBe(false)
+    })
+
+    it('puts the pointer after the stars pointer, and either stands alone', () => {
+      const keys = (text: string): string[] => Object.keys(JSON.parse(text) as object)
+      expect(keys(emitWith(icons, stars).indexJson))
+        .toEqual(['schemaVersion', 'builtAt', 'count', 'rejected', 'plugins', 'stars', 'icons'])
+      // Either sidecar stands alone: the stars fetch and the icon step are
+      // independent, and each is advisory.
+      expect(keys(emitWith(icons).indexJson))
+        .toEqual(['schemaVersion', 'builtAt', 'count', 'rejected', 'plugins', 'icons'])
+      expect(keys(emitWith(null, stars).indexJson))
+        .toEqual(['schemaVersion', 'builtAt', 'count', 'rejected', 'plugins', 'stars'])
+    })
+
+    it('leaves every other artifact byte-identical, the plugins file name included', () => {
+      // The pointer names a sidecar and the sidecar is addressed by its own
+      // hash, so supplying one may not move the plugins hash or any other
+      // file: the same rule `builtAt` and the stars pointer keep.
+      const supplied = emitWith(icons)
+      const absent = emitWith(null)
+      for (const key of ['pluginsFileName', 'pluginsJson', 'badgeJson', 'manifestLock', 'report'] as const) {
+        expect(supplied[key], `${key} moved with the icons pointer`).toBe(absent[key])
+      }
+    })
+  })
 })
 
 describe('schemaVersion 5 (market borrowings)', () => {
@@ -522,6 +586,54 @@ describe('assertCatalogInvariants', () => {
     const broken = { ...entry('dsh-a'), added: 'yesterday' }
     expect(() => emit([broken], [], '2026-08-25T00:00:00.000Z'))
       .toThrow(/unparseable added date yesterday/)
+  })
+
+  // An icon is the sha256 that keys the icons sidecar, and a reader looks the
+  // icon up by it. Anything else means the build handed the pipeline the wrong
+  // value (an icon KEY, a data URL), which a reader would meet as the default
+  // artwork with no word of why. The shop's schema refuses the same grammar, at
+  // the price of the whole catalog, so the build stops first.
+  it.each([
+    ['not hex at all', 'xyz'],
+    ['empty', ''],
+    ['an icon key', 'npm:dsh-a@1.0.0:icon.svg'],
+    ['63 digits', 'a'.repeat(63)],
+    ['65 digits', 'a'.repeat(65)],
+    ['upper case', 'A'.repeat(64)],
+    ['one character off in the middle', `${'a'.repeat(31)}g${'a'.repeat(32)}`],
+  ])('throws, naming the entry, when an icon is %s', (_why, icon) => {
+    expect(() => emit([{ ...entry('dsh-a'), icon }], [], '2026-08-25T00:00:00.000Z'))
+      .toThrow(/catalog invariant: npm:dsh-a has an icon that is not a sha256/)
+  })
+
+  it('does not echo a whole data URL into the error when one is mistaken for the sha256', () => {
+    const icon = `data:image/svg+xml;base64,${'A'.repeat(100_000)}`
+    let message = ''
+    try {
+      emit([{ ...entry('dsh-a'), icon }], [], '2026-08-25T00:00:00.000Z')
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+    expect(message).toContain('npm:dsh-a has an icon that is not a sha256')
+    expect(message.length).toBeLessThan(300)
+  })
+
+  it('names a github entry by its install identity, which its bundle name does not give', () => {
+    // Several repositories claim one bundle name, so the name by itself would
+    // point at all of them; the identity points at one.
+    const bad = { ...repoEntry('dsh-shared', 'alice/dsh-shared', 'packages/one'), icon: 'xyz' }
+    const fine = { ...repoEntry('dsh-shared', 'bob/dsh-shared'), icon: 'b'.repeat(64) }
+    expect(() => emit([fine, bad], [], '2026-08-25T00:00:00.000Z'))
+      .toThrow(/catalog invariant: github:alice\/dsh-shared#packages\/one has an icon that is not a sha256/)
+  })
+
+  it('accepts a 64-digit lower-case hex icon, and publishes it', () => {
+    // Asserted on the bytes, because a bare not.toThrow() would also pass if
+    // emit accepted the entry and dropped the field.
+    const icon = '0123456789abcdef'.repeat(4)
+    const { pluginsJson } = emit([{ ...entry('dsh-a'), icon }], [], '2026-08-25T00:00:00.000Z')
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string; icon?: string }[] }
+    expect(parsed.plugins.map(p => [p.name, p.icon])).toEqual([['dsh-a', icon]])
   })
 })
 

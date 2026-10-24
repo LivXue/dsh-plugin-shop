@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { describeRereadStopped, repoPeersEmitted, runPipeline, selectEntries, unmatchedRegistryNotes, withholdRepoPeers } from '../src/pipeline.ts'
 import { parseRegistryConfig } from '../src/config.ts'
-import { lockNpmNames } from '../src/emit.ts'
+import { lockNpmNames, SCHEMA_VERSION, type IconsPointer } from '../src/emit.ts'
 import type { Candidate, Rejection, RepoCandidate } from '../src/types.ts'
 
 const candidates = JSON.parse(
@@ -690,6 +690,74 @@ describe('a repo denial survives the author publishing to npm', () => {
   })
 })
 
+/** `runPipeline`'s icons argument: the index pointer and the sha256 that keys each entry's icon, by install identity. */
+type Icons = { pointer: IconsPointer; byIdentity: ReadonlyMap<string, string> }
+
+describe('runPipeline with an icons sidecar', () => {
+  // Digits, not the letters the suite's commits are made of, so a sha that
+  // names an icon cannot be mistaken for one that pins a commit.
+  const ICON_SHA = '1'.repeat(64)
+  const FILE_SHA = 'f'.repeat(64)
+  const pointer: IconsPointer = { url: `icons.${FILE_SHA}.json`, sha256: FILE_SHA }
+  const stars = { url: 'stars.deadbeef.json', sha256: 'deadbeef' }
+  type Published = { name: string; icon?: string } & Record<string, unknown>
+  const pluginsOf = (pluginsJson: string): Published[] => (JSON.parse(pluginsJson) as { plugins: Published[] }).plugins
+  const run = (icons: Icons | null) =>
+    runPipeline(candidates, [], config, BUILT_AT, [], stars, SCHEMA_VERSION, icons)
+  const hello: Icons = { pointer, byIdentity: new Map([['npm:dsh-hello-plugin', ICON_SHA]]) }
+
+  it('sets the icon on the entry whose install identity the map names, and on no other', () => {
+    const { pluginsJson } = run(hello)
+    expect(pluginsOf(pluginsJson).map(p => [p.name, p.icon])).toEqual([
+      ['dsh-derived-plugin', undefined],
+      ['dsh-fs-tool', undefined],
+      ['dsh-hello-plugin', ICON_SHA],
+    ])
+  })
+
+  it('points the index at the icons file, after the stars pointer', () => {
+    const index = JSON.parse(run(hello).indexJson) as Record<string, unknown>
+    expect(index.icons).toEqual(pointer)
+    expect(Object.keys(index).slice(-2)).toEqual(['stars', 'icons'])
+  })
+
+  it('writes neither the icon nor the pointer when it is handed no icons', () => {
+    const none = run(null)
+    expect(pluginsOf(none.pluginsJson).filter(p => 'icon' in p)).toEqual([])
+    expect('icons' in (JSON.parse(none.indexJson) as object)).toBe(false)
+    // And null is the default, so a caller that predates the sidecar gets the
+    // same bytes it always did.
+    const omitted = runPipeline(candidates, [], config, BUILT_AT, [], stars)
+    for (const key of ['pluginsFileName', 'pluginsJson', 'indexJson', 'badgeJson', 'manifestLock', 'report'] as const) {
+      expect(none[key], key).toBe(omitted[key])
+    }
+  })
+
+  it('lets an icon decide nothing about the listing', () => {
+    // CLAUDE.md: what is IN the catalog is the gate's decision and nothing
+    // else's, and an icon is presentation. A map that names a candidate the
+    // gate rejected (`dsh-lib-only`: no bundle) or one that was never
+    // harvested must neither list it nor leave a trace in the report.
+    const none = run(null)
+    const handed = run({
+      pointer,
+      byIdentity: new Map([
+        ['npm:dsh-hello-plugin', ICON_SHA],
+        ['npm:dsh-lib-only', ICON_SHA],
+        ['npm:dsh-never-harvested', ICON_SHA],
+      ]),
+    })
+    for (const key of ['badgeJson', 'manifestLock', 'report'] as const) {
+      expect(handed[key], key).toBe(none[key])
+    }
+    // The one difference in plugins.json is the icon key on the entry the map
+    // names that is listed: strip it and the files are the same.
+    const withoutIcon = ({ icon: _icon, ...rest }: Published): Record<string, unknown> => rest
+    expect(pluginsOf(handed.pluginsJson).map(withoutIcon)).toEqual(pluginsOf(none.pluginsJson))
+    expect(pluginsOf(handed.pluginsJson).filter(p => 'icon' in p).map(p => p.name)).toEqual(['dsh-hello-plugin'])
+  })
+})
+
 describe('determinism under every perturbation', () => {
   const commitA = 'a'.repeat(40)
   const commitB = 'b'.repeat(40)
@@ -734,6 +802,24 @@ describe('determinism under every perturbation', () => {
     { name: 'dsh-twice', code: 'no-manifest', detail: 'package.json was unreadable.' },
   ]
   const stars = { url: 'stars.deadbeef.json', sha256: 'deadbeef' }
+  // The icons sidecar's pointer and the identities the icon step published an
+  // icon for. They pick out each tie the lookup has to break: the npm package
+  // whose name a fork shares (`erin/hello-fork` gets none), one of two forks
+  // sharing a bundle name (`bob/dsh-shared` gets none) and one of two
+  // subpackages of a repository (`packages/one` gets none). Two entries share
+  // an icon, as two plugins by one author can.
+  const ICON_A = '1'.repeat(64)
+  const ICON_B = '2'.repeat(64)
+  const ICONS_FILE_SHA = 'f'.repeat(64)
+  const iconRows: ReadonlyArray<readonly [string, string]> = [
+    ['npm:dsh-hello-plugin', ICON_A],
+    ['github:alice/dsh-shared#', ICON_B],
+    ['github:carol/monorepo#packages/two', ICON_A],
+  ]
+  const iconsFrom = (rows: ReadonlyArray<readonly [string, string]>): Icons => ({
+    pointer: { url: `icons.${ICONS_FILE_SHA}.json`, sha256: ICONS_FILE_SHA },
+    byIdentity: new Map(rows),
+  })
   // Every ACCEPTED entry needs a recorded row here, or its `added` comes from
   // the clock (Task 10) and the across-clocks comparison below would fail for
   // the right reason. The verified row keeps `dsh-fs-too1` held, exactly as
@@ -758,14 +844,19 @@ describe('determinism under every perturbation', () => {
   })
 
   it('is byte-identical in every artifact under a reversed input and a repeated run', () => {
-    const first = runPipeline(candidates, repos, dated, BUILT_AT, preexisting, stars)
+    const first = runPipeline(candidates, repos, dated, BUILT_AT, preexisting, stars, SCHEMA_VERSION, iconsFrom(iconRows))
+    // The icon map is an input too, and its order is the order the icon step
+    // met the entries in, which is the catalog's input order: the reversed run
+    // inserts the same rows the other way round, so an artifact built by
+    // iterating the map and not by looking each entry up would move.
     const second = runPipeline(
       [...candidates].reverse(), [...repos].reverse(), dated, BUILT_AT, [...preexisting].reverse(), stars,
+      SCHEMA_VERSION, iconsFrom([...iconRows].reverse()),
     )
     // The same inputs a second time, which is a different claim from order
     // independence: it is what would catch a Set or Map iterated in insertion
     // order, or a clock read inside emit.
-    const repeated = runPipeline(candidates, repos, dated, BUILT_AT, preexisting, stars)
+    const repeated = runPipeline(candidates, repos, dated, BUILT_AT, preexisting, stars, SCHEMA_VERSION, iconsFrom(iconRows))
     // The byte comparisons below hold just as well when erin's repository is
     // hidden, so without this they say nothing about an npm package and
     // another owner's repository of its name sharing one catalog.
@@ -776,15 +867,41 @@ describe('determinism under every perturbation', () => {
     }
     expect([...second.firstSeen]).toEqual([...first.firstSeen])
     expect([...repeated.firstSeen]).toEqual([...first.firstSeen])
-    // The sidecar pointer rides the index and is not otherwise perturbed.
-    expect((JSON.parse(first.indexJson) as { stars: unknown }).stars).toEqual(stars)
+    // The sidecar pointers ride the index and are not otherwise perturbed.
+    const index = JSON.parse(first.indexJson) as { stars: unknown; icons: unknown }
+    expect(index.stars).toEqual(stars)
+    expect(index.icons).toEqual(iconsFrom(iconRows).pointer)
+    // And the icons are on the entries, or every comparison above would hold
+    // just as well for a pipeline that dropped them.
+    expect(first.pluginsJson).toContain(ICON_A)
+    expect(first.pluginsJson).toContain(ICON_B)
+  })
+
+  it('gives an icon to the entry whose identity the map names, and to no other entry of its name', () => {
+    const { pluginsJson } = runPipeline(candidates, repos, dated, BUILT_AT, preexisting, stars, SCHEMA_VERSION, iconsFrom(iconRows))
+    const plugins = (JSON.parse(pluginsJson) as {
+      plugins: { name: string; source: string; repo?: string; subdir?: string; icon?: string }[]
+    }).plugins
+    expect(plugins.map(p => [p.name, p.source, p.repo ?? null, p.subdir ?? null, p.icon ?? null])).toEqual([
+      ['dsh-derived-plugin', 'npm', null, null, null],
+      ['dsh-fs-tool', 'npm', null, null, null],
+      // A fork that shares the npm package's name does not inherit its icon...
+      ['dsh-hello-plugin', 'github', 'erin/hello-fork', null, null],
+      ['dsh-hello-plugin', 'npm', null, null, ICON_A],
+      // ...and neither do the other claimants of a bundle name or the sibling
+      // subpackage of a repository.
+      ['dsh-shared', 'github', 'alice/dsh-shared', null, ICON_B],
+      ['dsh-shared', 'github', 'bob/dsh-shared', null, null],
+      ['dsh-sub', 'github', 'carol/monorepo', 'packages/one', null],
+      ['dsh-sub', 'github', 'carol/monorepo', 'packages/two', ICON_A],
+    ])
   })
 
   it('keeps the hashed data identical across build times, with only the index and badge moving', () => {
-    const first = runPipeline(candidates, repos, dated, BUILT_AT, preexisting, stars)
+    const first = runPipeline(candidates, repos, dated, BUILT_AT, preexisting, stars, SCHEMA_VERSION, iconsFrom(iconRows))
     const second = runPipeline(
       [...candidates].reverse(), [...repos].reverse(), dated, '2030-01-01T00:00:00.000Z',
-      [...preexisting].reverse(), stars,
+      [...preexisting].reverse(), stars, SCHEMA_VERSION, iconsFrom([...iconRows].reverse()),
     )
     expect(second.pluginsJson).toBe(first.pluginsJson)
     expect(second.pluginsFileName).toBe(first.pluginsFileName)

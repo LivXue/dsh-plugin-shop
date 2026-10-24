@@ -46,6 +46,11 @@ export const CATALOG_SCHEMA_VERSION = 5
 /** The stars sidecar pointer the index may carry (spec 2026-08-26-github-stars-design.md §4.1). */
 export interface StarsPointer { url: string; sha256: string }
 
+/** The icons sidecar pointer the index may carry (design
+ * 2026-10-23-shop-plugin-icons §6.1), shaped and named like the stars one:
+ * `url` is the file's relative name, `icons.<sha256>.json`. */
+export interface IconsPointer { url: string; sha256: string }
+
 /** The complete output of one catalog build. */
 export interface Artifacts {
   /** Content-addressed file name of the data file. */
@@ -116,6 +121,12 @@ export function escapeCell(value: string): string {
  * consumer cannot self-heal these: a duplicated install identity makes the
  * install route ambiguous, and a count that does not match the data file
  * breaks every consumer's summary. Throwing beats publishing either.
+ *
+ * An entry's `icon` is held to its grammar here too, although it is one field
+ * and not a relation between fields, because nothing earlier can: `runPipeline`
+ * sets it after the gate (so the payload budget never counts it) and the gate
+ * never sees it. The shop's schema holds it to the same grammar, and a value
+ * outside it costs a reader the whole data file.
  * @param entries - the accepted entries, pre-sort.
  * @param builtAt - the build timestamp; its date part is the "now" reference.
  */
@@ -131,6 +142,14 @@ export function assertCatalogInvariants(entries: Entry[], builtAt: string): void
     }
     if (entry.added > today) {
       throw new Error(`catalog invariant: ${entry.name} added ${entry.added} is later than the build date ${today}`)
+    }
+    // An icon is the sha256 that keys the icons sidecar and nothing else, so a
+    // value of any other shape is the build having handed the pipeline the
+    // wrong one (an icon key, a data URL). Named by install identity, because
+    // a bundle name alone can point at several entries, and cut short, so a
+    // data URL taken for a sha256 does not fill the log.
+    if (entry.icon !== undefined && !/^[0-9a-f]{64}$/.test(entry.icon)) {
+      throw new Error(`catalog invariant: ${installIdentity(entry)} has an icon that is not a sha256: ${JSON.stringify(entry.icon.slice(0, 80))}`)
     }
   }
   const identities = new Set<string>()
@@ -192,6 +211,10 @@ function wellFormed(value: unknown): unknown {
  * @param notAShop - names cleared past the client's shop-like NAME filter.
  * @param notes - report-only diagnostic lines (market holds, registry rows that
  *   matched nothing). They ride `report.md` and never the hashed data.
+ * @param icons - optional pointer to the published icons sidecar the entries'
+ *   `icon` keys address; omitted from the index when null. Like `stars`, the
+ *   pointer rides the index alone: the sidecar is addressed by its own hash, so
+ *   supplying one moves no other artifact.
  * @returns the artifacts to publish and commit.
  */
 export function emit(
@@ -202,6 +225,7 @@ export function emit(
   schemaVersion: number = SCHEMA_VERSION,
   notAShop: ReadonlySet<string> = new Set(),
   notes: readonly string[] = [],
+  icons: IconsPointer | null = null,
 ): Artifacts {
   assertCatalogInvariants(entries, builtAt)
   // Below v5 the catalog must not carry the `theme` category: `theme` is a
@@ -211,9 +235,12 @@ export function emit(
   // SHOP_CATALOG_V5 at release time restores it without re-reviewing anything
   // (design §3.5). The additive fields (`added`, `tarball`, `replacement`,
   // `peers`, `publisher`, `unpackedSize`, `installSize`, `compatibility`,
-  // `dshPeers`, `archived`, `forked`, `manifestVersion`) ride EVERY version:
-  // an old client's zod strips a key it does not know (consumer-side zod is
-  // non-strict by design), so none of them needs a gate.
+  // `dshPeers`, `archived`, `forked`, `manifestVersion`, `icon`) ride EVERY
+  // version: an old client's zod strips a key it does not know (consumer-side
+  // zod is non-strict by design), so none of them needs a gate. `icon` is
+  // optional and the index's `icons` pointer is too; an older shop's non-strict
+  // parse drops both and draws every entry as it does today, so the icons
+  // sidecar leaves the version at 5 (design 2026-10-23-shop-plugin-icons §6.3).
   // Keep this list whole — it is the one place the "does a new field need a
   // version gate?" decision is recorded, and a reader who finds their field
   // missing cannot tell a deliberate gate from an omission. `peers` had one
@@ -297,6 +324,7 @@ export function emit(
     rejected: sortedRejections.length,
     plugins: { url: pluginsFileName, sha256 },
     ...(stars == null ? {} : { stars }),
+    ...(icons == null ? {} : { icons }),
   }, null, 2)}\n`
 
   // The date alone, not the timestamp: a badge has room for ten characters,

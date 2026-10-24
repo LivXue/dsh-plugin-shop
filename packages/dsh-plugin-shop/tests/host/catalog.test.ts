@@ -901,6 +901,53 @@ describe('forked', () => {
   })
 })
 
+describe('icon', () => {
+  // The consumer half of the registry's `Entry.icon` (design
+  // 2026-10-23-shop-plugin-icons §6.1): the sha256 that keys the entry's icon
+  // in the icons sidecar. Zod strips what it does not declare, so until this
+  // schema declared the key a published icon would be dropped by every shop in
+  // silence — the parity guard (`catalog-parity.test.ts`) refuses the key's
+  // absence, and this pins what declaring it does.
+  const SHA = '0123456789abcdef'.repeat(4)
+
+  it('carries an entry\'s icon sha256 through to the entry the client renders', async () => {
+    const result = await load([{ ...baseEntry, icon: SHA }], 5)
+    expect(result.snapshot.entries[0]?.icon).toBe(SHA)
+  })
+
+  it('carries it on a github entry too', async () => {
+    const result = await load([{
+      ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing', icon: SHA,
+    }], 5)
+    expect(result.snapshot.entries[0]?.icon).toBe(SHA)
+  })
+
+  it('parses an entry that carries no icon unchanged', async () => {
+    // Every catalog published before the icons sidecar, and every cached copy
+    // of one: the key is optional, and the parse invents none.
+    const result = await load([baseEntry], 5)
+    expect(result.snapshot.entries[0]?.icon).toBeUndefined()
+    expect(result.snapshot.entries[0] !== undefined && 'icon' in result.snapshot.entries[0]).toBe(false)
+  })
+
+  // Our own artifact: the registry stops a build whose icon is not this
+  // grammar (`assertCatalogInvariants`), so a value that fails here is that
+  // check having been bypassed, and the data file is read with a throwing
+  // `parse`. `it.each` rather than a loop, for the reason the size cases give.
+  it.each([
+    ['not hex', 'xyz'],
+    ['empty', ''],
+    ['63 digits', SHA.slice(1)],
+    ['65 digits', `${SHA}0`],
+    ['upper case', SHA.toUpperCase()],
+    ['a data URL', 'data:image/svg+xml;base64,PHN2Zy8+'],
+    ['a number', 12345],
+    ['null', null],
+  ])('refuses a catalog whose icon is %s', async (_why, icon) => {
+    await expect(load([{ ...baseEntry, icon }], 5)).rejects.toThrow()
+  })
+})
+
 describe('the two size keys carry one bound', () => {
   // Our own artifact, so a violation is our build having written something it
   // cannot write — and this project stops rather than render a size label
