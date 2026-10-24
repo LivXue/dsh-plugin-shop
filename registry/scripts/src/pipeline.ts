@@ -238,7 +238,10 @@ export function assertIconsInFile(byIdentity: ReadonlyMap<string, string>, file:
  * naming a candidate the gate turned away withholds nothing today. Its keys are
  * the ones `firstSeenKey` gives an entry — an npm name as written, a
  * repository's `owner/slug` lower-cased — so a row that names a repository's
- * bundle name, which is no key of any entry, never fires and is reported.
+ * bundle name, which is no key of any entry, never fires and is reported. Such
+ * rows have a heading of their own, after the other files': theirs says that
+ * no harvested candidate matched, which is false of a row whose name the
+ * harvest saw and the gate turned away.
  *
  * Report-only: no row is dropped and no listing changes. Whether a stale row
  * should be deleted is a human's call — a package can be unpublished for a
@@ -279,16 +282,13 @@ export function unmatchedRegistryNotes(
     const matched = npmNames.has(entry) || repoFullNames.has(entry.toLowerCase())
     if (!matched) rows.push({ file: 'allowed-similar.yml', row: entry })
   }
-  for (const key of config.withheldIcons.keys()) {
-    // Already keyed as `firstSeenKey` keys an entry (config.ts), so the lookup
-    // needs no folding of its own.
-    if (!listedKeys.has(key)) rows.push({ file: 'withheld-icons.yml', row: key })
-  }
-  if (rows.length === 0) return []
+  // Already keyed as `firstSeenKey` keys an entry (config.ts), so the lookup
+  // needs no folding of its own.
+  const withheldRows = [...config.withheldIcons.keys()].filter(key => !listedKeys.has(key)).sort(compareStrings)
   rows.sort((a, b) => compareStrings(a.file, b.file) || compareStrings(a.row, b.row))
   return [
-    'Registry rows that matched no harvested candidate this run:',
-    ...rows.map(row => `- ${row.file}: ${row.row}`),
+    ...(rows.length === 0 ? [] : ['Registry rows that matched no harvested candidate this run:', ...rows.map(row => `- ${row.file}: ${row.row}`)]),
+    ...(withheldRows.length === 0 ? [] : ['withheld-icons.yml rows that named no listed entry this run:', ...withheldRows.map(row => `- withheld-icons.yml: ${row}`)]),
   ]
 }
 

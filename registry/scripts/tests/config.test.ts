@@ -393,15 +393,18 @@ describe('parseRegistryConfig withheld icons', () => {
     expect(config.withheldIcons.get('owner/repo')).toEqual({ reason: 'r' })
   })
 
-  it('keeps a scoped npm name as written, though it holds a slash', () => {
+  it('keeps a scoped npm name as written, though it holds a slash, and an unscoped one too', () => {
     // A repository is told from a package by its shape, and a scoped name has
     // the slash a repository has. What keeps it a package is the leading `@`,
     // which REPO_FULL_NAME refuses: `firstSeenKey` leaves an npm name as it
     // is, so folding this one would key it where no entry looks. The capitals
-    // are what make a fold visible.
-    const config = parseRegistryConfig({ ...empty, withheldIcons: '- name: "@Scope/Dsh-X"\n  reason: r\n' })
-    expect([...config.withheldIcons.keys()]).toEqual(['@Scope/Dsh-X'])
+    // are what make a fold visible. A legacy unscoped name may hold capitals
+    // too, and it has no slash at all: a rule that kept only `@` names as
+    // written, and folded the rest, would key it where no entry looks.
+    const config = parseRegistryConfig({ ...empty, withheldIcons: '- name: "@Scope/Dsh-X"\n  reason: r\n- name: DSH-Legacy\n  reason: s\n' })
+    expect([...config.withheldIcons.keys()]).toEqual(['@Scope/Dsh-X', 'DSH-Legacy'])
     expect(config.withheldIcons.get('@Scope/Dsh-X')).toEqual({ reason: 'r' })
+    expect(config.withheldIcons.get('DSH-Legacy')).toEqual({ reason: 's' })
   })
 
   it('throws on a repeated name instead of silently keeping the last row', () => {

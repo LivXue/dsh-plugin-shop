@@ -1114,7 +1114,7 @@ describe('unmatchedRegistryNotes', () => {
     expect(unmatchedRegistryNotes([npmCandidate], [repoCandidate], withheld, [listedNpm, listedRepo])).toEqual([])
   })
 
-  it('names a withheld icon row that matches no listed entry, after the files it sorts behind', () => {
+  it('names a withheld icon row that matches no listed entry, under its own heading after the other files\' rows', () => {
     // The hazard is the one the other three files have: a well-formed but
     // mistyped name loads, matches nothing, and the icon it was written to
     // hold back stays published. `dsh-hello-plugn` is `dsh-hello-plugin` with
@@ -1137,6 +1137,7 @@ describe('unmatchedRegistryNotes', () => {
     expect(unmatchedRegistryNotes([npmCandidate], [repoCandidate], stale, [listedNpm, listedRepo])).toEqual([
       'Registry rows that matched no harvested candidate this run:',
       '- verified.yml: dsh-unpublished',
+      'withheld-icons.yml rows that named no listed entry this run:',
       '- withheld-icons.yml: alpha/gone',
       '- withheld-icons.yml: dsh-hello-plugn',
       '- withheld-icons.yml: dsh-repo-plugin',
@@ -1148,8 +1149,9 @@ describe('unmatchedRegistryNotes', () => {
     // An icon can be withheld only from an entry the catalog lists. A name
     // the harvest saw and the gate turned away (rejected, denied) lists
     // nothing, so a row naming it withholds nothing today. It is reported all
-    // the same, under the heading the other files' rows use, rather than left
-    // to read as protection.
+    // the same, rather than left to read as protection, and under a heading of
+    // its own: the other files' heading says no harvested candidate matched,
+    // which is false of this row, whose name the harvest did see.
     const turnedAway = parseRegistryConfig({
       verified: '[]',
       denied: '[]',
@@ -1159,7 +1161,7 @@ describe('unmatchedRegistryNotes', () => {
       firstSeen: '[]',
     })
     expect(unmatchedRegistryNotes([npmCandidate], [repoCandidate], turnedAway, [listedRepo])).toEqual([
-      'Registry rows that matched no harvested candidate this run:',
+      'withheld-icons.yml rows that named no listed entry this run:',
       '- withheld-icons.yml: dsh-hello-plugin',
     ])
   })
@@ -1190,8 +1192,10 @@ describe('unmatchedRegistryNotes', () => {
       firstSeen: '- name: dsh-hello-plugin\n  added: 2026-08-11\n- name: dsh-derived-plugin\n  added: 2026-08-12\n- name: dsh-fs-tool\n  added: 2026-08-10\n',
     })
     const { report } = runPipeline(candidates, [], withheld, BUILT_AT)
-    expect(report).toContain('Registry rows that matched no harvested candidate this run:')
-    expect(report).toContain('- withheld-icons.yml: dsh-never-listed')
+    // Under its own heading; the other files' heading says no harvested
+    // candidate matched, and no row of theirs is stale here.
+    expect(report).toContain('withheld-icons.yml rows that named no listed entry this run:\n- withheld-icons.yml: dsh-never-listed')
+    expect(report).not.toContain('Registry rows that matched no harvested candidate this run:')
     expect(report).not.toContain('- withheld-icons.yml: dsh-hello-plugin')
   })
 })
