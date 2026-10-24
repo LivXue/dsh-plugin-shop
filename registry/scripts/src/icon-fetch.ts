@@ -32,7 +32,7 @@
 import { createHash } from 'node:crypto'
 import { gunzipSync } from 'node:zlib'
 import { readTar } from '../../../packages/dsh-plugin-shop/src/shared/tar.ts'
-import { downloadReleaseAsset, fetchRobust, MAX_TARBALL_BYTES, RAW_GITHUB, recordedReleaseUrl } from './github-client.ts'
+import { downloadReleaseAsset, fetchRobust, MAX_TARBALL_BYTES, rawFileUrl, recordedReleaseUrl } from './github-client.ts'
 import { readCappedBody } from './http-body.ts'
 import { MAX_CATALOG_ICON_BYTES, sha256Hex } from './icon-bytes.ts'
 import { iconDetail, iconLabel, shownPath } from './icon-declaration.ts'
@@ -448,8 +448,9 @@ type Opened =
  * What the reader does not see is a name that does not fit a ustar header: 100
  * bytes of name and 155 of prefix, which `npm pack` fills by splitting a path at
  * a slash. A name past that comes with a pax header (`npm pack`: one file name
- * past 100 bytes, about 33 CJK characters, or a path past 255) or, from GNU tar,
- * an `L` entry (past 100), and the reader skips both, so the entry arrives under
+ * past 100 bytes, about 33 CJK characters, or a member path past 256 bytes,
+ * `package/` included) or, from GNU tar, an `L` entry (past 100), and the
+ * reader skips both, so the entry arrives under
  * a cut name and an icon with a path that long is reported missing from a package
  * that ships it. Not handled here: it takes the shared reader reading those
  * headers.
@@ -535,13 +536,12 @@ async function fromGithub(target: GithubTarget, label: string, shown: string, tr
   if (!COMMIT_SHA.test(commit)) {
     return notYetRead(`the pinned commit ${echo(commit)} of ${echo(repo)} is not a 40-character sha, so there is nothing to read`)
   }
-  // Each segment encoded: a path is a file name and not a URL, and left as it is
-  // a literal %2e%2e reads as `..`, a tab between two dots is dropped to make
-  // `..`, and a backslash is a slash. (`.` and `..` segments themselves never
+  // The path is a file name and not a URL, and `rawFileUrl` writes it as one:
+  // each segment encoded, so a literal %2e%2e, a tab between two dots and a
+  // backslash stay inside the commit. (`.` and `..` segments themselves never
   // get here: a carried record holding one does not parse, in repo-state.ts.)
-  const path = target.path.split('/').map(encodeURIComponent).join('/')
   const response = await fetchRobust(
-    `${RAW_GITHUB}/${repo}/${commit}/${path}`,
+    rawFileUrl(repo, commit, target.path),
     transport.fetchImpl,
     transport.sleep,
     transport.token === '' ? undefined : transport.token,

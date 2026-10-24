@@ -237,18 +237,24 @@ function reboundCarriedSize(candidate: RepoCandidate): RepoCandidate {
  * carried row would publish.
  *
  * The location is held to a shape too, as the declared icon path is
- * ({@link isIconRecord}), because two readers build the URL of a raw file out
- * of it: `rereadCandidate` (the manifest, at the recorded commit and subdir)
- * and the icon step (the icon, at the same commit). The candidate's `repo` must
- * be its state key and two names of letters, digits, `.`, `_` and `-`;
- * `subdir`, where present, a path of names ({@link hasNamedSegments}). A URL
- * parser reads `..` in a path as a direction and `?` as the start of a query,
- * and encoding a segment leaves `..` alone, so a hand-edited record (a pull
- * request can edit this file) could aim a read at a file of another
- * repository, at a commit of its choosing. This build writes none of these
- * shapes, so they are not bounds a later build might lower. The commit is not
- * held to a sha here: an entry that recorded a failure has none, and both
- * readers test the candidate's before they ask for anything.
+ * ({@link isIconRecord}). A raw URL is built out of it, by `rereadCandidate`
+ * (the manifest, at the recorded commit and subdir) and by the icon step (the
+ * icon, at the same commit), and a hand-edited record (a pull request can edit
+ * this file) could use these to name a file outside the repository: a `repo`
+ * that is not its state key, or not two names of letters, digits, `.`, `_` and
+ * `-` (`owner/..`, `owner/repo?x=`), and a `subdir` that is not a path of
+ * names ({@link hasNamedSegments}: no empty, `.` or `..` segment). Encoding a
+ * segment leaves `.` and `..` alone, which is why those are refused here. This
+ * build never writes these shapes, so they are not bounds a later build might
+ * lower.
+ *
+ * What this check does not do is keep a stored directory inside its repository.
+ * The writer stores the names a tree holds, and a tree can hold `%2e%2e`, a tab
+ * or a backslash, which a URL parser reads as a climb; they pass, as they must,
+ * or the next build would not start. The encoding that every raw URL goes
+ * through (`rawFileUrl`, github-client.ts) is what keeps them in place. The
+ * commit is not held to a sha here either: an entry that recorded a failure has
+ * none, and both readers test the candidate's before they ask for anything.
  * @param repo - the state key, for the error, and what the candidate's `repo` must be.
  * @param candidate - one carried candidate, unvalidated.
  */
