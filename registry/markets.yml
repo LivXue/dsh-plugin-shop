@@ -124,6 +124,11 @@
   by: llm
   reason: "Judged a dsh plugin market from: Visual plugin market inside DeepSeek Harness — browse, search, and one-click install community plugins. · DSH 可视化插件市场：逛一逛，点一下，装好。"
 
+- name: "@heluo/forge-market"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: 河洛 (Heluo Forge) 企业级智能研发平台方案与扩展工程"
+
 - name: "@hhxg/dsh-hhxg-market"
   market: false
   by: human
@@ -349,6 +354,11 @@
   by: human
   reason: "年货采购 — new year grocery shopping. A novelty plugin."
 
+- name: "dsh-open-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Open Plugin Market for DeepSeek Harness: adds a community plugin index that favors fast-growing, actively maintained plugins."
+
 - name: "dsh-pickle-store"
   market: false
   by: human
@@ -368,6 +378,11 @@
   market: true
   by: human
   reason: "Plugin Hub for DeepSeek Harness (DSH): a graphical app-store inside the Harness Web UI — browse, search, and one-click install GitHub dsh-plugins, wit"
+
+- name: "dsh-plugin-lab-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: The dsh-plugin-lab plugin market: curated config plus the pipeline that turns npm metadata into a format-1 index served over GitHub Pages."
 
 - name: "dsh-plugin-market"
   market: true
@@ -428,6 +443,11 @@
   market: true
   by: human
   reason: "Native DSH browser integration for the DSH Plugin Store"
+
+- name: "dsh-preview-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Vertical preview market for DeepSeek Harness: discover, install and configure preview plugins (media, Blender, STL, ...) from one panel."
 
 - name: "dsh-prompt-market"
   market: true
