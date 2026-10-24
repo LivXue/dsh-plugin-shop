@@ -29,6 +29,11 @@ const PNG = bytesOf(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 
 const JPEG = bytesOf(0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10)
 const WEBP = riff('WEBP')
 const SVG = utf8(SVG_ROOT)
+// Three formats dsh does not name, which browsers draw all the same (ruling
+// R20b): the samples measured, a 1x1 image each.
+const GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64')
+const BMP = Buffer.from('Qk06AAAAAAAAADYAAAAoAAAAAQAAAAEAAAABABgAAAAAAAQAAAATCwAAEwsAAAAAAAAAAAAAAAD/AA==', 'base64')
+const ICO = Buffer.from('AAABAAEAAQEAAAEAIABGAAAAFgAAAIlQTkcNChoKAAAADUlIRFIAAAABAAAAAQgGAAAAHxXEiQAAAA1JREFUeNpj/M/A8B8ABQUCAF/I8dIAAAAASUVORK5CYII=', 'base64')
 /** Text that no measured browser draws under any of the four types: what a refusal is now made of, since a raster draws under every one of them. */
 const HTML = utf8('<html>')
 
@@ -148,6 +153,16 @@ describe('sniffIconBytes: what some measured browser draws under the declared ty
     for (const declared of ['image/png', 'image/jpeg', 'image/webp'] as const) expect(sniffIconBytes(bytes, declared)).toBe(false)
   })
 
+  // GIF, BMP and ICO were measured too, the same day and the same way: both
+  // browsers draw each under every raster type, and Firefox under
+  // image/svg+xml as well, so each is accepted under all four (ruling R20b).
+  it.each(MEDIA_TYPES.flatMap((declared) => ([['GIF', GIF], ['BMP', BMP], ['ICO', ICO]] as const).map(([format, bytes]): [string, IconMediaType, Uint8Array] => [format, declared, bytes])))(
+    '%s bytes, declared %s: drawn',
+    (_format, declared, bytes) => {
+      expect(sniffIconBytes(bytes, declared)).toBe(true)
+    },
+  )
+
   it.each(MEDIA_TYPES)('nothing at all is %s', (mediaType) => {
     expect(sniffIconBytes(new Uint8Array(0), mediaType)).toBe(false)
   })
@@ -172,6 +187,16 @@ describe('sniffIconBytes: the binary formats', () => {
     ['RIFX, which is the same container in the other byte order', bytesOf(...ascii('RIFX'), 0x04, 0x00, 0x00, 0x00, ...ascii('WEBP')), 'image/webp', false],
     ['WEBP right after RIFF, with no size between', bytesOf(...ascii('RIFFWEBP'), 0x00, 0x00, 0x00, 0x00), 'image/webp', false],
     ['RIFF, a size, and WEBP cut one byte short', WEBP.subarray(0, 11), 'image/webp', false],
+    ['GIF87a', bytesOf(...ascii('GIF87a'), 0x01, 0x00), 'image/png', true],
+    ['GIF89a', bytesOf(...ascii('GIF89a'), 0x01, 0x00), 'image/png', true],
+    ['GIF88a, which is no version of GIF', bytesOf(...ascii('GIF88a'), 0x01, 0x00), 'image/png', false],
+    ['a GIF signature cut one byte short', bytesOf(...ascii('GIF89')), 'image/png', false],
+    ['BM, which opens a bitmap', bytesOf(...ascii('BM'), 0x3a, 0x00), 'image/png', true],
+    ['a B alone', bytesOf(...ascii('B')), 'image/png', false],
+    ['bm in lower case', bytesOf(...ascii('bm'), 0x3a, 0x00), 'image/png', false],
+    ['an icon directory: a reserved zero and type 1', bytesOf(0x00, 0x00, 0x01, 0x00, 0x01, 0x00), 'image/png', true],
+    ['a cursor directory, type 2, which was not measured', bytesOf(0x00, 0x00, 0x02, 0x00, 0x01, 0x00), 'image/png', false],
+    ['an icon directory cut one byte short', bytesOf(0x00, 0x00, 0x01), 'image/png', false],
   ])('%s', (_what, bytes, mediaType, expected) => {
     expect(sniffIconBytes(bytes, mediaType)).toBe(expected)
   })
@@ -480,6 +505,10 @@ describe('checkIconBytes', () => {
     for (const raster of [PNG, JPEG, WEBP]) expect(checkIconBytes(raster, svg)).toEqual({ ok: true })
   })
 
+  it.each(FILES)('accepts GIF, BMP and ICO bytes declared as a %s file, %s', (mediaType, path) => {
+    for (const raster of [GIF, BMP, ICO]) expect(checkIconBytes(raster, declare(path, mediaType))).toEqual({ ok: true })
+  })
+
   it.each(FILES.filter(([mediaType]) => mediaType !== 'image/svg+xml'))('refuses SVG text declared as a %s file, %s, as not holding %s data', (mediaType, path, typeName) => {
     expect(refusal(SVG, declare(path, mediaType))).toBe(iconDetail.wrongBytes('package.json "icon"', shownPath(path), typeName))
   })
@@ -544,6 +573,8 @@ describe('iconDataUrl', () => {
     expect(iconDataUrl(JPEG, 'image/png')).toBe(`data:image/png;base64,${Buffer.from(JPEG).toString('base64')}`)
     expect(checkIconBytes(PNG, declare('icon.svg', 'image/svg+xml'))).toEqual({ ok: true })
     expect(iconDataUrl(PNG, 'image/svg+xml')).toBe(`data:image/svg+xml;base64,${Buffer.from(PNG).toString('base64')}`)
+    expect(checkIconBytes(GIF, declare('icon.png', 'image/png'))).toEqual({ ok: true })
+    expect(iconDataUrl(GIF, 'image/png')).toBe(`data:image/png;base64,${Buffer.from(GIF).toString('base64')}`)
   })
 
   it.each<[what: string, bytes: Uint8Array, encoded: string]>([

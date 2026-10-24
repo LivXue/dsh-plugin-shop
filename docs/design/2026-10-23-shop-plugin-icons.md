@@ -314,28 +314,30 @@ holds for it.
 - Its bytes are what some measured browser draws under the type its extension
   names, which is the type its data URL carries. A raster is the PNG
   signature, a JPEG start-of-image marker and the first byte of the marker
-  after it (`FF D8 FF`), or a RIFF/WEBP header, and it is accepted under any of
-  the four extensions; an SVG is a document whose first element is `svg`, with
+  after it (`FF D8 FF`), a RIFF/WEBP header, or one of the openings of three
+  rasters dsh does not name: `GIF87a` or `GIF89a`, a bitmap's `BM`, and an
+  icon directory's `00 00 01 00`. A raster is accepted under any of the four
+  extensions; an SVG is a document whose first element is `svg`, with
   a namespace prefix or without one, after any white space, byte order marks,
   comments, processing instructions and DOCTYPE, and it is accepted under
   `.svg` alone. dsh does not sniff: it labels the data URL by the extension,
   and the browser sniffs a raster whatever the label says. Measured on
   2026-10-24 with data URLs in an `<img>`, Chromium 151 and Firefox 153: a PNG,
-  a JPEG or a WebP draws under each of the three raster types in both, and
-  under `image/svg+xml` in Firefox; SVG text, in UTF-8 with and without an XML
-  declaration and a DOCTYPE and in UTF-16 with a byte order mark, draws under
-  `image/svg+xml` in both and under no raster type in either. The data URL
+  a JPEG, a WebP, a GIF (87a and 89a), a BMP or an ICO draws under each of the
+  three raster types in both, and under `image/svg+xml` in Firefox; SVG text,
+  in UTF-8 with and without an XML declaration and a DOCTYPE and in UTF-16
+  with a byte order mark, draws under `image/svg+xml` in both and under no
+  raster type in either. The data URL
   keeps the extension's type, as dsh's does, so an icon draws in the shop
   where it draws on dsh's page. The check is a type check, not a sanitiser:
   the defence is §8.5's.
 
   The refusal is published as "does not hold PNG data" (SVG, JPEG or WebP, for
-  the type the extension promised), so among the four formats dsh names the
-  check refuses only what no browser it was measured in draws under that type,
-  and accepts what some browser draws: a false acceptance costs nothing,
-  because an `<img>` that fails to decode falls back to the default artwork
-  (decision 3), while a false refusal loses an icon and publishes a false
-  reason. So an SVG is not read as UTF-8
+  the type the extension promised), so the check refuses only what no browser
+  it was measured in draws under that type, and accepts what some browser
+  draws: a false acceptance costs nothing, because an `<img>` that fails to
+  decode falls back to the default artwork (decision 3), while a false refusal
+  loses an icon and publishes a false reason. So an SVG is not read as UTF-8
   text: a UTF-16 byte order mark selects UTF-16, decoded with replacement (a
   lone surrogate or a stray byte becomes U+FFFD), and any other bytes are read
   one character each, so UTF-8, ISO-8859-1 and the other ASCII-compatible
@@ -350,12 +352,10 @@ holds for it.
   draws in neither, and nor does UTF-32 with a byte order mark, so neither is
   read.
 
-  A file in any other format is refused under every extension, though GIF,
-  BMP and ICO bytes were measured drawing under each raster type in both
-  browsers on 2026-10-24, and under `image/svg+xml` in Firefox: the check
-  knows only the four formats dsh names (§3.1). Such an icon draws on dsh's
-  page and not in the shop, and its refusal, which names the format the
-  extension promised, stays true.
+  A file in a format that was not measured, AVIF or a cursor among them, is
+  refused under every extension: what a browser does with it is not known
+  here, and the refusal, which names the format the extension promised, stays
+  true of it.
 
 The checks are pure, and fixtures drive them.
 
