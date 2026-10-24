@@ -46,6 +46,17 @@ const RIFF = [0x52, 0x49, 0x46, 0x46]
 const WEBP = [0x57, 0x45, 0x42, 0x50]
 
 /**
+ * The openings of the three rasters dsh does not name that browsers were
+ * measured drawing all the same (design §5.4): `GIF87a` or `GIF89a`, both
+ * measured; `BM`, which is all a bitmap promises; and an icon directory's
+ * reserved zero and its type, 1. A cursor's type, 2, opens the same directory
+ * and was not measured.
+ */
+const GIF_SIGNATURES = [[0x47, 0x49, 0x46, 0x38, 0x37, 0x61], [0x47, 0x49, 0x46, 0x38, 0x39, 0x61]]
+const BMP_SIGNATURE = [0x42, 0x4d]
+const ICO_SIGNATURE = [0x00, 0x00, 0x01, 0x00]
+
+/**
  * The byte order marks that make a file UTF-16, each with the decoder it
  * selects. The mark is no part of the text, and the decode steps over it.
  * UTF-16 with no mark is not UTF-16 here, in any form, the `<?` patterns that
@@ -65,18 +76,16 @@ const UTF16_MARKS = [
  *
  * dsh chooses an icon's type by its extension and never sniffs, and the
  * browser it draws in does: measured with data URLs in an `<img>`, Chromium
- * and Firefox draw a PNG, a JPEG or a WebP under any of the three raster
- * types, and Firefox draws one under `image/svg+xml` too; neither draws SVG
- * text under a raster type. So a raster is accepted whichever extension it
- * carries, and SVG text only under `.svg`, and the data URL keeps the
- * extension's type, as dsh does, so the icon draws in the shop wherever it
- * draws on dsh's page. Of the four formats dsh names, what is refused is what
- * neither browser draws, and the refusal can truly say that the file does not
- * hold what its extension promises. A file of any other format is refused too,
- * though GIF, BMP and ICO draw under a raster type: the check knows only those
- * four, and the sentence is still true of such a file (design §5.4). For SVG,
- * which browsers read in more than one encoding, design §5.4 gives what was
- * measured, and the check follows it.
+ * and Firefox draw a PNG, a JPEG, a WebP, a GIF, a BMP or an ICO under any of
+ * the three raster types, and Firefox draws one under `image/svg+xml` too;
+ * neither draws SVG text under a raster type. So a raster is accepted whichever
+ * extension it carries, and SVG text only under `.svg`, and the data URL keeps
+ * the extension's type, as dsh does, so the icon draws in the shop wherever it
+ * draws on dsh's page. What is refused is what neither browser was measured
+ * drawing under the type, a format that was not measured included, and the
+ * refusal can truly say that the file does not hold what its extension
+ * promises. For SVG, which browsers read in more than one encoding, design
+ * §5.4 gives what was measured, and the check follows it.
  *
  * A type check and no more, and not a sanitiser: an SVG is defended by
  * reaching the page only as an image's `src` (§8.5). A raster is read for its
@@ -92,11 +101,17 @@ export function sniffIconBytes(bytes: Uint8Array, mediaType: IconMediaType): boo
 }
 
 /**
- * Whether the bytes open as one of the three rasters: PNG's eight-byte
- * signature, {@link JPEG_START}, or `RIFF`, a four-byte size and `WEBP`.
+ * Whether the bytes open as one of the six rasters: PNG's eight-byte
+ * signature, {@link JPEG_START}, `RIFF` and a four-byte size and `WEBP`, or one
+ * of the openings of GIF, BMP and ICO ({@link GIF_SIGNATURES}).
  */
 function isRaster(bytes: Uint8Array): boolean {
-  return hasBytesAt(bytes, 0, PNG_SIGNATURE) || hasBytesAt(bytes, 0, JPEG_START) || (hasBytesAt(bytes, 0, RIFF) && hasBytesAt(bytes, 8, WEBP))
+  return hasBytesAt(bytes, 0, PNG_SIGNATURE)
+    || hasBytesAt(bytes, 0, JPEG_START)
+    || (hasBytesAt(bytes, 0, RIFF) && hasBytesAt(bytes, 8, WEBP))
+    || GIF_SIGNATURES.some((signature) => hasBytesAt(bytes, 0, signature))
+    || hasBytesAt(bytes, 0, BMP_SIGNATURE)
+    || hasBytesAt(bytes, 0, ICO_SIGNATURE)
 }
 
 /** Whether `bytes` holds `expected` from `offset` on. A file too short to reach it does not. */
