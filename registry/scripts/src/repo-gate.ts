@@ -375,7 +375,9 @@ export function gateRepo(
     ...(release !== undefined ? { tarball: { url: release.url, sha256: release.sha256 } } : {}),
     // `installSize` sits here in the entry and is NOT counted, for the reason
     // `gate.ts` gives at its own probe: a size is a decoration and must not
-    // cost a listing. Bounded overshoot, ~39 bytes.
+    // cost a listing. Nor is `icon`, the sha256 the icon step attaches after
+    // this gate: an icon never costs a listing either. Bounded overshoot, 39
+    // bytes and 82.
     ...(candidate.peers !== undefined && candidate.peers.length > 0 ? { peers: candidate.peers } : {}),
     // The author's own text, counted as the npm gate counts it.
     ...(candidate.compatibility !== undefined ? { compatibility: candidate.compatibility } : {}),

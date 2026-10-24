@@ -67,7 +67,8 @@ export function releaseIconKey(tarballSha256: string, path: string): IconKey {
  * the artifact was read and its icon broke a rule, with the sentence its author
  * is told; a fix is a new version, commit or tarball, which is a new key.
  * `not-read`: the artifact could not be read at all and its author did nothing
- * wrong (a package past the download cap), with the cause. A `refused` or
+ * wrong, a package past the download cap for one, or an archive that matched
+ * its digest and still does not open, with the cause. A `refused` or
  * `not-read` key is never fetched again.
  *
  * A transport failure is none of these. It is "not yet read" (design §5.3),

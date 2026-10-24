@@ -477,9 +477,13 @@ export function gate(
     // decoration, so a broken one costs the size and not the listing" (§7,
     // `unpackedSize`), and a listing is exactly what this would cost.
     //
-    // So the published entry can exceed the budget by this key, and by
-    // nothing else: at most 39 bytes, fixed-width and registry-written, which
-    // no author can inflate — unlike every field this probe does count.
+    // So the published entry can exceed the budget by this key and by `icon`,
+    // and by nothing else: at most 39 bytes for this key, and 82 for `icon`,
+    // the sha256 of the entry's icon, which the icon step attaches after the
+    // gate has run (design 2026-10-23-shop-plugin-icons §6.1: an icon never
+    // pushes an entry past the budget), each measured as this probe measures.
+    // Both are fixed-width and registry-written, which no author can inflate —
+    // unlike every field this probe does count.
     // `unpackedSize` stays counted because it predates this change; dropping
     // it too would LOOSEN a bound that has been in force, which is a separate
     // decision from not tightening one.

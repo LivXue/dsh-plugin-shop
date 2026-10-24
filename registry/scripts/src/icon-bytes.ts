@@ -114,18 +114,25 @@ function hasBytesAt(bytes: Uint8Array, offset: number, expected: readonly number
  * refuses only what no browser it was measured in draws, and accepts what some
  * browser draws, because a false acceptance costs nothing and a false refusal
  * publishes that the file holds no SVG data. A file that starts with a UTF-16
- * byte order mark ({@link UTF16_MARKS}) is decoded with replacement, as a
- * browser decodes it: a lone surrogate or a stray last byte becomes U+FFFD,
- * which opens no element and which a comment, an instruction or a literal
- * skips, and the file is read on. Replacement fails for no bytes, so nothing is
- * caught here; the one label that depends on the platform, `utf-16be`, needs
- * the ICU every official Node build carries. Any other bytes are read one
- * character each, so that UTF-8, ISO-8859-1 and the other ASCII-compatible
- * encodings an XML declaration may name all show the same ASCII prolog and root
- * name. An author's own non-ASCII characters land at U+0080 and above, which
- * {@link isNameChar} accepts inside a name and which the prolog skips inside a
- * comment, an instruction or a literal. UTF-16 with no mark is among those other
- * bytes, with a NUL between its characters, so it has no root.
+ * byte order mark ({@link UTF16_MARKS}) is decoded with replacement: a lone
+ * surrogate or a stray last byte becomes U+FFFD, which opens no element and
+ * which a comment, an instruction or a literal skips, and the file is read on.
+ * That is not what a browser was measured to do with every such file (a lone
+ * surrogate in a comment or inside the root failed where a literal U+FFFD
+ * drew, and after the root the reverse), so the leniency stands on the
+ * asymmetry above and not on a browser's decoder: reading on can only accept a
+ * file a browser may not draw, which costs nothing, where a strict decode
+ * would refuse files a browser draws. Replacement fails for no bytes, so
+ * nothing is caught here; the one label that depends on the platform,
+ * `utf-16be`, needs the ICU every official Node build carries.
+ *
+ * Any other bytes are read one character each, so that UTF-8, ISO-8859-1 and
+ * the other ASCII-compatible encodings an XML declaration may name all show the
+ * same ASCII prolog and root name. An author's own non-ASCII characters land at
+ * U+0080 and above, which {@link isNameChar} accepts inside a name and which the
+ * prolog skips inside a comment, an instruction or a literal. UTF-16 with no
+ * mark is among those other bytes, with a NUL between its characters, so it has
+ * no root.
  *
  * The scan stops at the root element, so how the rest of the file is encoded is
  * never checked: a browser that cannot decode the image draws the default

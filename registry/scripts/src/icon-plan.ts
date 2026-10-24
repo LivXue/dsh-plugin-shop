@@ -5,7 +5,7 @@
  * reads of `icon-fetch.ts`, and between those reads and the artifacts the build
  * writes.
  *
- * Three functions, in the order the daily build calls them:
+ * Four functions, in the order the daily build calls them:
  *
  * 1. {@link iconSubjects} pairs each listed entry with the icon its candidate
  *    declares, and names the artifact the icon would be read from.
@@ -15,6 +15,8 @@
  * 3. {@link foldIconResults} turns the fetches' answers into the next record, the
  *    icons file, the map from each entry to its icon, and the report's rows and
  *    counts.
+ * 4. {@link renderIconSection} writes those rows and counts as the report's
+ *    icon section.
  *
  * An icon never stops the catalog (design decision 6), so an icon that is
  * missing, refused or unanswered makes nothing here throw. An entry no candidate
@@ -133,10 +135,12 @@ export type IconFetchResult =
   | { kind: 'not-yet-read'; reason: string }
 
 /**
- * One line of the report's icon section: an icon a reader of the catalog does
- * not see, and why. `refused` and `not-read` are what a fetch or a declaration
- * came to; `withheld` is a maintainer's row in `withheld-icons.yml` or the icons
- * file's size budget. None of them is a rejection: the entry is listed.
+ * One line of the report's icon section: an icon that is refused, withheld or
+ * not read, and why (design §10). `refused` and `not-read` are what a fetch or a
+ * declaration came to; `withheld` is a maintainer's row in `withheld-icons.yml`
+ * or the icons file's size budget. An icon not yet read has no row: it is
+ * counted, and the next build asks for it again. None of them is a rejection:
+ * the entry is listed.
  */
 export interface IconReportRow {
   name: string
@@ -545,9 +549,11 @@ export function foldIconResults(
 
 /**
  * The report's icon section (design 2026-10-23-shop-plugin-icons §10): one line
- * of counts and the size of the icons file, then one row for each icon a reader
- * of the catalog does not see, and why. With no such row there is no table, so
- * a catalog whose icons all land carries no empty one.
+ * of counts and the size of the icons file, then one row for each icon that is
+ * refused, withheld or not read, and why ({@link IconReportRow}); an icon not
+ * yet read is counted and has no row. With no row there is no table, so a
+ * catalog whose icons all land carries no empty one. The text starts at its
+ * `## Icons` heading, with no blank line before it, and ends with one newline.
  *
  * Both cells go through `escapeCell`: a row's name and detail come from what a
  * package or a repository declared, and a `|` or a newline in one would break
