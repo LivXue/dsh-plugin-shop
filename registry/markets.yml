@@ -54,6 +54,11 @@
   by: human
   reason: "DSH 社区插件市场：设置内「插件市场」入口 + 卡片弹窗 + 一键安装/卸载/管理（bundle 走 dsh plugin add，pack 走 zip 落盘）"
 
+- name: "@aryacode/dsh-arya-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Arya Plugin Market: packaged releases, updates, and version restoration."
+
 - name: "@baitongserver/dsh-plugin-market"
   market: true
   by: llm
@@ -218,6 +223,11 @@
   market: true
   by: human
   reason: "Local-only installed plugin manager for DeepSeek Harness profiles"
+
+- name: "@tyxt-zvid/zvid-plugins-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: ZVID plugin market index for DeepSeek Harness."
 
 - name: "@w2112515/dsh-plugin-marketplace"
   market: true
@@ -398,6 +408,11 @@
   market: true
   by: llm
   reason: "Judged a dsh plugin market from: A dsh plugin marketplace CLI: browse, install, and uninstall community plugins from the dsh-plugin GitHub topic"
+
+- name: "dsh-plugin-market-zh"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: 为多个 DSH 插件市场索引源生成本地中文机翻镜像，在「插件 → 发现」里用中文浏览。"
 
 - name: "dsh-plugin-marketplace"
   market: true
