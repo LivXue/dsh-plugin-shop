@@ -35,6 +35,31 @@ function repo(overrides: Partial<RepoCandidate> = {}): RepoCandidate {
   }
 }
 
+describe('a subdirectory the shop cannot parse', () => {
+  // The shop parses the whole data file with this grammar or none of it
+  // (`packages/dsh-plugin-shop/src/host/catalog.ts`): one entry outside it
+  // costs every installed shop the entire catalog. The projection reads such a
+  // directory happily, so the gate is where it stops.
+  it.each([
+    ['a percent-encoded dot-dot name', 'packages/%2e%2e'],
+    ['a space', 'packages/my plugin'],
+    ['a non-ASCII name', 'packages/图标'],
+    ['a literal dot segment', 'packages/../x'],
+    ['an empty segment', 'packages//x'],
+  ])('refuses %s, so no entry the consumer rejects is published', (_label, subdir) => {
+    const result = gateRepo(repo({ subdir }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('no-manifest')
+      expect(result.rejection.detail).toMatch(/is not an install path the shop can parse/)
+    }
+  })
+
+  it('keeps a directory inside the grammar', () => {
+    expect(gateRepo(repo({ subdir: 'packages/dsh-tool' }), config).ok).toBe(true)
+  })
+})
+
 describe('gateRepo', () => {
   it('accepts a repository with a bundle, license, and a declared catalog', () => {
     const result = gateRepo(repo(), config)

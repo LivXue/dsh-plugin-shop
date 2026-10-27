@@ -2504,18 +2504,13 @@ describe('harvestRepos', () => {
   /**
    * Run `run` with stderr captured and handed back: the harvest writes one
    * diagnostic line per throw or failed re-read there, and those lines are the
-   * re-read's only failure signal besides its counts. The one stderr helper in
-   * this suite; a second, write-and-discard copy was folded into it.
+   * re-read's only failure signal besides its counts. The rejecting twin is
+   * {@link captured}, which both wrappers share.
    */
   async function quietly<T>(run: () => Promise<T>): Promise<{ value: T; stderr: string }> {
-    const lines: string[] = []
-    const write = process.stderr.write.bind(process.stderr)
-    process.stderr.write = ((chunk: string | Uint8Array) => { lines.push(String(chunk)); return true }) as typeof process.stderr.write
-    try {
-      return { value: await run(), stderr: lines.join('') }
-    } finally {
-      process.stderr.write = write
-    }
+    const result = await captured(run)
+    if (!result.ok) throw result.error
+    return { value: result.value, stderr: result.stderr }
   }
 
   it('serves a changed repository before the size backfill, whatever the alphabet says', async () => {
@@ -4920,6 +4915,28 @@ interface LogicalLine {
   readonly lineNumber: number
 }
 
+/**
+ * Run `run` with stderr captured, handing back its value or its rejection with
+ * what it wrote. The one capture routine: `quietly` and `logged` each add a
+ * shape on top, and a second copy of the swap itself is how the two drift.
+ */
+type Capture<T> =
+  | { ok: true; value: T; stderr: string }
+  | { ok: false; error: unknown; stderr: string }
+
+async function captured<T>(run: () => Promise<T>): Promise<Capture<T>> {
+  const lines: string[] = []
+  const write = process.stderr.write.bind(process.stderr)
+  process.stderr.write = ((chunk: string | Uint8Array) => { lines.push(String(chunk)); return true }) as typeof process.stderr.write
+  try {
+    return { ok: true, value: await run(), stderr: lines.join('') }
+  } catch (error) {
+    return { ok: false, error, stderr: lines.join('') }
+  } finally {
+    process.stderr.write = write
+  }
+}
+
 function logicalLines(source: string): LogicalLine[] {
   const raw = source.split('\n')
   const out: LogicalLine[] = []
@@ -5559,7 +5576,12 @@ describe('a raw GitHub URL encodes each path segment, so a name from a repositor
     const requested: { written: string; wire: string }[] = []
     const fetchImpl = (async (input: string | URL) => {
       const written = String(input)
-      const wire = new URL(written).href
+      // What `fetch` actually sends: the fragment is parsed away and never
+      // goes on the wire. Routing on an href that kept it let a `#`-encoding
+      // regression pass every assertion here while the request lost the name.
+      const parsed = new URL(written)
+      parsed.hash = ''
+      const wire = parsed.href
       requested.push({ written, wire })
       return serve(wire) ?? new Response('{"message":"Not Found"}', { status: 404 })
     }) as unknown as typeof fetch
@@ -5630,6 +5652,10 @@ describe('a raw GitHub URL encodes each path segment, so a name from a repositor
         ?? searchItems(wire, [{ repo: 'hostile/repo', pushedAt: meta.pushedAt }]))
       const result = await harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't' })
       expect(leaving(raw(), `${RAW}hostile/repo/`)).toEqual([])
+      // The repository WAS harvested: without this the test passes on a harvest
+      // that produced nothing at all, which satisfies every absence above.
+      expect(result.nextState['hostile/repo']).toBeDefined()
+      expect(Object.values(result.nextState).flatMap(entry => entry.candidates.map(candidate => candidate.name))).toContain('root')
       expect(Object.values(result.nextState).flatMap(entry => entry.candidates.map(candidate => candidate.name))).not.toContain('borrowed-plugin')
     })
 
@@ -5644,6 +5670,17 @@ describe('a raw GitHub URL encodes each path segment, so a name from a repositor
         // The record keeps the name as the tree wrote it, not as the URL does.
         expect(result.candidates.map(candidate => [candidate.name, candidate.subdir])).toEqual([['own-plugin', 'packages/%2e%2e']])
       }
+    })
+
+    it('does not count a directory it never asked about as probed', async () => {
+      // The report says "N subpackage manifest(s) were probed"; a directory
+      // skipped for a dot segment was not one of them, and the figure is
+      // persisted in repo-state.json, so a false one outlives the run.
+      const { fetchImpl, raw } = github(monorepo(['packages/../package.json']))
+      const result = await fetchRepoCandidate({ ...meta }, fetchImpl, sleep, 'token')
+      expect(result.ok).toBe(true)
+      if (result.ok) expect(result.candidates.map(candidate => [candidate.name, candidate.probedSubpackages])).toEqual([['root', undefined]])
+      expect(raw().filter(request => request.wire.includes('/main/packages/'))).toEqual([])
     })
 
     it('does not throw on a directory whose name is not well-formed, and skips what it names', async () => {
@@ -5734,7 +5771,7 @@ describe('a raw GitHub URL encodes each path segment, so a name from a repositor
       },
     })
 
-    it.each(spellings)('keeps a carried subdir spelled with $label inside the keyed commit', async ({ climbing }) => {
+    it.each(spellings)('keeps a carried subdir spelled with $label inside the keyed commit', async ({ climbing, skipped }) => {
       const subdir = climbing(3, `attacker/evil/${SHA_EVIL}`)
       // The record check admits it: these are names a tree can hold, and the
       // writer stores them, so nothing at the parse boundary refuses them. The
@@ -5753,6 +5790,11 @@ describe('a raw GitHub URL encodes each path segment, so a name from a repositor
       expect(result.rereadAttempted).toBe(1)
       expect(leaving(raw(), `${RAW}${repo}/${SHA_REPO}/`)).toEqual([])
       expect(result.rereadUpdated).toBe(0)
+      // An encoded spelling is asked for as the literal name it is; only the
+      // literal dot segment makes no request at all. Without this, a blanket
+      // refusal of every subdir holding a `%` would pass every line above.
+      if (skipped === true) expect(raw()).toEqual([])
+      else expect(raw().length).toBeGreaterThan(0)
     })
 
     it('reads a carried subdir literally named %2e%2e at its own path, written %252e%252e', async () => {
@@ -5774,19 +5816,18 @@ describe('a raw GitHub URL encodes each path segment, so a name from a repositor
     // same reason: the encoding is only as good as the call sites that remember
     // it, and `rawFileUrl` is exported for the icon step, so a raw URL
     // hand-built in another module is exactly the regression this must see.
+    // The IDENTIFIER, not one of its two spellings: `RAW_GITHUB + '/x' +
+    // ref` and `new URL(path, RAW_GITHUB)` contain neither `${RAW_GITHUB}`
+    // nor the host literal, and would splice a raw URL past this scan.
     const modules = readdirSync(SRC_DIR).filter(name => name.endsWith('.ts'))
     const lines = modules.flatMap(file => srcOf(file).split('\n')
       .filter(line => !/^\s*(\*|\/\/|\/\*)/.test(line))
       .map(line => ({ file, line: line.trim() })))
-    const occurrences = lines.filter(({ line }) => line.includes('raw.githubusercontent.com') || line.includes('${RAW_GITHUB}'))
-    // The host spelled once, in the constant; the template written once, in
-    // rawFileUrl, with each of its three segments encoded.
+    const occurrences = lines.filter(({ line }) => /\bRAW_GITHUB\b/.test(line))
+    // The constant, and the one template that spends it, in this file only.
     expect(occurrences.map(({ file }) => file)).toEqual(['github-client.ts', 'github-client.ts'])
-    const hosts = occurrences.filter(({ line }) => line.includes('raw.githubusercontent.com'))
-    expect(hosts.map(({ line }) => line)).toEqual(["const RAW_GITHUB = 'https://raw.githubusercontent.com'"])
-    const templates = occurrences.filter(({ line }) => line.includes('${RAW_GITHUB}'))
-    expect(templates.map(({ line }) => line)).toHaveLength(1)
-    expect(templates[0]?.line).toContain('${encodePath(repo)}/${encodePath(ref)}/${encodePath(path)}')
+    expect(occurrences[0]?.line).toMatch(/^(export )?const RAW_GITHUB = 'https:\/\/raw\.githubusercontent\.com'$/)
+    expect(occurrences[1]?.line).toContain('${RAW_GITHUB}/${encodePath(repo)}/${encodePath(ref)}/${encodePath(path)}')
   })
 })
 
@@ -5948,8 +5989,8 @@ describe('an API URL encodes the branch name, so a ref cannot address another re
     expect(result.ok && result.candidates.map(candidate => [candidate.name, candidate.commit])).toEqual([['root', OWN_SHA]])
   })
 
-  /** The code of every registry module, a comment's lines left out. */
-  const codeOf = (file: string): string => srcOf(file).split('\n').filter(line => !/^\s*(\*|\/\/|\/\*)/.test(line)).join('\n')
+  /** The code of every registry module, a comment's lines left out: `logicalLines` owns that rule. */
+  const codeOf = (file: string): string => logicalLines(srcOf(file)).map(line => line.text).join('\n')
   const modules = readdirSync(SRC_DIR).filter(name => name.endsWith('.ts'))
 
   it('writes no /repos/ API URL whose ref or path is not encoded, in any module', () => {
@@ -6017,17 +6058,9 @@ describe('a tree path or repository written to the log is quoted, so it cannot s
   const quietAt = '2026-08-01T00:00:00Z'
 
   /** Run `run` with stderr captured, its value or its rejection handed back with what it wrote. */
-  async function logged<T>(run: () => Promise<T>): Promise<{ value?: T; error?: unknown; stderr: string }> {
-    const lines: string[] = []
-    const write = process.stderr.write.bind(process.stderr)
-    process.stderr.write = ((chunk: string | Uint8Array) => { lines.push(String(chunk)); return true }) as typeof process.stderr.write
-    try {
-      return { value: await run(), stderr: lines.join('') }
-    } catch (error) {
-      return { error, stderr: lines.join('') }
-    } finally {
-      process.stderr.write = write
-    }
+  const logged = async <T>(run: () => Promise<T>): Promise<{ value?: T; error?: unknown; stderr: string }> => {
+    const result = await captured(run)
+    return result.ok ? { value: result.value, stderr: result.stderr } : { error: result.error, stderr: result.stderr }
   }
 
   /** Every line written is one of the harvest's own, so none opens with `::`. */
