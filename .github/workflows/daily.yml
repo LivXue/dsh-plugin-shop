@@ -173,11 +173,16 @@ jobs:
         #
         # The time is read to the second, which errs early, with the one
         # spelling of `date` that GNU and BSD share, so that workflow.test.ts
-        # can run this line on any machine.
+        # can run this line on any machine. It is read in a command of its own,
+        # because nested inside the arithmetic a `date` that fails answers the
+        # empty string, `bash -e` sees only the successful `echo`, and the epoch
+        # is written: both steps would then start nothing, every run.
         env:
           JOB_TIMEOUT_MINUTES: 180
           RESERVE_MINUTES: 3
-        run: echo "CATALOG_JOB_DEADLINE_MS=$(( ($(date +%s) + (JOB_TIMEOUT_MINUTES - RESERVE_MINUTES) * 60) * 1000 ))" >> "$GITHUB_ENV"
+        run: |
+          now=$(date +%s)
+          echo "CATALOG_JOB_DEADLINE_MS=$(( (now + (JOB_TIMEOUT_MINUTES - RESERVE_MINUTES) * 60) * 1000 ))" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Otherwise checkout leaves a usable http.extraheader credential

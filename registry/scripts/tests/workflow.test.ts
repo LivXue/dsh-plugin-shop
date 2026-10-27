@@ -1106,6 +1106,32 @@ describe('the catalog job writes its own deadline before any other step runs', (
     expect(reserve).toBeLessThan(10)
   })
 
+  it('fails the step when the clock cannot be read, rather than writing a deadline in 1970', () => {
+    // `$(date +%s)` nested inside the arithmetic fails OPEN: with no `date` the
+    // command substitution answers the empty string, bash -e is happy because
+    // the `echo` succeeds, and a deadline of 10620000 is written. Every later
+    // step would then start nothing, every run, and only stderr would say so.
+    // Read in its own command, the failure stops the step and the job.
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-deadline-fail-'))
+    try {
+      const script = join(dir, 'step.sh')
+      const githubEnv = join(dir, 'github-env')
+      const emptyPath = join(dir, 'empty-path')
+      writeFileSync(script, `${String(first?.run)}\n`)
+      writeFileSync(githubEnv, '')
+      const bash = spawnSync('bash', ['-c', 'command -v bash'], { encoding: 'utf8' }).stdout.trim()
+      expect(bash, 'bash must be resolvable to run the step without one').not.toBe('')
+      const result = spawnSync(bash, ['-e', script], {
+        encoding: 'utf8',
+        env: { ...process.env, PATH: emptyPath, GITHUB_ENV: githubEnv, JOB_TIMEOUT_MINUTES: String(env.JOB_TIMEOUT_MINUTES), RESERVE_MINUTES: String(env.RESERVE_MINUTES) },
+      })
+      expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0)
+      expect(readFileSync(githubEnv, 'utf8')).toBe('')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('writes the time it runs at plus the timeout less the reserve, in milliseconds, as one line of $GITHUB_ENV', () => {
     // The step's own script, run the way GitHub runs a `run:` block, with its
     // own `env:` and a file standing in for $GITHUB_ENV.

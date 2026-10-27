@@ -532,6 +532,32 @@ describe('fileListIncludes', () => {
       expect(Number.MAX_SAFE_INTEGER - steps.left).toBeGreaterThan(MAX_FILES_MATCH_STEPS)
     })
 
+    it('spends the budget in a pattern\'s trailing stars, so a list of them cannot run past it', () => {
+      // The shape a review measured at the call site: a long path, and 256
+      // entries whose trailing stars are read after every counted turn. That
+      // tail used to be free, so the call answered after the budget and went on
+      // spending, 300 ms of blocking CPU for this one input. With the tail
+      // counted it stops at the budget like any other list. Timed against the
+      // same shape with one star, which reaches the same budget either way, so
+      // the comparison is this machine's own rather than an absolute bound.
+      const path = `${'a/'.repeat(2_045)}z.svg`
+      const tail = (stars: number) => Array.from({ length: 256 }, () => `**/a${'*'.repeat(stars)}`)
+      const spend = (stars: number): number => {
+        const steps = { left: MAX_FILES_MATCH_STEPS }
+        const started = performance.now()
+        expect(fileListIncludes(tail(stars), path, steps)).toBe(true)
+        // Spent: the walk that found the budget gone is the one past it, and
+        // the caller answers "included" without reading the rest (the exact
+        // value may be -1 or -2, whichever walk is holding the last turn).
+        expect(steps.left).toBeLessThan(0)
+        return performance.now() - started
+      }
+      spend(1) // Warm the JIT for both readings below.
+      const short = spend(1)
+      const long = spend(252)
+      expect(long).toBeLessThan(Math.max(short * 8, 60))
+    })
+
     it('stops a list of double stars that backtracks over a thousand directories the same way', () => {
       const deepPath = `${Array.from({ length: 1_000 }, () => 'a').join('/')}/${'a'.repeat(2_000)}.svg`
       const steps = { left: MAX_FILES_MATCH_STEPS }

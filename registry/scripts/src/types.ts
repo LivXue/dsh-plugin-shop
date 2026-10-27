@@ -149,7 +149,7 @@ export interface Candidate {
    * for it.
    *
    * Only what the manifest alone can say. That the file is in the tarball, is
-   * small enough and holds what its extension promises is for the icon step's
+   * small enough and is an image its declared type draws is for the icon step's
    * fetch, and `files` is not consulted: npm packed this tarball by it, so the
    * tarball is the truth. (A git install is packed at install time, which is
    * why {@link RepoCandidate.icon} applies `files` and this does not.)

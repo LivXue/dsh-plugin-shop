@@ -330,7 +330,11 @@ const TYPE_NAMES: Readonly<Record<IconMediaType, string>> = {
 /**
  * Whether the bytes fetched for `declaration` may be carried, or the sentence
  * its author is told where they may not: at most {@link MAX_CATALOG_ICON_BYTES},
- * and the kind of file the extension says ({@link sniffIconBytes}).
+ * and an image ({@link sniffIconBytes}) the declared media type draws. That is
+ * narrower than "the kind of file the extension says", because browsers and dsh
+ * draw a raster under any of the raster labels — a JPEG named `.png`, a PNG
+ * named `.svg` — and only SVG text is drawn by the extension that names it
+ * (§5.4 has the measured matrix).
  *
  * `bytes` must be the whole file, because its length is the size the sentence
  * prints. A read that stopped at the cap, and so never learned the size,

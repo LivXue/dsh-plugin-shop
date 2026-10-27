@@ -1430,6 +1430,23 @@ describe('parseDeadlineVariable (the catalog job\'s deadline)', () => {
     expect(parseDeadlineVariable('CATALOG_JOB_DEADLINE_MS', '0')).toBe(0)
   })
 
+  it('refuses a deadline older than the job could explain, which a failed clock read writes', () => {
+    // The workflow's step once nested `$(date +%s)` inside the arithmetic: with
+    // `date` missing, bash -e still succeeded and wrote the epoch. Every later
+    // step would then start nothing, for good, and say so only in stderr. Read
+    // against the build's own clock, a deadline a day old is that failure and
+    // nothing else: the job runs for hours, not days.
+    const now = 1_761_284_280_000
+    expect(() => parseDeadlineVariable('CATALOG_JOB_DEADLINE_MS', '0', now))
+      .toThrow(/^CATALOG_JOB_DEADLINE_MS is 0, more than a day before this build started/)
+    expect(parseDeadlineVariable('CATALOG_JOB_DEADLINE_MS', String(now - 60_000), now)).toBe(now - 60_000)
+    expect(parseDeadlineVariable('CATALOG_JOB_DEADLINE_MS', String(now + 60_000), now)).toBe(now + 60_000)
+    expect(parseDeadlineVariable('CATALOG_JOB_DEADLINE_MS', undefined, now)).toBeNull()
+    // Without a clock reading the age cannot be judged, and the contract is the
+    // one above.
+    expect(parseDeadlineVariable('CATALOG_JOB_DEADLINE_MS', '0')).toBe(0)
+  })
+
   it('throws on every value that would fail open, naming the variable and quoting the value back', () => {
     for (const raw of ['abc', '', ' ', '-1', '1.5', 'Infinity', 'NaN', '1e400', String(Number.MAX_SAFE_INTEGER + 1), '1761284280000%3N']) {
       expect(() => parseDeadlineVariable('CATALOG_JOB_DEADLINE_MS', raw), `${JSON.stringify(raw)} must throw`)

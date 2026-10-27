@@ -843,9 +843,11 @@ describe('the icon step rides the daily build (design 2026-10-23-shop-plugin-ico
     // The deadline is the moment the catalog build must be done by, which the
     // workflow's first step writes. Past it the icon step has no time left at
     // all: the key is left for the next build, and the catalog publishes.
+    // A minute ago, not the epoch: build.ts refuses a deadline older than any
+    // job could be, which is what a step whose clock failed writes.
     const cwd = workspace()
     try {
-      const run = buildFrom(cwd, [], { CATALOG_JOB_DEADLINE_MS: '0' })
+      const run = buildFrom(cwd, [], { CATALOG_JOB_DEADLINE_MS: String(Date.now() - 60_000) })
       expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
       expect(run.urls).toEqual([INDEX_URL])
       expect(run.stderr).toContain(`icons: 1 of 1 planned fetches were not started: the time budget of 0 ms, cut from ${ICON_FETCH_TIME_BUDGET_MS_DEFAULT} ms to the time the job had left, ran out`)
