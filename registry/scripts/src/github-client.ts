@@ -45,10 +45,14 @@ const RAW_GITHUB = 'https://raw.githubusercontent.com'
  * literal `%2e%2e` is `%25`, and the host decodes the name back to the
  * directory the repository really has.
  *
- * Only `.` and `..` themselves survive the encoding. Git forbids both as the
- * name of a tree entry and of a ref component, and the committed record refuses
- * a carried path that holds one (`hasNamedSegments`, repo-state.ts), so none
- * reaches here.
+ * Only `.` and `..` themselves survive the encoding, and they cannot be encoded
+ * away: the URL parser matches a dot segment after percent-decoding it, so
+ * `%2e%2e` climbs exactly as `..` does. A branch cannot hold either (a ref
+ * component may not be `.` or begin with `.`), but a tree entry can — `git
+ * mktree` accepts one, and default `git fsck` only warns — and so can a
+ * hand-edited record. Each path that reaches this is therefore checked with
+ * {@link hasTraversalSegment} first, and one that holds a dot segment names no
+ * file that can be read.
  *
  * A name that is not well-formed UTF-16, a lone surrogate, becomes U+FFFD. It
  * names nothing and is answered 404, where `encodeURIComponent` would throw, and
@@ -66,6 +70,22 @@ const RAW_GITHUB = 'https://raw.githubusercontent.com'
  */
 function encodePath(name: string): string {
   return name.toWellFormed().split('/').map(encodeURIComponent).join('/')
+}
+
+/**
+ * Whether `path` holds a segment a URL parser reads as `.` or `..`, which no
+ * encoded spelling can make literal: the parser percent-decodes a segment
+ * before deciding it is a dot segment, so `%2e%2e` climbs exactly as `..` does.
+ * A tree entry can carry such a name (`git mktree` accepts one; default
+ * `git fsck` only warns), and so can a hand-edited record. A path that holds
+ * one names no file a repository can have, so the callers refuse it before
+ * building a URL and never ask the host.
+ *
+ * An empty segment is refused with them: `a//b` is no path a tree lists, and
+ * the parser reads the doubled slash as the same single one.
+ */
+function hasTraversalSegment(path: string): boolean {
+  return path.split('/').some(segment => segment === '' || segment === '.' || segment === '..')
 }
 
 /**
@@ -1480,6 +1500,11 @@ async function probeSubpackageCandidates(
         `dsh does not list a subpackage whose directory path is longer than ${SUBDIR_MAX_LENGTH} characters: the path identifies the entry and is published in the catalog and in this report.`))
       continue
     }
+    // A tree entry can be named `..` (`git mktree` accepts one), and no encoded
+    // spelling makes it literal, so reading it would climb out of this
+    // repository. It names no directory a package can live in: skip it, as the
+    // 404 below skips a path the tree lists and the host does not serve.
+    if (hasTraversalSegment(dir)) continue
     const subUrl = rawFileUrl(`${owner}/${slug}`, meta.defaultBranch, `${dir}/package.json`)
     const subResponse = await fetchRobust(subUrl, fetchImpl, sleep, token, timeoutMs)
     // Same rule, third site: a 404 means the tree listed a path that is not
@@ -2721,6 +2746,14 @@ async function rereadCandidate(
       writeDeclarations(updated, read.declarations)
       return { outcome: 'updated', candidate: updated }
     }
+    // The record is a file a pull request can edit (`github-client.ts` says so
+    // where the state is read), and `encodePath` cannot make a literal `.` or
+    // `..` literal: the parser percent-decodes before it decides. A carried
+    // subdir holding one names no path this repository has, so it is answered
+    // without a request, and the candidate keeps its record for the next run.
+    if (candidate.subdir !== undefined && hasTraversalSegment(candidate.subdir)) {
+      return { outcome: 'unusable', reason: 'the recorded subdir holds a dot or empty segment, so it names no path in this repository' }
+    }
     const path = candidate.subdir === undefined ? 'package.json' : `${candidate.subdir}/package.json`
     const rawUrl = rawFileUrl(`${owner}/${slug}`, candidate.commit, path)
     const response = await fetchRobust(rawUrl, fetchImpl, sleep, token, timeoutMs, 'first-answer')
@@ -2822,9 +2855,11 @@ function rereadPhase(timeBudgetMs: number, now: () => number): RereadPhase {
           // The unit is quoted, here and below: its subdir is a tree path, the
           // author's, and a newline in it would open a log line of its own,
           // which GitHub Actions runs as a workflow command when it starts with
-          // `::`. This reason is one of `unverified`'s own sentences; a failed
-          // read's, below, can quote a transport error or a manifest's text.
-          process.stderr.write(`github: re-reading ${JSON.stringify(unit)}: ${result.reason}, so the rescue is unverified for a full re-probe\n`)
+          // `::`. The reason is quoted too, and neither is defended by what
+          // today's sentences happen to say: an `unverified()` reason is a
+          // fixed sentence now, and nothing in the type or a test keeps a
+          // future one from naming a release URL or a subdir.
+          process.stderr.write(`github: re-reading ${JSON.stringify(unit)}: ${JSON.stringify(result.reason)}, so the rescue is unverified for a full re-probe\n`)
           return
         case 'failed':
           consecutiveFailures += 1
