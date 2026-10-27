@@ -3243,8 +3243,11 @@ describe('harvestRepos', () => {
         expect(result.nextState['r/rescued']?.candidates).toEqual([{ ...recorded, release: unverified }])
         expect(result.nextState['r/rescued']?.candidates[0]).not.toHaveProperty('declarationsRule')
         expect([result.rereadUpdated, result.rereadFailed, result.rereadAssetChanged]).toEqual([0, 0, 1])
-        // Said on the log under the unit, quoted like every unit the phase writes.
-        expect(stderr).toContain('github: re-reading "r/rescued": the recorded release asset ')
+        // Said on the log under the unit, quoted like every unit the phase writes,
+        // and the reason quoted with it: today's are fixed sentences, and the
+        // quoting is what keeps a future one naming a URL or a subdir from
+        // opening a log line of its own.
+        expect(stderr).toContain('github: re-reading "r/rescued": "the recorded release asset ')
         const next = diffRepoState(result.nextState, seen)
         expect(next.toFetch.map(e => [e.repo, e.backfillOnly])).toEqual([['r/rescued', true]])
         expect(next.toReread).toEqual([])
@@ -5507,7 +5510,7 @@ describe('the sizing read is bounded like the other large body, not like metadat
 })
 
 // ---------------------------------------------------------------------------
-// A raw URL is built from encoded segments (ruling R19).
+// A raw URL is built from encoded segments (design 2026-08-18-dsh-plugin-shop-design.md section 9.2).
 //
 // A name taken from a repository (a branch, a directory of its tree, a path in
 // the committed record) is a name and not a URL, and a URL parser reads it as
@@ -5537,12 +5540,18 @@ describe('a raw GitHub URL encodes each path segment, so a name from a repositor
    * A backslash spelling is ONE name to git and several to a parser, so it
    * spends one more climb on the name it starts with.
    */
-  const spellings: { label: string; climbing: (pops: number, target: string) => string }[] = [
+  const spellings: { label: string; climbing: (pops: number, target: string) => string; skipped?: true }[] = [
     { label: 'percent-encoded dot-dots', climbing: (pops, target) => [...Array<string>(pops).fill('%2e%2e'), target].join('/') },
     { label: 'half-encoded dot-dots, .%2E', climbing: (pops, target) => [...Array<string>(pops).fill('.%2E'), target].join('/') },
     { label: 'half-encoded dot-dots, %2e.', climbing: (pops, target) => [...Array<string>(pops).fill('%2e.'), target].join('/') },
     { label: 'dots with a tab between them', climbing: (pops, target) => [...Array<string>(pops).fill('.\t.'), target].join('/') },
     { label: 'backslash separators', climbing: (pops, target) => `x${'\\..'.repeat(pops + 1)}\\${target.split('/').join('\\')}` },
+    // The plain spelling. `encodeURIComponent('..')` is `..`, and no encoded
+    // spelling of a dot segment escapes the URL parser's normalization (it
+    // matches `.` and `..` after percent-decoding them), so this one cannot be
+    // encoded away — the paths that carry it are refused instead. `git mktree`
+    // accepts such a tree entry and default `git fsck` only warns.
+    { label: 'literal dot-dots', climbing: (pops, target) => [...Array<string>(pops).fill('..'), target].join('/'), skipped: true },
   ]
 
   /** GitHub as a real client meets it: a request is routed by the URL as `fetch` parses it, not as the code wrote it. */
@@ -5598,16 +5607,20 @@ describe('a raw GitHub URL encodes each path segment, so a name from a repositor
   })
 
   describe('the subpackage probe, which reads a directory of the tree at the default branch', () => {
-    it.each(spellings)('keeps a directory spelled with $label inside the repository', async ({ climbing }) => {
+    it.each(spellings)('keeps a directory spelled with $label inside the repository', async ({ climbing, skipped }) => {
       const dir = `packages/${climbing(4, `victim/plugin/${VICTIM_SHA}`)}`
       // The premise: written as it was, this directory is the victim's manifest.
       expect(new URL(`${RAW}hostile/repo/main/${dir}/package.json`).href).toBe(VICTIM_URL)
       const { fetchImpl, raw } = github(monorepo([`${dir}/package.json`]))
       const result = await fetchRepoCandidate({ ...meta }, fetchImpl, sleep, 'token')
       expect(leaving(raw(), `${RAW}hostile/repo/`)).toEqual([])
-      // The directory was asked for, under the repository, and nothing came of
-      // it: the only candidate is the root, which declares no bundle.
-      expect(raw().some(request => request.wire.includes('/main/packages/'))).toBe(true)
+      // The directory was asked for under the repository, and nothing came of
+      // it — except the literal `..`, which no encoding makes literal, so it is
+      // never asked for at all: the only candidate is the root either way, which
+      // declares no bundle.
+      const asked = raw().filter(request => request.wire.includes('/main/packages/'))
+      if (skipped === true) expect(asked).toEqual([])
+      else expect(asked.length).toBeGreaterThan(0)
       expect(result.ok && result.candidates.map(candidate => [candidate.name, candidate.hasBundle, candidate.subdir])).toEqual([['root', false, undefined]])
     })
 
@@ -5723,8 +5736,11 @@ describe('a raw GitHub URL encodes each path segment, so a name from a repositor
 
     it.each(spellings)('keeps a carried subdir spelled with $label inside the keyed commit', async ({ climbing }) => {
       const subdir = climbing(3, `attacker/evil/${SHA_EVIL}`)
-      // The record check admits it: these are names a tree can hold, which the
-      // writer stores (the check refuses an empty, `.` or `..` segment, and only those).
+      // The record check admits it: these are names a tree can hold, and the
+      // writer stores them, so nothing at the parse boundary refuses them. The
+      // reader does, before any request: an encoded spelling is asked for as
+      // the literal name it is, and a path holding a literal `.` or `..` names
+      // nothing that can be fetched, so it is never asked for at all.
       const state = parseRepoState(carried(subdir))
       // The premise: written as it was, this subdir is the attacker's manifest.
       expect(new URL(`${RAW}${repo}/${SHA_REPO}/${subdir}/package.json`).href).toBe(evilUrl)
@@ -5753,19 +5769,30 @@ describe('a raw GitHub URL encodes each path segment, so a name from a repositor
     })
   })
 
-  it('builds no raw URL by hand: the one template is rawFileUrl\'s', () => {
-    // A guard of the kind the body-cap scan is: the encoding is only as good as
-    // the call sites that remember it, so a raw URL is written in one place.
-    const written = githubClientSource.split('\n')
+  it('builds no raw URL by hand, in any module: the one template is rawFileUrl\'s', () => {
+    // A guard of the kind the body-cap scan is, and spanning the tree for the
+    // same reason: the encoding is only as good as the call sites that remember
+    // it, and `rawFileUrl` is exported for the icon step, so a raw URL
+    // hand-built in another module is exactly the regression this must see.
+    const modules = readdirSync(SRC_DIR).filter(name => name.endsWith('.ts'))
+    const lines = modules.flatMap(file => srcOf(file).split('\n')
       .filter(line => !/^\s*(\*|\/\/|\/\*)/.test(line))
-      .filter(line => line.includes('${RAW_GITHUB}'))
-    expect(written).toHaveLength(1)
-    expect(written[0]).toContain('encodePath(')
+      .map(line => ({ file, line: line.trim() })))
+    const occurrences = lines.filter(({ line }) => line.includes('raw.githubusercontent.com') || line.includes('${RAW_GITHUB}'))
+    // The host spelled once, in the constant; the template written once, in
+    // rawFileUrl, with each of its three segments encoded.
+    expect(occurrences.map(({ file }) => file)).toEqual(['github-client.ts', 'github-client.ts'])
+    const hosts = occurrences.filter(({ line }) => line.includes('raw.githubusercontent.com'))
+    expect(hosts.map(({ line }) => line)).toEqual(["const RAW_GITHUB = 'https://raw.githubusercontent.com'"])
+    const templates = occurrences.filter(({ line }) => line.includes('${RAW_GITHUB}'))
+    expect(templates.map(({ line }) => line)).toHaveLength(1)
+    expect(templates[0]?.line).toContain('${encodePath(repo)}/${encodePath(ref)}/${encodePath(path)}')
   })
 })
 
 // ---------------------------------------------------------------------------
-// An api.github.com URL encodes the branch it names (ruling R19b).
+// An api.github.com URL encodes the branch it names (design
+// 2026-08-18-dsh-plugin-shop-design.md section 9.2, the same rule on another host).
 //
 // The same defect as the raw host's, on the two routes of the API that take the
 // default branch in their path: the commits route, whose answer is the commit a
@@ -5932,9 +5959,24 @@ describe('an API URL encodes the branch name, so a ref cannot address another re
     // test can tell them apart. A route under /repos/ takes the repository as
     // `owner`, `slug` or `fullName`, which are GitHub's own names for it, and
     // every other piece of it, a branch, a sha or a path, through encodePath.
-    const routes = modules.flatMap(file => [...codeOf(file).matchAll(/\$\{GITHUB_API\}\/repos\/[^`]*`/g)].map(match => ({ file, text: match[0] })))
-    // Not a vacuous scan: the commits route, the release route and the two reads of a tree.
-    expect(routes.length).toBeGreaterThanOrEqual(4)
+    // The routes are enumerated, not discovered: each line that opens a
+    // `${GITHUB_API}/repos/` URL must be one of these, verbatim. A refactor
+    // that hoists a prefix into a `base` line and appends a piece to it changes
+    // a line here, so the guard fails and its author reads the rule — where a
+    // suffix scan let exactly that shape through, with the unencoded piece on a
+    // line that matched nothing.
+    const known = [
+      'const url = `${GITHUB_API}/repos/${owner}/${slug}/commits/${encodePath(branch)}`',
+      'const url = `${GITHUB_API}/repos/${owner}/${slug}/releases/latest`',
+      'const treeUrl = `${GITHUB_API}/repos/${owner}/${slug}/git/trees/${encodePath(meta.defaultBranch)}?recursive=1`',
+      '`${GITHUB_API}/repos/${fullName}/git/trees/${encodePath(sha)}?recursive=1`, fetchImpl, sleep, token, timeoutMs,',
+    ]
+    const routes = modules.flatMap(file => codeOf(file).split('\n')
+      .map(line => line.trim())
+      .filter(line => line.includes('${GITHUB_API}/repos/'))
+      .map(line => ({ file, text: line })))
+    expect(routes.map(({ text }) => text).sort()).toEqual([...known].sort())
+    expect(routes.map(({ file }) => file)).toEqual(known.map(() => 'github-client.ts'))
     const written = routes.flatMap(({ file, text }) => {
       const pieces = [...text.matchAll(/\$\{([^}]*)\}/g)].map(match => match[1] ?? '')
       // A `${` this did not read whole (a template inside an interpolation) is not cleared.
@@ -5960,11 +6002,13 @@ describe('an API URL encodes the branch name, so a ref cannot address another re
 // `::error::` annotates the run, `::add-mask::` hides a value from the rest of
 // the log, `::stop-commands::` stops the runner reading commands at all. A tree
 // path is the author's, and git takes a newline in a directory name, so a path
-// written raw can open a line of its own. Three lines of the harvest can carry
-// one: the throw that ends one repository's fetch, the error that stops a
-// harvest whose throws are systematic (build.ts writes its message after the
-// retry, and Node writes it when the build dies), and a failed declarations
-// re-read, which names its `repo#subdir` unit.
+// written raw can open a line of its own. Four sites of the harvest can carry
+// one, each quoted where it is written: the throw that ends one repository's
+// fetch (github-client.ts ~2443), the error that stops a harvest whose throws
+// are systematic (build.ts writes its message after the retry, and Node writes
+// it when the build dies), the asset-changed re-read (~2827, whose unit is a
+// `repo#subdir` and whose reason is quoted with it), and any other failed
+// declarations re-read (~2878, the same unit).
 // ---------------------------------------------------------------------------
 
 describe('a tree path or repository written to the log is quoted, so it cannot start a workflow command', () => {
