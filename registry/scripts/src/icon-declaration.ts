@@ -302,7 +302,7 @@ export interface IconDeclaration {
  * icon. `refused` is a declaration dsh would not accept, with the sentence its
  * author is told. `declared` is one dsh would try to read: the manifest is
  * checked as far as a manifest alone can be, so whether the file exists, is
- * small enough and holds what its extension says is for the fetch.
+ * small enough and is an image the declared type draws is for the fetch.
  */
 export type IconRead =
   | { kind: 'none' }
@@ -566,11 +566,16 @@ const MAX_FILES_ENTRY_LENGTH = 256
  * carries the topic can hand the harvest that list in its root manifest and in
  * each of up to eight subpackages', on every full fetch and every re-read.
  *
- * A million turns took 4 to 15 ms of the same CPU, depending on the shape. A
- * list as long as {@link MAX_FILES_ENTRIES} allows, of globs with a `**`
- * between directories that reach into the path's (icon-declaration.test.ts
- * reads one), spent about 4,500 of them, so no list an author writes comes
- * near it.
+ * A million turns — the whole budget — took 4 to 15 ms of the same CPU on the
+ * shapes measured, and that holds only because every loop of the two walks
+ * spends a step. The walks' closing runs of stars did not, and 256 entries
+ * whose patterns end in 252 stars each read those tails for free: the same
+ * call took 470 ms past a budget it had spent (measured 2026-10-24, at the
+ * call site's own pair of `readIconDeclaration` and `fileListIncludes`), and
+ * 4 ms once the tails were counted. A list as long as
+ * {@link MAX_FILES_ENTRIES} allows, of globs with a `**` between directories
+ * that reach into the path's (icon-declaration.test.ts reads one), spent about
+ * 4,500 of them, so no list an author writes comes near it.
  */
 export const MAX_FILES_MATCH_STEPS = 1_000_000
 
@@ -707,7 +712,14 @@ function globMatches(pattern: readonly string[], path: readonly string[], steps:
       return false
     }
   }
-  while (pattern[at] === '**') at++
+  // The trailing stars spend the budget like every other turn: a pattern of
+  // 252 of them was read after each of a million counted turns for free, which
+  // is how one hostile list cost 300 ms of blocking CPU past a budget it had
+  // already spent (icon-declaration.test.ts measures it).
+  while (pattern[at] === '**') {
+    if (--steps.left < 0) return false
+    at++
+  }
   return at === pattern.length
 }
 
@@ -736,6 +748,11 @@ function nameMatches(pattern: string, name: string, steps: MatchSteps): boolean 
       return false
     }
   }
-  while (pattern[at] === '*') at++
+  // The same spend as {@link globMatches}, for the same reason: this tail is
+  // where a pattern of stars outlived the budget.
+  while (pattern[at] === '*') {
+    if (--steps.left < 0) return false
+    at++
+  }
   return at === pattern.length
 }

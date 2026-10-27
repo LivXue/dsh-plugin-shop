@@ -157,14 +157,35 @@ export function parseBudgetVariable(name: string, raw: string | undefined, fallb
  * Held to {@link parseBudgetVariable}'s contract, for the same reason: it fails
  * open the same way. A value that is no number makes `deadline - now` NaN, and
  * a cap of NaN caps nothing, which would be reported as a healthy run.
+ *
+ * Read against the build's own clock when one is handed in, it also refuses a
+ * deadline older than any job could explain. The workflow's step once nested
+ * `$(date +%s)` inside its arithmetic: with `date` missing, bash -e still
+ * succeeded and wrote the epoch, and a deadline in 1970 cuts both steps to
+ * nothing on every run while only stderr says so. A job runs for hours, so a
+ * deadline a day old is that failure and nothing else.
  * @param name - the variable, for the message.
  * @param raw - the environment value, or undefined when unset.
- * @throws when the value is present but not a non-negative safe integer,
- *   naming the variable and quoting the value back.
+ * @param nowMs - the build's clock, which also bounds how old the deadline may
+ *   be; left out where no clock is at hand, and the age is not judged then.
+ * @throws when the value is present but not a non-negative safe integer, or is
+ *   older than {@link MAX_DEADLINE_AGE_MS} before `nowMs`, naming the variable
+ *   and quoting the value back.
  */
-export function parseDeadlineVariable(name: string, raw: string | undefined): number | null {
-  return raw === undefined ? null : parseBudgetVariable(name, raw, 0)
+export function parseDeadlineVariable(name: string, raw: string | undefined, nowMs?: number): number | null {
+  if (raw === undefined) return null
+  const deadline = parseBudgetVariable(name, raw, 0)
+  if (nowMs !== undefined && deadline < nowMs - MAX_DEADLINE_AGE_MS) {
+    // No job this workflow runs lasts a day, so nothing its own clock wrote is
+    // this old: a step that could not read the clock wrote it instead.
+    throw new Error(`${name} is ${raw}, more than a day before this build started, so the step that wrote it read no clock`)
+  }
+  return deadline
 }
+
+/** How old a deadline may be before it is a clock that failed rather than a
+ * deadline: a day, against a job whose timeout is measured in hours. */
+export const MAX_DEADLINE_AGE_MS = 24 * 60 * 60 * 1000
 
 /**
  * How much of a step's time budget it may spend from `nowMs` on: the budget,

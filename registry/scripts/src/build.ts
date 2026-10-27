@@ -131,7 +131,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // workflow's first step writes it and keeps that arithmetic; a local run has
   // none, and nothing is cut short. A job killed at its limit publishes nothing
   // and commits no state, which is what the cuts below exist to prevent.
-  const jobDeadlineMs = parseDeadlineVariable('CATALOG_JOB_DEADLINE_MS', process.env.CATALOG_JOB_DEADLINE_MS)
+  const jobDeadlineMs = parseDeadlineVariable('CATALOG_JOB_DEADLINE_MS', process.env.CATALOG_JOB_DEADLINE_MS, nowMs())
   // Two steps read the deadline, the declarations re-read and the icon step,
   // and each stops STARTING work early enough that everything still to come is
   // done by it: its own last request, which it lets finish, and every later
