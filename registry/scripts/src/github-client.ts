@@ -81,8 +81,9 @@ function encodePath(name: string): string {
  * one names no file a repository can have, so the callers refuse it before
  * building a URL and never ask the host.
  *
- * An empty segment is refused with them: `a//b` is no path a tree lists, and
- * the parser reads the doubled slash as the same single one.
+ * An empty segment is refused with them, for a reason that is only its own:
+ * `a//b` is no path a tree lists. (The parser preserves the doubled slash; it
+ * does not collapse it, so that is not the reason.)
  */
 function hasTraversalSegment(path: string): boolean {
   return path.split('/').some(segment => segment === '' || segment === '.' || segment === '..')
@@ -90,11 +91,15 @@ function hasTraversalSegment(path: string): boolean {
 
 /**
  * The URL of the file at `path` in `repo` (`owner/slug`) at `ref`, a branch or a
- * commit, on the raw host. The one place a raw URL is written: the repository,
- * the ref and the path each go through {@link encodePath}, because each can hold
- * a name a repository chose. Exported for the icon step (`icon-fetch.ts`).
+ * commit, on the raw host, or `null` when one of the three holds a segment a
+ * URL parser reads as `.` or `..` — which no encoded spelling can make literal
+ * ({@link hasTraversalSegment} says why), so such a value names no file and no
+ * URL is built from it. Refusing here rather than at each caller is what a
+ * future caller inherits; the one exported user, the icon step, gets the same
+ * answer. Exported for it (`icon-fetch.ts`).
  */
-export function rawFileUrl(repo: string, ref: string, path: string): string {
+export function rawFileUrl(repo: string, ref: string, path: string): string | null {
+  if ([repo, ref, path].some(value => typeof value !== 'string' || hasTraversalSegment(value))) return null
   return `${RAW_GITHUB}/${encodePath(repo)}/${encodePath(ref)}/${encodePath(path)}`
 }
 
@@ -1487,6 +1492,9 @@ async function probeSubpackageCandidates(
   // the array is a shape that cannot leak, which beats a rule that has to be
   // remembered at each new return site.
   let anyClaimed = false
+  // What was actually asked for. A directory refused before its request (a dot
+  // segment) is not one the report may call "probed".
+  let requested = 0
   for (const dir of dirs) {
     // The path itself, before it costs a request. A subpackage's directory is
     // its published identifier — this row's key, `repo-gate`'s unit for every
@@ -1504,8 +1512,10 @@ async function probeSubpackageCandidates(
     // spelling makes it literal, so reading it would climb out of this
     // repository. It names no directory a package can live in: skip it, as the
     // 404 below skips a path the tree lists and the host does not serve.
-    if (hasTraversalSegment(dir)) continue
     const subUrl = rawFileUrl(`${owner}/${slug}`, meta.defaultBranch, `${dir}/package.json`)
+    // Null is that dot-segment case, and it is never asked for.
+    if (subUrl === null) continue
+    requested += 1
     const subResponse = await fetchRobust(subUrl, fetchImpl, sleep, token, timeoutMs)
     // Same rule, third site: a 404 means the tree listed a path that is not
     // there, which is nothing to report. Anything else is a subpackage we
@@ -1548,7 +1558,7 @@ async function probeSubpackageCandidates(
       failures.push(subpackageFailure(owner, slug, dir, describeBadName(rawName)))
     }
   }
-  return { candidates, failures, anyClaimed, probed: dirs.length, manifests }
+  return { candidates, failures, anyClaimed, probed: requested, manifests }
 }
 
 /**
@@ -1652,7 +1662,10 @@ async function readPatchAtCommit(
   token: string | undefined,
   timeoutMs: number,
 ): Promise<{ answered: true; text: string | undefined } | { answered: false }> {
+  // A path holding a dot segment (which `treePathOf` should already have
+  // refused) is not the file: answer before any request.
   const url = rawFileUrl(fullName, commit, path)
+  if (url === null) return { answered: false }
   try {
     const response = await fetchRobust(url, fetchImpl, sleep, token, timeoutMs)
     if (!response.ok) return { answered: false }
@@ -1874,6 +1887,10 @@ async function projectRepoCandidates(
   }
 
   const rawUrl = rawFileUrl(`${owner}/${slug}`, meta.defaultBranch, 'package.json')
+  // Unreachable: a repository name and a branch are GitHub's grammars, neither
+  // of which holds a dot segment. Answered as a manifest we could not address
+  // rather than thrown, because a throw would publish a transport failure.
+  if (rawUrl === null) return { ok: false, code: 'no-manifest', detail: 'Its repository name or default branch cannot be read as a file path.' }
   // No catch here on purpose. A deadline rejection propagates to harvestRepos,
   // whose existing catch is already the right handler for it: it publishes a
   // reason we wrote rather than a raw exception message under the repository's
@@ -2746,16 +2763,14 @@ async function rereadCandidate(
       writeDeclarations(updated, read.declarations)
       return { outcome: 'updated', candidate: updated }
     }
-    // The record is a file a pull request can edit (`github-client.ts` says so
-    // where the state is read), and `encodePath` cannot make a literal `.` or
-    // `..` literal: the parser percent-decodes before it decides. A carried
-    // subdir holding one names no path this repository has, so it is answered
-    // without a request, and the candidate keeps its record for the next run.
-    if (candidate.subdir !== undefined && hasTraversalSegment(candidate.subdir)) {
-      return { outcome: 'unusable', reason: 'the recorded subdir holds a dot or empty segment, so it names no path in this repository' }
-    }
     const path = candidate.subdir === undefined ? 'package.json' : `${candidate.subdir}/package.json`
+    // The record is a file a pull request can edit, and `rawFileUrl` refuses a
+    // path holding a dot segment: the parser percent-decodes a segment before
+    // it decides, so neither `.` nor `%2e%2e` can be made a literal name. That
+    // is a refusal before any request — the class `refused` exists for — so it
+    // neither counts toward the failure breaker nor resets it.
     const rawUrl = rawFileUrl(`${owner}/${slug}`, candidate.commit, path)
+    if (rawUrl === null) return { outcome: 'refused', reason: 'the recorded subdir holds a dot segment, so it names no path in this repository' }
     const response = await fetchRobust(rawUrl, fetchImpl, sleep, token, timeoutMs, 'first-answer')
     if (!response.ok) {
       // The line fetchWithRetry draws: what it retries is the host unable to

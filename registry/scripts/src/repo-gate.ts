@@ -46,6 +46,16 @@ function rescueNote(candidate: RepoCandidate): string {
 const GITHUB_IDENTITY_UNSAFE = /[\s\u0000-\u001f\u007f-\u009f]/
 
 /**
+ * The grammar the Shop validates an entry's `subdir` against
+ * (`packages/dsh-plugin-shop/src/host/catalog.ts`): each directory name of
+ * `[A-Za-z0-9._-]`, separated by `/`, and no `.` or `..` component. The Host's
+ * own regex is the one spelling of the rule, because one entry outside it makes
+ * the whole data file unparseable: `loadCatalog` parses the wire with no
+ * fallback, so every installed shop would lose the entire catalog, not one row.
+ */
+const SUBDIR_GRAMMAR = /^(?!.*(^|\/)\.\.?(\/|$))[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/
+
+/**
  * Refuse a github entry whose stored identity fields would cut a
  * `manifest.lock` line. The repo, the name, the commit and — when a release
  * rescued the entry — the tag are emitted verbatim onto one line, and a
@@ -63,6 +73,15 @@ export function githubFields(candidate: RepoCandidate): Rejection | null {
     ['commit', candidate.commit],
   ]
   if (candidate.release !== undefined) fields.push(['release.tag', candidate.release.tag])
+  // The subdirectory is the entry's install target and is published verbatim,
+  // so it is held to the grammar the consumer validates it against.
+  if (candidate.subdir !== undefined && !SUBDIR_GRAMMAR.test(candidate.subdir)) {
+    return {
+      name: repoUnit(candidate),
+      code: 'no-manifest',
+      detail: `Its subdirectory ${echo(candidate.subdir)} is not an install path the shop can parse: each directory may use only letters, digits, ".", "_" and "-", separated by "/". One entry the shop cannot parse costs every installed shop the whole catalog, so this is not listed.`,
+    }
+  }
   for (const [label, value] of fields) {
     if (GITHUB_IDENTITY_UNSAFE.test(value)) {
       return {
