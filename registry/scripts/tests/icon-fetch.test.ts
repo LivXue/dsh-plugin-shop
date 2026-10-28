@@ -682,8 +682,26 @@ describe('fetchIcon: the file at a pinned commit', () => {
       expect(requested.search).toBe('')
       expect(requested.hash).toBe('')
       // Read back from the parsed URL, which is what the host is asked for:
-      // the repository, the commit, then exactly the path's own segments.
+      // The repository, the commit, then exactly the path's own segments.
       expect(requested.pathname.split('/')).toEqual(['', 'owner', 'repo', COMMIT, ...path.split('/').map(encodeURIComponent)])
+    })
+
+    it.each([
+      ['a leading dot-dot', '../icon.svg'],
+      ['a dot-dot in the middle', 'icons/../../package.json'],
+      ['a lone dot segment', './icon.svg'],
+    ])('refuses a target path with %s without asking, as leaving the package', async (_label, path) => {
+      // No encoding makes a dot segment a name: `encodeURIComponent('..')` is
+      // `..`, and a URL parser drops it after decoding. `rawFileUrl` therefore
+      // builds no URL at all, and the declaration that named this file is the
+      // author's, so the answer is a refusal rather than a retry. The target is
+      // built directly: the declaration parser refuses this spelling earlier,
+      // and the guard here is what a plan built another way meets.
+      const work = { ...githubWork(), target: { kind: 'github', repo: 'owner/repo', commit: COMMIT, path } } as IconWork
+      const { fetchImpl, calls } = always(() => new Response(SVG))
+      const result = await fetchIcon(work, transportOf(fetchImpl))
+      expect(result).toEqual({ kind: 'refused', detail: iconDetail.leavesPackage(SHOWN) })
+      expect(calls).toEqual([])
     })
   })
 

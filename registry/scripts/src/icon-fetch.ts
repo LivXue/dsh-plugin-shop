@@ -556,10 +556,14 @@ async function fromGithub(target: GithubTarget, label: string, shown: string, tr
   }
   // The path is a file name and not a URL, and `rawFileUrl` writes it as one:
   // each segment encoded, so a literal %2e%2e, a tab between two dots and a
-  // backslash stay inside the commit. (`.` and `..` segments themselves never
-  // get here: a carried record holding one does not parse, in repo-state.ts.)
+  // backslash stay inside the commit. A path holding a literal `.` or `..`
+  // segment names no file in the commit — no encoded spelling can make it one —
+  // so `rawFileUrl` builds no URL from it. The path came from the author's
+  // `package.json`, so that declaration leaves the package.
+  const url = rawFileUrl(repo, commit, target.path)
+  if (url === null) return refused(iconDetail.leavesPackage(shown))
   const response = await fetchRobust(
-    rawFileUrl(repo, commit, target.path),
+    url,
     transport.fetchImpl,
     transport.sleep,
     transport.token === '' ? undefined : transport.token,
