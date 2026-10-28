@@ -6137,8 +6137,10 @@ describe('a raw GitHub URL encodes each path segment, so a name from a repositor
     // The plain spelling. `encodeURIComponent('..')` is `..`, and no encoded
     // spelling of a dot segment escapes the URL parser's normalization (it
     // matches `.` and `..` after percent-decoding them), so this one cannot be
-    // encoded away — the paths that carry it are refused instead. `git mktree`
-    // accepts such a tree entry and default `git fsck` only warns.
+    // encoded away. A tree can hold it — `git mktree` accepts such an entry and
+    // default `git fsck` only warns — so the tree probe meets it and the reader
+    // refuses to ask; a CARRIED record meets it at `parseRepoState`, which
+    // refuses a subdir that is not a path of names (`skipped` is that case).
     { label: 'literal dot-dots', climbing: (pops, target) => [...Array<string>(pops).fill('..'), target].join('/'), skipped: true },
   ]
 
@@ -6344,14 +6346,19 @@ describe('a raw GitHub URL encodes each path segment, so a name from a repositor
 
     it.each(spellings)('keeps a carried subdir spelled with $label inside the keyed commit', async ({ climbing, skipped }) => {
       const subdir = climbing(3, `attacker/evil/${SHA_EVIL}`)
-      // The record check admits it: these are names a tree can hold, and the
-      // writer stores them, so nothing at the parse boundary refuses them. The
-      // reader does, before any request: an encoded spelling is asked for as
-      // the literal name it is, and a path holding a literal `.` or `..` names
-      // nothing that can be fetched, so it is never asked for at all.
-      const state = parseRepoState(carried(subdir))
       // The premise: written as it was, this subdir is the attacker's manifest.
       expect(new URL(`${RAW}${repo}/${SHA_REPO}/${subdir}/package.json`).href).toBe(evilUrl)
+      if (skipped === true) {
+        // A literal `.` or `..` is not a name a tree path can hold, so the
+        // record refuses it before the reader can ask: nothing reaches a URL.
+        expect(() => parseRepoState(carried(subdir))).toThrow(/malformed subdir/)
+        return
+      }
+      // The record admits the rest: these are names a tree can hold, and the
+      // writer stores them, so nothing at the parse boundary refuses them. The
+      // reader does, before any request: an encoded spelling is asked for as the
+      // literal name it is, so no read leaves the keyed commit.
+      const state = parseRepoState(carried(subdir))
       const { fetchImpl, raw } = github(wire => {
         const searched = searchItems(wire, [{ repo, pushedAt: quietAt }])
         if (searched !== undefined) return searched
@@ -6361,11 +6368,10 @@ describe('a raw GitHub URL encodes each path segment, so a name from a repositor
       expect(result.rereadAttempted).toBe(1)
       expect(leaving(raw(), `${RAW}${repo}/${SHA_REPO}/`)).toEqual([])
       expect(result.rereadUpdated).toBe(0)
-      // An encoded spelling is asked for as the literal name it is; only the
-      // literal dot segment makes no request at all. Without this, a blanket
-      // refusal of every subdir holding a `%` would pass every line above.
-      if (skipped === true) expect(raw()).toEqual([])
-      else expect(raw().length).toBeGreaterThan(0)
+      // An encoded spelling is asked for as the literal name it is. Without
+      // this, a blanket refusal of every subdir holding a `%` would pass every
+      // line above.
+      expect(raw().length).toBeGreaterThan(0)
     })
 
     it('reads a carried subdir literally named %2e%2e at its own path, written %252e%252e', async () => {
