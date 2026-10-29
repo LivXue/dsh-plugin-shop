@@ -138,8 +138,9 @@ function hasBytesAt(bytes: Uint8Array, offset: number, expected: readonly number
  * asymmetry above and not on a browser's decoder: reading on can only accept a
  * file a browser may not draw, which costs nothing, where a strict decode
  * would refuse files a browser draws. Replacement fails for no bytes, so
- * nothing is caught here; the one label that depends on the platform,
- * `utf-16be`, needs the ICU every official Node build carries.
+ * nothing is caught here; `utf-16be` is decoded by swapping its bytes into the
+ * little-endian decoder every build carries, rather than by a decoder that
+ * needs ICU.
  *
  * Any other bytes are read one character each, so that UTF-8, ISO-8859-1 and
  * the other ASCII-compatible encodings an XML declaration may name all show the
@@ -155,9 +156,30 @@ function hasBytesAt(bytes: Uint8Array, offset: number, expected: readonly number
  */
 function svgText(bytes: Uint8Array): string {
   for (const { label, mark } of UTF16_MARKS) {
-    if (hasBytesAt(bytes, 0, mark)) return new TextDecoder(label).decode(bytes.subarray(mark.length))
+    if (!hasBytesAt(bytes, 0, mark)) continue
+    const body = bytes.subarray(mark.length)
+    // `utf-16be` is the one label whose DECODER needs ICU; `utf-16le` is part of
+    // the Encoding Standard every build carries. A Node built with
+    // `--with-intl=none` (or a small-icu build) throws on the first
+    // constructor, and a throw here would take down the whole build for one
+    // file, so big-endian text is swapped into little-endian instead.
+    return label === 'utf-16be' ? decodeUtf16Be(body) : new TextDecoder(label).decode(body)
   }
   return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('latin1')
+}
+
+/**
+ * Big-endian UTF-16 read as little-endian, one code unit for each pair. A
+ * trailing odd byte is left in place, so the decoder's own replacement turns it
+ * into U+FFFD, the same character the `utf-16be` decoder would have produced.
+ */
+function decodeUtf16Be(bytes: Uint8Array): string {
+  const swapped = new Uint8Array(bytes.length)
+  for (let i = 0; i + 1 < bytes.length; i += 2) {
+    swapped[i] = bytes[i + 1] ?? 0
+    swapped[i + 1] = bytes[i] ?? 0
+  }
+  return new TextDecoder('utf-16le').decode(swapped)
 }
 
 /** XML's white space. */
