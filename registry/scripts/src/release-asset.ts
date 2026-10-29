@@ -168,6 +168,26 @@ function shapeOf(value: unknown): string {
  * and spells their members the same way. */
 export const normalize = (path: string): string => path.replace(/^\.\//, '')
 
+/**
+ * A path a manifest or a patch names, in the spelling {@link readTar} gives a
+ * member: one character for each UTF-8 byte.
+ *
+ * The reader keeps names as bytes (`latin1`) so that `é.svg` (C3 A9) cannot be
+ * read as another file's name (`C).svg`), and a string parsed from JSON is
+ * text. A name outside ASCII differs between the two spellings, so every
+ * comparison between a declared path and a member goes through here — the
+ * patch files a bundle declares, the modules a patch inserts, and an icon's
+ * path.
+ */
+export const memberName = (path: string): string => Buffer.from(path, 'utf8').toString('latin1')
+
+/**
+ * The inverse of {@link memberName}: a member name as text, for a sentence an
+ * author reads. A name that is not UTF-8 decodes with replacement, which is
+ * what git writes on the wire anyway.
+ */
+export const memberText = (name: string): string => Buffer.from(name, 'latin1').toString('utf8')
+
 /** Why an asset whose members have no real top-level directory is refused.
  * Shared by the root-level-file case and the `.//`-spelling case below. */
 const NO_TOP_LEVEL_DIRECTORY =
@@ -515,12 +535,18 @@ function openPackedManifest(
     // reason rather than a wording nit.
     return { ok: false, detail: 'the release asset could not be read as a gzipped tar archive by this pipeline' }
   }
-  const paths = [...files.keys()].map(normalize)
+  // Every path this function returns is the TEXT spelling of the member, so a
+  // declared path compares with it directly ({@link memberName} says why the
+  // two differ). `files` stays keyed by the reader's byte spelling, which is
+  // what `Buffer` lookups and the size sum below use.
+  const members = [...files.keys()].map((path) => ({ path, text: normalize(memberText(path)) }))
+  const paths = members.map(({ text }) => text)
   const rooted = singleRoot(paths)
   if ('detail' in rooted) return { ok: false, detail: rooted.detail }
   const manifestPath = `${rooted.root}/package.json`
-  const raw = [...files.entries()].find(([path]) => normalize(path) === manifestPath)?.[1]
-  if (raw === undefined) {
+  const raw = members.find(({ text }) => text === manifestPath)?.path
+  const manifestBytes = raw === undefined ? undefined : files.get(raw)
+  if (manifestBytes === undefined) {
     return { ok: false, detail: `the release asset's ${echo(rooted.root)} directory carries no package.json, so it is not a packed npm package` }
   }
   let manifest: PackedManifest
@@ -528,7 +554,7 @@ function openPackedManifest(
     // npm's own reader strips a UTF-8 BOM, so a manifest carrying one installs
     // fine; refusing it here — and calling the archive unreadable — would
     // report our parser's strictness as the author's defect.
-    manifest = JSON.parse(Buffer.from(raw).toString('utf8').replace(/^﻿/, '')) as typeof manifest
+    manifest = JSON.parse(Buffer.from(manifestBytes).toString('utf8').replace(/^﻿/, '')) as typeof manifest
   } catch {
     return { ok: false, detail: `the release asset's ${manifestPath} is not readable JSON` }
   }
@@ -642,7 +668,7 @@ export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): Relea
     // claims, and the first does not imply the second — see
     // {@link missingInsertTarget}. Read from the archive we already hold, so
     // this costs no request and stays as pure as the rest of the file.
-    const patchBytes = [...files.entries()].find(([path]) => normalize(path) === target)?.[1]
+    const patchBytes = [...files.entries()].find(([path]) => normalize(memberText(path)) === target)?.[1]
     if (patchBytes !== undefined && patchBytes.byteLength <= MAX_PATCH_BYTES) {
       const missing = missingInsertTarget(
         Buffer.from(patchBytes).toString('utf8').replace(/^\ufeff/, ''),

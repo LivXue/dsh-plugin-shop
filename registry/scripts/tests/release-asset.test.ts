@@ -448,6 +448,38 @@ describe('verifyReleaseAsset', () => {
     if (!verdict.ok) expect(verdict.detail).toContain('"./web.yml" but the archive does not contain it')
   })
 
+  it('accepts an asset whose patch file and inserted module are named outside ASCII', () => {
+    // A manifest names a file as UTF-8 text and the reader spells a member one
+    // character for each byte, so `修复.js` differs between the two spellings.
+    // Compared without the conversion, a shipped file was refused as absent.
+    const verdict = verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0',
+        exports: { '.': { default: './dist/修复.js' } },
+        dsh: { bundle: { patch: './修复补丁.yml' } },
+      }),
+      'package/修复补丁.yml': '- insert:\n    - id: foo\n      name: dsh-foo\n',
+      'package/dist/修复.js': 'export const x = 1',
+    }), 'dsh-foo')
+    expect(verdict).toMatchObject({ ok: true })
+  })
+
+  it('speaks of a missing member outside ASCII as the author spelled it', () => {
+    // The reader's byte spelling is not what an author wrote, and the sentence
+    // is published: a name decoded as `latin1` would print mojibake.
+    const verdict = verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0',
+        exports: { '.': { default: './dist/缺失.js' } },
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: foo\n      name: dsh-foo\n',
+    }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    if (!verdict.ok) expect(verdict.detail).toContain('缺失.js')
+  })
+
+
   it('refuses an asset whose list-valued patch inserts a module the archive does not ship', () => {
     const verdict = verifyReleaseAsset(rawTarball({
       'package/package.json': JSON.stringify({
