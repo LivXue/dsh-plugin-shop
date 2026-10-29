@@ -235,9 +235,7 @@ async function readPublished(timed: typeof fetch, baseUrl: string): Promise<Icon
   const index = await getCapped(timed, new URL('index.json', base).href, PUBLISHED_INDEX_MAX_BYTES)
   if (index === null) return null
   const parsed = JSON.parse(new TextDecoder().decode(index)) as unknown
-  if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) && !Object.hasOwn(parsed, 'icons')) {
-    return { icons: {}, sources: {} }
-  }
+  if (isIndexWithoutIcons(parsed)) return { icons: {}, sources: {} }
   const pointer = iconsPointer(parsed)
   if (pointer === null) return null
   const target = new URL(pointer.url, base)
@@ -261,6 +259,21 @@ function iconsPointer(index: unknown): { url: string; sha256: string } | null {
   if (typeof icons !== 'object' || icons === null || Array.isArray(icons)) return null
   const { url, sha256 } = icons as { url?: unknown; sha256?: unknown }
   return typeof url === 'string' && url !== '' && typeof sha256 === 'string' && SHA256_HEX.test(sha256) ? { url, sha256 } : null
+}
+
+/**
+ * Whether the parsed body is a catalog index published before the icons
+ * sidecar existed: an object with the catalog's own fields and no `icons` key.
+ *
+ * The shape is checked, not just the missing key: a 200 that is not an index at
+ * all — a rate-limit body, a proxy's error page — would otherwise read as the
+ * pre-icons catalog, and the caller would treat an unreadable file as the
+ * answer "no icons published" and re-fetch every recorded icon for nothing.
+ */
+function isIndexWithoutIcons(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const index = value as Record<string, unknown>
+  return !Object.hasOwn(index, 'icons') && Object.hasOwn(index, 'schemaVersion') && Object.hasOwn(index, 'plugins')
 }
 
 /** The file without the icons whose bytes are not the ones their key names, and without the sources that name those. */

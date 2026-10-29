@@ -1033,6 +1033,19 @@ describe('readPublishedIcons', () => {
     expect(calls).toHaveLength(1)
   })
 
+  it.each([
+    ['a rate-limit body', JSON.stringify({ message: 'API rate limit exceeded' })],
+    ['an empty object', '{}'],
+    ['a bare array', '[]'],
+  ])('reads %s as an unreadable file, not as the pre-icons catalog', async (_what, body) => {
+    // Only an object carrying the catalog's own fields is the catalog published
+    // before icons existed. Anything else is a body this build cannot use; read
+    // as an empty file it would hide the failure and re-fetch every icon.
+    const { fetchImpl, calls } = pages({ 'index.json': body })
+    expect(await readPublishedIcons(fetchImpl, BASE)).toBeNull()
+    expect(calls).toHaveLength(1)
+  })
+
   it('leaves the report no line saying a file was lost, the day after a build that published none', async () => {
     const { fetchImpl } = pages({ 'index.json': noPointer })
     const read = await readPublishedIcons(fetchImpl, BASE)
