@@ -63,19 +63,23 @@ export function releaseIconKey(tarballSha256: string, path: string): IconKey {
  * What became of one key.
  *
  * `published`: the bytes were read and passed, and the row keeps their sha256,
- * media type and size, never the bytes, which are the icons file's. `refused`:
- * the artifact was read and its icon broke a rule, with the sentence its author
- * is told; a fix is a new version, commit or tarball, which is a new key.
- * `not-read`: the artifact could not be read at all and its author did nothing
- * wrong, a package past the download cap for one, or an archive that matched
- * its digest and still does not open, with the cause. A `refused` or
- * `not-read` key is never fetched again.
+ * media type and size, never the bytes, which are the icons file's.
+ * `withheld-for-size`: the same bytes, valid and fetched, that the icons
+ * file's own budget kept out of yesterday's file — the row exists so the build
+ * does not fetch them again blind and so the record does not claim a file
+ * carries an icon it does not. `refused`: the artifact was read and its icon
+ * broke a rule, with the sentence its author is told; a fix is a new version,
+ * commit or tarball, which is a new key. `not-read`: the artifact could not be
+ * read at all and its author did nothing wrong, a package past the download cap
+ * for one, or an archive that matched its digest and still does not open, with
+ * the cause. A `refused` or `not-read` key is never fetched again.
  *
  * A transport failure is none of these. It is "not yet read" (design §5.3),
  * which this record has no row for, so the next build asks again.
  */
 export type IconOutcome =
   | { outcome: 'published'; sha256: string; mediaType: IconMediaType; bytes: number }
+  | { outcome: 'withheld-for-size'; sha256: string; mediaType: IconMediaType; bytes: number }
   | { outcome: 'refused'; detail: string }
   | { outcome: 'not-read'; detail: string }
 
@@ -123,17 +127,17 @@ function checkRow(key: IconKey, value: unknown): IconOutcome {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw malformed(key, 'is not an object')
   const row = value as Record<string, unknown>
   const { outcome } = row
-  if (outcome === 'published') {
+  if (outcome === 'published' || outcome === 'withheld-for-size') {
     if (!hasExactKeys(row, PUBLISHED_FIELDS)) {
-      throw malformed(key, `has a published row whose fields are not exactly ${PUBLISHED_FIELDS.join(', ')}`)
+      throw malformed(key, `has a ${outcome} row whose fields are not exactly ${PUBLISHED_FIELDS.join(', ')}`)
     }
     const { sha256, mediaType, bytes } = row
     if (typeof sha256 !== 'string' || !SHA256_HEX.test(sha256)) {
-      throw malformed(key, 'has a published row whose sha256 is not 64 lowercase hexadecimal digits')
+      throw malformed(key, `has a ${outcome} row whose sha256 is not 64 lowercase hexadecimal digits`)
     }
-    if (!isIconMediaType(mediaType)) throw malformed(key, 'has a published row whose mediaType is not an icon media type')
+    if (!isIconMediaType(mediaType)) throw malformed(key, `has a ${outcome} row whose mediaType is not an icon media type`)
     if (typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes < 0) {
-      throw malformed(key, 'has a published row whose bytes is not a non-negative safe integer')
+      throw malformed(key, `has a ${outcome} row whose bytes is not a non-negative safe integer`)
     }
     return { outcome, sha256, mediaType, bytes }
   }
@@ -145,7 +149,7 @@ function checkRow(key: IconKey, value: unknown): IconOutcome {
     if (typeof detail !== 'string') throw malformed(key, `has a ${outcome} row whose detail is not a string`)
     return { outcome, detail }
   }
-  throw malformed(key, 'has an outcome that is none of published, refused or not-read')
+  throw malformed(key, 'has an outcome that is none of published, withheld-for-size, refused or not-read')
 }
 
 /**
@@ -154,7 +158,7 @@ function checkRow(key: IconKey, value: unknown): IconOutcome {
  * paid for, and an empty record would schedule all of them again. A missing
  * file is the caller's to read as an empty record, since this takes text.
  * @throws when the text is not JSON, is not an object, or holds a row that is
- *   not one of the three outcomes in exactly the fields it is written with. The
+ *   not one of the outcomes above in exactly the fields it is written with. The
  *   message names the file and quotes the row's key.
  */
 export function parseIconState(text: string): Map<IconKey, IconOutcome> {
@@ -187,7 +191,7 @@ export function parseIconState(text: string): Map<IconKey, IconOutcome> {
  * it. The object is built with `Object.fromEntries`, which defines its keys
  * where assignment would set them: a key named `__proto__` assigned into a
  * plain object sets its prototype, and the row is gone from the text.
- * @throws when a row is not one of the three outcomes in exactly its fields.
+ * @throws when a row is not one of the outcomes above in exactly its fields.
  */
 export function serializeIconState(state: ReadonlyMap<IconKey, IconOutcome>): string {
   const rows = [...state]

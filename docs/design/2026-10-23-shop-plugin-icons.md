@@ -211,8 +211,10 @@ published file alone could not remember a key it never published):
 
 - **`registry/icon-state.json`, committed with the daily snapshot** (it joins
   the snapshot step's `git add` list in `daily.yml`, which `workflow.test.ts`
-  checks): one row per key with its outcome, either the sha256, media type and
-  size of the bytes, or the refusal with its detail, or "not read" with its
+  checks): one row per key with its outcome — the sha256, media type and size
+  of the bytes, whether the published file carries them or its own budget kept
+  them out (`withheld-for-size`, which the next build fetches again because the
+  bytes are not kept) — or the refusal with its detail, or "not read" with its
   cause. No bytes. A refused or not-read key is never fetched again, and the
   report's rows (§10) are rebuilt from these rows, not from a fresh fetch. A
   row whose key no listing names any more is dropped.

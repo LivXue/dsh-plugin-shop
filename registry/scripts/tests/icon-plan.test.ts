@@ -170,6 +170,10 @@ const npmKey = (name: string, path = 'icon.svg'): IconKey => npmIconKey(name, '1
 const publishedRow = (bytes: Uint8Array, mediaType: IconMediaType = 'image/svg+xml'): IconOutcome =>
   ({ outcome: 'published', sha256: sha256Hex(bytes), mediaType, bytes: bytes.length })
 
+/** The row of bytes the file's budget turned away: read and valid, and not in the file. */
+const withheldRow = (bytes: Uint8Array, mediaType: IconMediaType = 'image/svg+xml'): IconOutcome =>
+  ({ outcome: 'withheld-for-size', sha256: sha256Hex(bytes), mediaType, bytes: bytes.length })
+
 /** The file an earlier build published for these icons: each key under the sha256 of its bytes. */
 function fileOf(held: readonly (readonly [IconKey, Uint8Array])[], mediaType: IconMediaType = 'image/svg+xml'): IconsFile {
   return {
@@ -1025,6 +1029,32 @@ describe('foldIconResults: one record for each key and one data URL for each sha
   })
 })
 
+describe('foldIconResults: an icon the file budget turned away', () => {
+  it('records it as withheld for size, not published, and the next build asks for it again', () => {
+    const x = npmSubject('x')
+    const y = npmSubject('y')
+    const bytesX = svgOf('x')
+    const bytesY = svgOf('y')
+    const one = sizeOf(fileOf([[keyOf(x), bytesX]]))
+    expect(sizeOf(fileOf([[keyOf(x), bytesX], [keyOf(y), bytesY]]))).toBeGreaterThan(one)
+    const { fold } = runDay([x, y], {
+      results: resultsOf([keyOf(x), bytesResult(bytesX)], [keyOf(y), bytesResult(bytesY)]),
+      fileBudget: one,
+    })
+    expect(fold.counts).toEqual({ ...ZERO, declared: 2, published: 1, withheldForSize: 1 })
+    const withheld = [...fold.nextState].filter(([, row]) => row.outcome === 'withheld-for-size')
+    expect(withheld).toHaveLength(1)
+    const [key, row] = withheld[0] ?? []
+    // The record no longer says the file carries bytes it turned away.
+    expect(Object.hasOwn(fold.file?.sources ?? {}, String(key))).toBe(false)
+    expect(row).toMatchObject({ outcome: 'withheld-for-size' })
+    // Its bytes were never kept, so the next build fetches it again, pinned to
+    // the sha it had — it may fit this time.
+    const next = planIconWork([x, y], fold.nextState, fold.file, new Map(), PLENTY)
+    expect(next.fetch.find(work => work.key === key)).toMatchObject({ expectSha256: (row as { sha256: string }).sha256 })
+  })
+})
+
 describe('foldIconResults: withholding by hand', () => {
   const x = npmSubject('x')
 
@@ -1187,10 +1217,20 @@ describe('foldIconResults: the file budget', () => {
     expect(fold.counts).toEqual({ ...ZERO, declared: 2, published: 1, withheldForSize: 1 })
   })
 
-  it('keeps a withheld icon\'s record published, because its bytes were read and passed', () => {
+  it('records a withheld icon as withheld for size, not published, because the file does not carry it', () => {
+    // `published` said the bytes were read and passed, which was true, and that
+    // the icons file holds them, which was not: the next build saw a published
+    // sha absent from the file, and the committed record disagreed with the
+    // published one. The row now says which of the two happened, and keeps the
+    // size so the plan can tell whether the file has room for it later.
     const budget = sizeOf(fileOf([[keyOf(small), smallBytes]]))
     const { fold } = runDay([small, large], { results, fileBudget: budget })
-    expect(fold.nextState.get(keyOf(large))).toEqual(publishedRow(largeBytes))
+    expect(fold.nextState.get(keyOf(large))).toEqual({
+      outcome: 'withheld-for-size',
+      sha256: sha256Hex(largeBytes),
+      mediaType: 'image/svg+xml',
+      bytes: largeBytes.length,
+    })
   })
 
   it('withholds every entry that holds a withheld icon', () => {
@@ -1418,7 +1458,7 @@ describe('foldIconResults: every day for one entry', () => {
     if (scenario.record === 'not-read') return { bucket: 'notRead', row: ['not-read', RECORD_NOT_READ.detail], state: recorded }
     // An icon in hand is published, unless the file budget turns it away.
     const icon = (bytes: Uint8Array, state: IconOutcome): Verdict => scenario.sized
-      ? { bucket: 'withheldForSize', row: ['withheld', iconDetail.withheldForSize()], state }
+      ? { bucket: 'withheldForSize', row: ['withheld', iconDetail.withheldForSize()], state: withheldRow(bytes) }
       : { bucket: 'published', row: null, bytes, state }
     // Yesterday's file holds the bytes the record names: no fetch is made, whatever was answered.
     if (scenario.record === 'published-in-file') return icon(A, publishedRow(A))
