@@ -6006,6 +6006,10 @@ describe('parseHarvestBudget', () => {
     // The value is quoted back, because the whole point is that the operator
     // cannot see it in a log line that says "0 fetched".
     expect(() => parseHarvestBudget('abc', REPO_BACKFILL_BUDGET_DEFAULT)).toThrow(/"abc"/)
+    // Past 2**53 a `Number` is an integer that no longer reads back as the
+    // number written, and `Number.isInteger` accepted it. It is the other
+    // parser's bound too, and one contract is what keeps the two from drifting.
+    expect(() => parseHarvestBudget('9007199254740993', REPO_BACKFILL_BUDGET_DEFAULT)).toThrow(/REPO_BACKFILL_BUDGET/)
   })
 
   it('names the default in one place, so the shell carries no bare literal', () => {
