@@ -162,6 +162,13 @@ describe('resolveExportsSubpath: paths Node refuses', () => {
 
 describe('resolveExportsSubpath: the path that comes out', () => {
   it.each<Row>([
+    // Node reads a target as a relative URL: an escape names the character it
+    // stands for, and a query or a fragment is not part of the path, so a path
+    // compared un-decoded was reported missing from a package that ships it.
+    ['a percent escape names the character it stands for, as a URL does', { './icon': './assets/ic%6fn.svg' }, './icon', { path: 'assets/icon.svg', via: 'exact' }],
+    ['a query is not part of the path the target opens', { './icon': './assets/icon.svg?v=2' }, './icon', { path: 'assets/icon.svg', via: 'exact' }],
+    ['a fragment is not either', { './icon': './assets/icon.svg#top' }, './icon', { path: 'assets/icon.svg', via: 'exact' }],
+    ['a malformed escape is a target Node refuses, and no path comes out', { './icon': './assets/ic%zzon.svg' }, './icon', null],
     ['a star can compose a ".." that climbs out of the package, and the path is refused', { '.*': './..*' }, './icon', null],
     ['the composed ".." is refused wherever the target goes on from it', { '.*': './..*/x.svg' }, './icon', null],
     ['a star can compose a node_modules segment, which is refused', { './ic*n': './n*de_modules/x.svg' }, './icon', null],
@@ -461,6 +468,15 @@ describe('fileListIncludes', () => {
     ['a "!" entry leaves the rest of the directory', ['dist', '!dist/sub'], 'dist/icon.svg', true],
     ['a "!" entry may be a glob', ['dist', '!dist/*.svg'], 'dist/icon.svg', false],
     ['a "!" entry that matches nothing excludes nothing', ['dist', '!lib'], 'dist/icon.svg', true],
+    // Measured with npm 11.7.0 (2026-10-29): a pattern with no slash matches a
+    // BASENAME, but only in a directory npm walks. `["*.svg"]` alone packs
+    // `icon.svg` and not `assets/icon.svg`; add an entry that sends npm into
+    // `assets` and the same pattern packs the nested file.
+    ['a slash-less glob reaches a nested basename once another entry walks there', ['assets/sub', '*.svg'], 'assets/icon.svg', true],
+    ['and not into a directory no entry names', ['assets/sub', '*.svg'], 'dist/icon.svg', false],
+    ['another entry makes npm enter the directory even when it names a file below it', ['assets/x.png', '*.svg'], 'assets/icon.svg', true],
+    ['a slash-less name reaches a nested basename the same way', ['assets/sub', 'icon.svg'], 'assets/icon.svg', true],
+    ['a slash-less name alone stays at the root', ['icon.svg'], 'assets/icon.svg', false],
   ])('%s', (_what, files, path, expected) => {
     expect(fileListIncludes(files, path)).toBe(expected)
   })
@@ -621,6 +637,8 @@ describe('iconDetail', () => {
     ['badType, of the field', iconDetail.badType(ICON_LABEL, shown), 'package.json "icon" "icons/logo.svg" is not an SVG, PNG, JPEG or WebP file name; dsh chooses an icon\'s type by its extension.'],
     ['badType, of the export', iconDetail.badType(EXPORT_LABEL, shown), 'the "./icon" export "icons/logo.svg" is not an SVG, PNG, JPEG or WebP file name; dsh chooses an icon\'s type by its extension.'],
     ['fieldUnreachable', iconDetail.fieldUnreachable(), 'package.json "icon" is never read: the package\'s "exports" does not expose "./package.json", so dsh cannot see the field. Add "./package.json": "./package.json" to "exports", or export "./icon".'],
+    ['fieldElsewhere', iconDetail.fieldElsewhere(), 'package.json "icon" is never read: the package\'s "exports" maps "./package.json" to another file, so dsh reads that file and not this manifest. Add "./package.json": "./package.json" to "exports", or export "./icon".'],
+    ['pathTooLong', iconDetail.pathTooLong(ICON_LABEL, MAX_ICON_PATH_LENGTH), `package.json "icon" is longer than the ${MAX_ICON_PATH_LENGTH} characters the catalog reads for an icon path; it was not read.`],
     ['notInFiles', iconDetail.notInFiles(ICON_LABEL, shown), 'package.json "icon" "icons/logo.svg" is not in package.json "files", so a git install leaves it out and dsh never sees it.'],
     ['notInPackage', iconDetail.notInPackage(EXPORT_LABEL, shown, '@x/y', '1.2.3'), 'the "./icon" export "icons/logo.svg" is not in the published package @x/y@1.2.3.'],
     ['notAtCommit', iconDetail.notAtCommit(ICON_LABEL, shown, 'owner/repo', '0123456789abcdef0123456789abcdef01234567'), 'package.json "icon" "icons/logo.svg" is not in owner/repo at commit 0123456.'],
