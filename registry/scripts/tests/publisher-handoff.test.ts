@@ -809,7 +809,10 @@ describe('the icon step rides the daily build (design 2026-10-23-shop-plugin-ico
     // not be read is not true of it.
     const cwd = workspace({ record: PUBLISHED_RECORD })
     try {
-      const run = buildFrom(cwd, [{ contains: 'v1/index.json', body: { schemaVersion: 5 } }], { ICON_FETCH_BUDGET: '0' })
+      // The index a build that published no icons writes: the catalog's own
+    // fields, and no `icons` pointer. A body with neither is not an index, and
+    // reading it as one would hide an unreadable file (`readPublished`).
+    const run = buildFrom(cwd, [{ contains: 'v1/index.json', body: { schemaVersion: 5, plugins: { url: 'plugins.x.json', sha256: '0'.repeat(64) } } }], { ICON_FETCH_BUDGET: '0' })
       expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
       expect(run.urls).toEqual([INDEX_URL])
       const report = readFileSync(out(cwd, 'report.md'), 'utf8')
