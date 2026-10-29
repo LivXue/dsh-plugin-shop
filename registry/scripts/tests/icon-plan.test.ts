@@ -1028,6 +1028,19 @@ describe('foldIconResults: one record for each key and one data URL for each sha
     expect(Object.keys(fold.file?.sources ?? {}).sort(compareStrings)).toEqual([keyOf(fresh), keyOf(reused)].sort(compareStrings))
   })
 
+  it('labels shared raster bytes with the type the bytes are, not the first declaration', () => {
+    // A raster is accepted under any raster extension, and the file is keyed by
+    // the bytes alone: two entries shipping the same PNG as `.png` and `.jpg`
+    // must write ONE data URL, and it must say PNG — the type of the bytes.
+    const png = npmSubject('png', declared('icon.png', 'image/png'))
+    const jpeg = npmSubject('jpeg', declared('icon.jpg', 'image/jpeg'))
+    const { fold } = runDay([png, jpeg], { results: resultsOf([keyOf(png), bytesResult(PNG)], [keyOf(jpeg), bytesResult(PNG)]) })
+    const sha256 = sha256Hex(PNG)
+    expect(fold.file?.icons).toEqual({ [sha256]: iconDataUrl(PNG, 'image/png') })
+    expect(fold.nextState.get(keyOf(jpeg))).toMatchObject({ mediaType: 'image/png' })
+    expect(fold.counts).toEqual({ ...ZERO, declared: 2, published: 2 })
+  })
+
   it('hands a key that is both reused and freshly fetched over once, as the fetch left it', () => {
     // A plan no `planIconWork` makes: the key is in the reuse list and in the
     // fetch list, with two different sha256s.

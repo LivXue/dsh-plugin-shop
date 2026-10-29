@@ -33,7 +33,7 @@
  * @module icon-plan
  */
 import { escapeCell } from './emit.ts'
-import { checkIconBytes, iconDataUrl, sha256Hex } from './icon-bytes.ts'
+import { checkIconBytes, iconDataUrl, sha256Hex, sniffedMediaType } from './icon-bytes.ts'
 import { iconDetail } from './icon-declaration.ts'
 import type { IconDeclaration, IconRead } from './icon-declaration.ts'
 import { githubIconKey, npmIconKey, pruneIconState, releaseIconKey } from './icon-state.ts'
@@ -390,9 +390,16 @@ function settle(result: Exclude<IconFetchResult, { kind: 'not-yet-read' }>, decl
   const checked = checkIconBytes(result.bytes, declaration)
   if (!checked.ok) return { outcome: { outcome: 'refused', detail: checked.detail } }
   const sha256 = sha256Hex(result.bytes)
+  // The type the URL carries comes from the BYTES where they are one of the
+  // catalog's own: a raster is accepted under any raster extension, the icons
+  // file is keyed by the bytes alone, and two entries shipping the same bytes
+  // under two extensions would otherwise write one URL and label it with
+  // whichever key came first. GIF, BMP and ICO have no catalog type, so their
+  // declaration's stands.
+  const mediaType = sniffedMediaType(result.bytes) ?? declaration.mediaType
   return {
-    outcome: { outcome: 'published', sha256, mediaType: declaration.mediaType, bytes: result.bytes.length },
-    held: { sha256, dataUrl: iconDataUrl(result.bytes, declaration.mediaType) },
+    outcome: { outcome: 'published', sha256, mediaType, bytes: result.bytes.length },
+    held: { sha256, dataUrl: iconDataUrl(result.bytes, mediaType) },
   }
 }
 

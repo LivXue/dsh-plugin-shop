@@ -101,6 +101,25 @@ export function sniffIconBytes(bytes: Uint8Array, mediaType: IconMediaType): boo
 }
 
 /**
+ * The media type the BYTES are, where one of the catalog's own: PNG, JPEG and
+ * WebP by their signatures, and SVG by its root element. Null for the three
+ * rasters the catalog has no type for (GIF, BMP, ICO), and for bytes that are
+ * none of the six.
+ *
+ * A raster is accepted under any of the catalog's raster extensions
+ * ({@link sniffIconBytes}), so the declaration alone does not decide the type
+ * the data URL carries: two entries can ship the SAME bytes under two
+ * extensions. The icons file is keyed by the bytes, so the type has to be a
+ * property of the bytes too, or one entry would be labelled with the other's.
+ */
+export function sniffedMediaType(bytes: Uint8Array): IconMediaType | null {
+  if (hasBytesAt(bytes, 0, PNG_SIGNATURE)) return 'image/png'
+  if (hasBytesAt(bytes, 0, JPEG_START)) return 'image/jpeg'
+  if (hasBytesAt(bytes, 0, RIFF) && hasBytesAt(bytes, 8, WEBP)) return 'image/webp'
+  return startsWithSvgElement(svgText(bytes)) ? 'image/svg+xml' : null
+}
+
+/**
  * Whether the bytes open as one of the six rasters: PNG's eight-byte
  * signature, {@link JPEG_START}, `RIFF` and a four-byte size and `WEBP`, or one
  * of the openings of GIF, BMP and ICO ({@link GIF_SIGNATURES}).
