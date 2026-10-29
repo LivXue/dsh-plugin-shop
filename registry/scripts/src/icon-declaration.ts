@@ -385,6 +385,10 @@ export const iconDetail = {
     `${label} ${shown} is not an SVG, PNG, JPEG or WebP file name; dsh chooses an icon's type by its extension.`,
   fieldUnreachable: (): string =>
     'package.json "icon" is never read: the package\'s "exports" does not expose "./package.json", so dsh cannot see the field. Add "./package.json": "./package.json" to "exports", or export "./icon".',
+  fieldElsewhere: (): string =>
+    'package.json "icon" is never read: the package\'s "exports" maps "./package.json" to another file, so dsh reads that file and not this manifest. Add "./package.json": "./package.json" to "exports", or export "./icon".',
+  pathTooLong: (label: string, max: number): string =>
+    `${label} is longer than the ${max} characters the catalog reads for an icon path; it was not read.`,
   notInFiles: (label: string, shown: string): string =>
     `${label} ${shown} is not in package.json "files", so a git install leaves it out and dsh never sees it.`,
   notInPackage: (label: string, shown: string, name: string, version: string): string =>
@@ -455,8 +459,12 @@ export function readIconDeclaration(manifest: unknown): IconRead {
   const exported = readIconExport(fields.exports)
   if (exported !== undefined) return exported
   // A field that is present here is one dsh never read: a readable one has
-  // returned above.
-  return fields.icon === undefined ? { kind: 'none' } : refuseWith(iconDetail.fieldUnreachable())
+  // returned above. Two ways it goes unread, and the author is told which: an
+  // `exports` that does not name "./package.json" at all, and one that names
+  // it and points it at another file — the second sentence used to claim the
+  // first, telling an author to add an export they already had.
+  if (fields.icon === undefined) return { kind: 'none' }
+  return refuseWith(manifestAt === null ? iconDetail.fieldUnreachable() : iconDetail.fieldElsewhere())
 }
 
 function refuseWith(detail: string): IconRead {
@@ -473,7 +481,7 @@ function readIconField(value: unknown): IconRead {
   if (!isRelativePath(value)) return refuseWith(iconDetail.notRelative(shownPath(value)))
   // After the relative test, so that a `data:` URL, which authors do write and
   // which can be long, is still refused and told why.
-  if (value.length > MAX_ICON_PATH_LENGTH) return { kind: 'none' }
+  if (value.length > MAX_ICON_PATH_LENGTH) return refuseWith(iconDetail.pathTooLong(iconLabel('icon'), MAX_ICON_PATH_LENGTH))
   const path = pathInsidePackage(value)
   if (path === null) return refuseWith(iconDetail.leavesPackage(shownPath(value)))
   const mediaType = mediaTypeOf(path)

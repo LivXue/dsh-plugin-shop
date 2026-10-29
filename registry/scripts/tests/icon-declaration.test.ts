@@ -280,8 +280,8 @@ describe('readIconDeclaration: through exports', () => {
     // dsh reads whatever file the map hands to "./package.json". If that is
     // not the manifest the shop holds, the shop cannot know what dsh reads, and
     // this manifest's own field is not it.
-    ['a map that sends "./package.json" elsewhere hides this manifest\'s field', { icon: './i.svg', exports: { './package.json': './dist/package.json' } }, refused(iconDetail.fieldUnreachable())],
-    ['a map that sends "./package.json" to the package directory hides it too', { icon: './i.svg', exports: { './package.json': './' } }, refused(iconDetail.fieldUnreachable())],
+    ['a map that sends "./package.json" elsewhere hides this manifest\'s field', { icon: './i.svg', exports: { './package.json': './dist/package.json' } }, refused(iconDetail.fieldElsewhere())],
+    ['a map that sends "./package.json" to the package directory hides it too', { icon: './i.svg', exports: { './package.json': './' } }, refused(iconDetail.fieldElsewhere())],
     // The field is never read, so nothing is wrong with its value.
     ['an unreachable field is reported as unreachable, whatever it holds', { icon: 7, exports: { '.': './i.js' } }, refused(iconDetail.fieldUnreachable())],
     ['an unreachable field and an export: the export wins', { icon: './old.svg', exports: { '.': './i.js', './icon': './new.svg' } }, declared('export', 'new.svg', 'image/svg+xml')],
@@ -344,17 +344,21 @@ describe('readIconDeclaration: hostile and malformed input', () => {
   // The path becomes a key in a committed file and a lookup in an archive, and
   // a manifest may be a megabyte. No file system dsh runs on opens a name past
   // PATH_MAX, so nothing real is lost to a bound.
-  it.each<[source: string, manifestWith: (path: string) => unknown]>([
-    ['the field', (path) => ({ icon: path })],
-    ['the export', (path) => ({ exports: { './icon': `./${path}` } })],
-  ])('declares %s up to the longest path a file system opens, and reads nothing past it', (_source, manifestWith) => {
+  it.each<[source: string, manifestWith: (path: string) => unknown, past: unknown]>([
+    // The field is the author's own statement, so a path past the bound is
+    // refused and appears in the report; an export that long is no export,
+    // which is the same answer as never declaring one.
+    ['the field', (path) => ({ icon: path }), refused(iconDetail.pathTooLong(iconLabel('icon'), MAX_ICON_PATH_LENGTH))],
+    ['the export', (path) => ({ exports: { './icon': `./${path}` } }), none],
+  ])('declares %s up to the longest path a file system opens, and reads nothing past it', (_source, manifestWith, past) => {
     const named = (length: number): string => `${'a'.repeat(length - '.svg'.length)}.svg`
     expect(readIconDeclaration(manifestWith(named(MAX_ICON_PATH_LENGTH))).kind).toBe('declared')
-    expect(readIconDeclaration(manifestWith(named(MAX_ICON_PATH_LENGTH + 1)))).toEqual(none)
+    expect(readIconDeclaration(manifestWith(named(MAX_ICON_PATH_LENGTH + 1)))).toEqual(past)
   })
 
-  it('reads a field a megabyte long as no icon, without stalling on it', () => {
-    expect(readIconDeclaration({ icon: `${'b/'.repeat(500_000)}icon.svg` })).toEqual(none)
+  it('refuses a field a megabyte long without stalling on it', () => {
+    expect(readIconDeclaration({ icon: `${'b/'.repeat(500_000)}icon.svg` }))
+      .toEqual(refused(iconDetail.pathTooLong(iconLabel('icon'), MAX_ICON_PATH_LENGTH)))
   })
 })
 
