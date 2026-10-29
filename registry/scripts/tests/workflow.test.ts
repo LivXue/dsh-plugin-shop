@@ -1106,7 +1106,13 @@ describe('the catalog job writes its own deadline before any other step runs', (
     expect(reserve).toBeLessThan(10)
   })
 
-  it('fails the step when the clock cannot be read, rather than writing a deadline in 1970', () => {
+  // The step is a `run:` block of the build job, which is `runs-on:
+  // ubuntu-latest`, so it never executes on Windows. There it also cannot be
+  // tested: the `bash` a Windows runner resolves is MSYS's, and the absolute
+  // path `command -v bash` prints (`/usr/bin/bash`) is ENOENT to `spawnSync`
+  // — the child's PATH is emptied on purpose — so `status` is null and the
+  // assertion would pass without the script having run at all.
+  it.skipIf(process.platform === 'win32')('fails the step when the clock cannot be read, rather than writing a deadline in 1970', () => {
     // `$(date +%s)` nested inside the arithmetic fails OPEN: with no `date` the
     // command substitution answers the empty string, bash -e is happy because
     // the `echo` succeeds, and a deadline of 10620000 is written. Every later
