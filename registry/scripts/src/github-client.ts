@@ -17,6 +17,7 @@
 import { createHash } from 'node:crypto'
 import { truncateWholeCharacters, VERSION_MAX_LENGTH } from './gate.ts'
 import { compatibilityOf, dshPeersOf, FetchTimeoutError, fetchWithRetry, peerNamesOf, withTimeout } from './npm-client.ts'
+import { parseBudgetVariable } from './pipeline.ts'
 import { fileListIncludes, type IconRead, iconDetail, iconLabel, readIconDeclaration, shownPath } from './icon-declaration.ts'
 import { canEverList } from './repo-gate.ts'
 import { DECLARATIONS_RULE, diffRepoState, needsDeclarationsReread, nextRepoState, type RepoSeen, type RepoState, type RepoStateEntry, type RepoToFetch } from './repo-state.ts'
@@ -2253,16 +2254,13 @@ export const DECLARATIONS_REREAD_FAILURE_LINES = 10
  * budget.
  * @param raw - the environment value, or undefined when unset.
  * @param fallback - the budget to use when the variable is unset.
- * @throws when the value is present but not a non-negative integer, quoting it
- *   back: the operator cannot see the value in a log line that says `0 fetched`.
+ * @throws when the value is present but not a non-negative SAFE integer,
+ *   quoting it back: the operator cannot see the value in a log line that says
+ *   `0 fetched`. The check is `parseBudgetVariable`'s (pipeline.ts), so every
+ *   budget read in the build fails open in none of the same ways.
  */
 export function parseHarvestBudget(raw: string | undefined, fallback: number): number {
-  if (raw === undefined) return fallback
-  const budget = Number(raw)
-  if (raw.trim() === '' || !Number.isInteger(budget) || budget < 0) {
-    throw new Error(`REPO_BACKFILL_BUDGET must be a non-negative integer; got ${JSON.stringify(raw)}`)
-  }
-  return budget
+  return parseBudgetVariable('REPO_BACKFILL_BUDGET', raw, fallback)
 }
 
 export interface RepoHarvestOptions {

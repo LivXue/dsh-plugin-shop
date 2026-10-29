@@ -490,14 +490,18 @@ export function foldIconResults(
     const hold = withheld.get(subject.withheldKey)
     if (hold !== undefined) return { kind: 'withheld-by-hand', reason: hold.reason }
     if (read.kind === 'refused') return { kind: 'refused', detail: read.detail }
-    const outcome = record.get(subject.key)
+    // A refused read has no key, and returned above; a declared one always has
+    // one, which the optional field's type does not say.
+    const key = subject.key
+    if (key === undefined) return { kind: 'not-yet-read' }
+    const outcome = record.get(key)
     // Bytes already in the published file are in hand whatever the artifact
     // does now: the key names one immutable artifact, and the file carries a
     // copy. Consulted before `isFetchable`, which decides whether a FETCH is
     // possible, not whether the icon is available.
     if (outcome?.outcome === 'published') {
       const dataUrl = dataUrlOf(outcome.sha256)
-      if (dataUrl !== undefined) return { kind: 'icon', key: subject.key, sha256: outcome.sha256, dataUrl }
+      if (dataUrl !== undefined) return { kind: 'icon', key, sha256: outcome.sha256, dataUrl }
     }
     // A declared icon with nothing to fetch it from is no icon this build.
     if (!isFetchable(subject)) return { kind: 'not-yet-read' }
