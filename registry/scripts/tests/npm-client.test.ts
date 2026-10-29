@@ -5196,6 +5196,7 @@ describe('every network module bounds its requests with withTimeout', () => {
     expect(files).toContain('llm-client.ts')
     expect(files).toContain('github-stars.ts')
     expect(files).toContain('npm-feed.ts')
+    expect(files).toContain('icon-fetch.ts')
   })
 
   it('detects a raw invocation at all, so the prohibition below cannot pass by matching nothing', () => {
