@@ -368,6 +368,13 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
       expect(axisLine('dsh-plugin')).toContain('released 1 pin(s) seeding no longer names, the keyword counted whole inside its window')
       expect(axisLine('deepseek-harness')).toContain('released 1 judged pin(s) seeding no longer names')
       expect(axisLine('deepseek-harness')).not.toContain('counted whole')
+      // The report the reader sees, not only stderr: the sentence is published
+      // there too, and a stderr-only assertion leaves half the artifact free to
+      // say something else (PR-1 review; CLAUDE.md, "Assert on every artifact a
+      // property claims to cover").
+      const report = readFileSync(join(cwd, 'dist', 'v1', 'report.md'), 'utf8')
+      expect(report).toContain('released 1 pin(s) seeding no longer names, the keyword counted whole inside its window')
+      expect(report).toContain('released 1 judged pin(s) seeding no longer names')
       expect((vocabulary(cwd) as { pinned?: unknown }).pinned).toEqual({})
     } finally {
       rmSync(cwd, { recursive: true, force: true })

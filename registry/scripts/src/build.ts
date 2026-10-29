@@ -746,9 +746,20 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // set that shrinks by hundreds in silence reads as a fault. And with its
     // exit, which rests on different evidence inside the window and past it.
     if (applied.released.length > 0) {
-      notes.push(applied.releaseExit === 'complete-seeding'
-        ? `released ${applied.released.length} pin(s) seeding no longer names, the keyword counted whole inside its window`
-        : `released ${applied.released.length} judged pin(s) seeding no longer names`)
+      // A switch rather than a ternary on `!'complete-seeding'`: a third exit
+      // added to the union would have been published as "judged" with no
+      // compile error, on the page readers see (PR-1 review).
+      switch (applied.releaseExit) {
+        case 'complete-seeding':
+          notes.push(`released ${applied.released.length} pin(s) seeding no longer names, the keyword counted whole inside its window`)
+          break
+        case 'judged':
+          notes.push(`released ${applied.released.length} judged pin(s) seeding no longer names`)
+          break
+        case null:
+          // Unreachable by construction: `released.length > 0` gives an exit.
+          throw new Error('publisher axis: a report that released pins named no release exit')
+      }
     }
     // Loud, because the alternative reading of a large eviction list is a
     // registry fault and the run just declined to act on it. Left silent this

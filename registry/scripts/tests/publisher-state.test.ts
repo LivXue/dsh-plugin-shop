@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import {
   MAINTAINER_MAX_LENGTH, MAX_EVICTIONS_PER_RUN, MAX_PINNED_KEYWORDS, MAX_PINNED_PER_KEYWORD, MAX_PUBLISHERS,
   MIN_PROBE_BUDGET_PER_KEYWORD, PinObservation, PublisherState, advanceCursor, allocateProbeBudgets, applyAxisReport,
-  atRiskNameCount, atRiskOwners, cursorFor, earnsPin, isMaintainerName, judgedPins, mergePublishers, parsePublisherState,
+  atRiskNameCount, atRiskOwners, countedWholeInsideWindow, cursorFor, earnsPin, isMaintainerName, judgedPins, mergePublishers, parsePublisherState,
   pinFor, probeOrder, retainPinned, seedableNames, serializePublisherState, unpinFor,
 } from '../src/publisher-state.ts'
 import { HARVEST_KEYWORDS, PUBLISHER_PROBE_BUDGET_DEFAULT } from '../src/npm-client.ts'
@@ -962,6 +962,14 @@ describe('applyAxisReport', () => {
     expect(past.releaseExit).toBe('judged')
   })
 
+  it('names no exit when it released nothing', () => {
+    // A report that released no pin has no exit to name; naming one made every
+    // caller qualify it (PR-1 review).
+    const after = applyAxisReport(base({ pinned: { k: ['kept'] } }), outcome({ seeded: ['kept'] }))
+    expect(after.released).toEqual([])
+    expect(after.releaseExit).toBeNull()
+  })
+
   it('lets a seed take the slot a release freed in the same run', () => {
     // Release comes before pinning for the reason eviction does: at the bound,
     // pinning first refuses a new residue owner while a pin that no longer
@@ -1207,5 +1215,24 @@ describe('allocateProbeBudgets', () => {
   it('allocates nothing at all when the budget is zero or negative', () => {
     expect(sum(allocateProbeBudgets(shipped, measured, 0))).toBe(0)
     expect(sum(allocateProbeBudgets(shipped, measured, -5))).toBe(0)
+  })
+})
+
+describe('countedWholeInsideWindow', () => {
+  it('does not call a keyword counted whole when the measured total is zero', () => {
+    // `required` is the minimum of the first total and the re-probe, so a
+    // legal-but-wrong `{"total":0}` makes the shortfall negative. Without the
+    // zero guard the report claimed the keyword was counted whole and released
+    // every pin seeding did not name, unbounded, on an answer nobody can stand
+    // behind (PR-1 review).
+    expect(countedWholeInsideWindow(false, -3, 0)).toBe(false)
+    expect(countedWholeInsideWindow(false, 0, 0)).toBe(false)
+  })
+
+  it('is otherwise the unpartitioned, no-shortfall keyword', () => {
+    expect(countedWholeInsideWindow(false, 0, 1250)).toBe(true)
+    expect(countedWholeInsideWindow(false, -2, 1250)).toBe(true)
+    expect(countedWholeInsideWindow(true, 0, 1250)).toBe(false)
+    expect(countedWholeInsideWindow(false, 1, 1250)).toBe(false)
   })
 })

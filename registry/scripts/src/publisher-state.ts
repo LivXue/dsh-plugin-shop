@@ -1030,7 +1030,7 @@ export function applyAxisReport(
    * rest on different evidence, so the report says which one a count came
    * through.
    */
-  releaseExit: 'complete-seeding' | 'judged'
+  releaseExit: 'complete-seeding' | 'judged' | null
 } {
   // All or nothing, and nothing past the cap: half a suspect eviction list is
   // no safer than all of it, and applying the first 8 of 200 would turn a
@@ -1087,8 +1087,27 @@ export function applyAxisReport(
     refused,
     evictionsRefused,
     released,
-    releaseExit: outcome.seedingComplete ? 'complete-seeding' : 'judged',
+    // The exit a release left through, and null when it released nothing: a
+    // report that released no pin has no exit to name, and naming one made
+    // every caller qualify it (PR-1 review).
+    releaseExit: released.length === 0 ? null : outcome.seedingComplete ? 'complete-seeding' : 'judged',
   }
+}
+
+/**
+ * Whether a keyword's whole set was counted inside its window: unpartitioned,
+ * no shortfall against the total the run measured, and a total ABOVE ZERO.
+ *
+ * The zero guard is load-bearing. `required` is the minimum of the keyword's
+ * first total and its re-probe, so a legal-but-wrong `{"total":0}` answer makes
+ * the shortfall negative and would have this claim the keyword was counted
+ * whole while the registry said it holds nothing — which releases every pin
+ * seeding does not name, unbounded and on an answer nobody can stand behind
+ * (PR-1 review). A keyword that really holds nothing keeps its pins instead;
+ * the next run measures again.
+ */
+export function countedWholeInsideWindow(partitioned: boolean, shortfall: number, required: number): boolean {
+  return !partitioned && shortfall <= 0 && required > 0
 }
 
 /**
