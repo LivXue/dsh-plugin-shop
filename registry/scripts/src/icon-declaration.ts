@@ -211,10 +211,15 @@ function resolveString(target: string, match: string | null): string | null | ty
   if (refused(target.slice(2))) return null
   if (match !== null && refused(match)) return FATAL
   const filled = match === null ? target : target.split('*').join(match)
+  // Node reads the target as a relative URL: `%20` names a space, and a
+  // `?query` or `#fragment` is not part of the path it opens. Applied after
+  // the segment rule, which reads the escapes as they stand.
+  const opened = decodeTarget(filled)
+  if (opened === null) return null
   // Normalising the whole target, `./` included, is what keeps `.//x.svg` from
   // coming out as the absolute `/x.svg`. A backslash is a separator to Node,
   // whose URL reading turns it into a slash, so it is one here.
-  const normalised = posix.normalize(filled.replaceAll('\\', '/'))
+  const normalised = posix.normalize(opened.replaceAll('\\', '/'))
   const path = normalised === './' ? '' : normalised
   // The two halves were clean, but a star can compose what neither held. With
   // a key such as `.*` the match starts with a slash, so a target segment
@@ -226,8 +231,44 @@ function resolveString(target: string, match: string | null): string | null | ty
   // Node takes this member, so none after it may stand in. An escaped slash or
   // backslash goes the same way, as Node refuses it after choosing the member,
   // and because it could hide a separator from the segment check.
-  if (refused(path) || ESCAPED_SEPARATOR.test(path)) return FATAL
+  // The escaped separator is read on the target as WRITTEN: Node refuses it
+  // after choosing the member, and decoding first would hide the escape behind
+  // the separator it stands for. A segment SPELLED with escapes that names `..`
+  // is refused too, because Node refuses that spelling — while a literal `..`
+  // the star composed is resolved and may normalise away. `refused` reads the
+  // escapes itself and is asked about the decoded path as well.
+  if (escapedRefusal(filled.slice(2)) || refused(path) || ESCAPED_SEPARATOR.test(filled)) return FATAL
   return path
+}
+
+/**
+ * A target with what Node's URL reading removes taken off: the fragment and the
+ * query, then the percent escapes decoded. `decodeURIComponent` throws on a
+ * malformed escape, and Node refuses such a target, so null is no target rather
+ * than a refusal.
+ */
+function decodeTarget(target: string): string | null {
+  try {
+    return decodeURIComponent(target.replace(/[?#].*$/, ''))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Whether a segment SPELLED with percent escapes names one Node refuses (`.`,
+ * `..` or `node_modules`). A literal dot segment the star composed is Node's to
+ * resolve; an escaped one is a spelling it rejects, and it is the spelling this
+ * reads.
+ */
+function escapedRefusal(path: string): boolean {
+  return path.split(/[\\/]/).some((segment) => {
+    if (!segment.includes('%')) return false
+    const plain = segment
+      .replace(/%([\da-f]{2})/gi, (_escape, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
+      .toLowerCase()
+    return plain === '.' || plain === '..' || plain === 'node_modules'
+  })
 }
 
 /**
@@ -656,10 +697,18 @@ export function fileListIncludes(files: unknown, path: string, steps: MatchSteps
   if (!Array.isArray(files) || files.length > MAX_FILES_ENTRIES || path.length > MAX_ICON_PATH_LENGTH) return true
   if (!files.every((entry) => typeof entry === 'string')) return true
   const segments = path.toLowerCase().split('/')
+  // npm walks the root always, and a deeper directory when an entry names a
+  // path on the way down to it — it cannot know the entry's next segment is
+  // absent without looking. {@link entryMatches} uses this for the basename
+  // matching npm was measured to do.
+  const directory = segments.slice(0, -1)
+  const prefixes = (files as readonly string[]).filter((entry) => !entry.startsWith('!')).map(literalPrefix)
+  const walked = directory.length === 0
+    || prefixes.some((prefix) => prefix.length > 0 && (isPrefix(prefix, directory) || isPrefix(directory, prefix)))
   let included = false
   for (const entry of files as readonly string[]) {
     const excludes = entry.startsWith('!')
-    const matched = entryMatches(excludes ? entry.slice(1) : entry, segments, steps)
+    const matched = entryMatches(excludes ? entry.slice(1) : entry, segments, steps, walked)
     // A spent budget leaves the answer unknown, and an unknown answer includes.
     if (steps.left < 0) return true
     // An entry that cannot be read (`undefined`) counts as a match for an
@@ -673,22 +722,49 @@ export function fileListIncludes(files: unknown, path: string, steps: MatchSteps
  * Whether one `files` entry, without its `!`, matches a path, or `undefined`
  * where the entry is one this does not read. A glob's answer means nothing once
  * `steps` is spent, and the caller reads `steps` first.
+ * @param walked - whether npm walks the directory `path` is in, which decides
+ *   whether a slash-less entry is matched against the basename there
+ *   ({@link fileListIncludes} measures why).
  */
-function entryMatches(entry: string, path: readonly string[], steps: MatchSteps): boolean | undefined {
+function entryMatches(entry: string, path: readonly string[], steps: MatchSteps, walked: boolean): boolean | undefined {
   if (entry.length > MAX_FILES_ENTRY_LENGTH || UNREAD_GLOB_SYNTAX.test(entry)) return undefined
   // Empty segments (`a//b`, a trailing or a leading slash) are no segments, and
   // a leading `.` is the package root. `path` is lower-cased by the caller.
   const parts = entry.toLowerCase().split('/').filter((part) => part !== '')
   if (parts[0] === '.') parts.shift()
   if (parts.length === 0) return undefined
+  // npm's packlist matches a pattern with no slash against a basename, not the
+  // whole path — for the directories it walks. Measured with npm 11.7.0
+  // (2026-10-29): `files: ["assets/sub", "*.svg"]` packs `assets/icon.svg`, and
+  // `files: ["*.svg"]` alone does not, because nothing makes npm enter
+  // `assets`. Matching the whole path instead refused an icon npm ships.
+  const target = entry.includes('/') || !walked ? path : path.slice(-1)
   if (!entry.includes('*')) {
-    // A plain name: the file itself, or a directory that holds it.
-    return parts.length <= path.length && parts.every((part, index) => part === path[index])
+    // A plain name: the file itself, or a directory that holds it. A bare name
+    // in a walked directory also matches a basename anywhere below it.
+    return (parts.length <= path.length && parts.every((part, index) => part === path[index]))
+      || (walked && parts.length === 1 && parts[0] === path[path.length - 1])
   }
   // npm packs everything below `dir/*`, not only the children of `dir`, and
   // everything for a lone `*`, an include or a `!`.
   if (parts[parts.length - 1] === '*') parts[parts.length - 1] = '**'
-  return globMatches(parts, path, steps)
+  return globMatches(parts, target, steps)
+}
+
+/** The literal segments of a `files` entry, up to its first wildcard; a bare name is all literal. */
+function literalPrefix(entry: string): string[] {
+  const parts = entry.replace(/^!/, '').toLowerCase().split('/').filter((part) => part !== '' && part !== '.')
+  const literal: string[] = []
+  for (const part of parts) {
+    if (part.includes('*')) break
+    literal.push(part)
+  }
+  return literal
+}
+
+/** Whether `a` is a prefix of `b`, segment for segment. */
+function isPrefix(a: readonly string[], b: readonly string[]): boolean {
+  return a.length <= b.length && a.every((part, index) => part === b[index])
 }
 
 /**
