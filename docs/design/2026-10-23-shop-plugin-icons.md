@@ -109,7 +109,13 @@ The versions differ, and the difference is large in practice (§1):
   path, or anything with a URL scheme (`/^[A-Za-z][A-Za-z\d+.-]*:/`) throws
   `icon must be a relative file path`. Resolved against the manifest's real
   directory, it must stay inside it (`icon must remain inside its manifest
-  directory`).
+  directory`). A backslash is a file-name character, not a separator: the
+  catalog keys and reads the POSIX spelling, which is what git and npm's
+  tarballs hold, so a manifest declaring `assets\logo.svg` names a file of that
+  one name — 0.2.1 on Windows would resolve it as a path and draw a different
+  file, and the catalog publishes the refusal rather than a platform's reading
+  it cannot verify. (Found in review, 2026-10-29; the alternative was to
+  accept two readings for one key.)
 - **The type comes from the extension**: `.svg` `image/svg+xml`, `.png`
   `image/png`, `.jpg`/`.jpeg` `image/jpeg`, `.webp` `image/webp`; anything else
   throws `icon must be SVG, PNG, JPEG, or WebP`. The bytes are not sniffed.

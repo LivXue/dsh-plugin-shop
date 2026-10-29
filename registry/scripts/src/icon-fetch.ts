@@ -472,15 +472,12 @@ type Opened =
  * dropped the high bit of every byte, which made `é.svg` (C3 A9) and
  * `C).svg` one name and took the bytes of one for the other's.
  *
- * What the reader does not see is a name that does not fit a ustar header: 100
- * bytes of name and 155 of prefix, which `npm pack` fills by splitting a path at
- * a slash. A name past that comes with a pax header (`npm pack`: one file name
- * past 100 bytes, about 33 CJK characters, or a member path past 256 bytes,
- * `package/` included) or, from GNU tar, an `L` entry (past 100), and the
- * reader skips both, so the entry arrives under
- * a cut name and an icon with a path that long is reported missing from a package
- * that ships it. Not handled here: it takes the shared reader reading those
- * headers.
+ * A name that does not fit a ustar header — 100 bytes of name and 155 of prefix,
+ * which `npm pack` fills by splitting a path at a slash — travels in a pax (`x`)
+ * header before the entry (`npm pack`: one file name past 100 bytes, about 33
+ * CJK characters, or a member path past 256 bytes, `package/` included), or in
+ * a GNU `L` entry. The shared reader reads both and gives the next entry the
+ * name they carry, so an icon with a path that long is found where it is.
  */
 function openMember(archive: Uint8Array, path: string, inflatedBytes: number): Opened {
   let files: Map<string, Buffer>

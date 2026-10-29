@@ -46,14 +46,20 @@ function assertContained(path: string): string {
 /**
  * Parse an uncompressed tar archive into path → bytes.
  *
- * Directory entries and every non-regular type (symlinks, pax and GNU
- * extension headers) are skipped: npm packs regular files under `package/`,
- * and a catalog tarball that needs anything else is not one we published.
+ * Directory entries and the type flags that carry no file are skipped: npm
+ * packs regular files under `package/`, and a catalog tarball that needs
+ * anything else is not one we published. A pax (`x`) or GNU (`L`) header is not
+ * a file either, but it NAMES the next one: a path too long or too wide for a
+ * ustar header arrives this way, and skipping the header without reading it
+ * left its file under a truncated name, reported missing from an archive that
+ * ships it ({@link pathFromPax}).
  * Each path is spelled by its bytes, one character each ({@link cstring}).
  */
 export function readTar(buffer: Buffer): Map<string, Buffer> {
   const files = new Map<string, Buffer>()
   let offset = 0
+  /** The name a pax or GNU header gives the header after it. */
+  let extendedPath: string | null = null
   while (offset + 512 <= buffer.length) {
     const header = buffer.subarray(offset, offset + 512)
     // The archive ends with zero blocks; one is enough to stop reading.
@@ -62,12 +68,51 @@ export function readTar(buffer: Buffer): Map<string, Buffer> {
     const prefix = cstring(header.subarray(345, 500))
     const size = parseOctal(header.subarray(124, 136))
     const typeflag = String.fromCharCode(header[156] ?? 0)
-    const path = prefix === '' ? name : `${prefix}/${name}`
-    offset += 512
-    if (typeflag === '0' || typeflag === '\0') {
-      files.set(assertContained(path), buffer.subarray(offset, offset + size))
+    const data = buffer.subarray(offset + 512, offset + 512 + size)
+    offset += 512 + Math.ceil(size / 512) * 512
+    if (typeflag === 'x') {
+      extendedPath = pathFromPax(data) ?? extendedPath
+      continue
     }
-    offset += Math.ceil(size / 512) * 512
+    if (typeflag === 'L') {
+      extendedPath = cstring(data)
+      continue
+    }
+    const path = extendedPath ?? (prefix === '' ? name : `${prefix}/${name}`)
+    extendedPath = null
+    if (typeflag === '0' || typeflag === '\0') {
+      files.set(assertContained(path), data)
+    }
   }
   return files
+}
+
+/**
+ * The `path` record of a pax extended header, in the reader's spelling, or null
+ * where the header names none.
+ *
+ * A pax record is `<length> <key>=<value>\n`, where `<length>` counts the whole
+ * record in bytes, its own digits included. The value is UTF-8 text, and the
+ * reader spells a name one character for each byte.
+ */
+function pathFromPax(data: Buffer): string | null {
+  let at = 0
+  while (at < data.length) {
+    const space = data.indexOf(0x20, at)
+    if (space === -1) return null
+    const length = Number.parseInt(data.subarray(at, space).toString('latin1'), 10)
+    if (!Number.isSafeInteger(length) || length <= 0 || at + length > data.length) return null
+    const record = data.subarray(at, at + length)
+    const equals = record.indexOf(0x3d, space - at)
+    if (equals !== -1) {
+      const key = record.subarray(space - at + 1, equals).toString('utf8')
+      if (key === 'path') {
+        // The value runs to the newline that ends the record.
+        const end = record[record.length - 1] === 0x0a ? record.length - 1 : record.length
+        return record.subarray(equals + 1, end).toString('latin1')
+      }
+    }
+    at += length
+  }
+  return null
 }
