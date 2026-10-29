@@ -355,7 +355,10 @@ export function planIconWork(
     if (withheld.has(withheldKey) || seen.has(key)) continue
     seen.add(key)
     const recorded = state.get(key)
-    if (recorded !== undefined && recorded.outcome !== 'published') continue
+    // A refusal or an unreadable artifact is final for this key; an icon the
+    // file's budget turned away is not, and its bytes were never kept, so it is
+    // fetched again — the file may have room for it this time.
+    if (recorded !== undefined && recorded.outcome !== 'published' && recorded.outcome !== 'withheld-for-size') continue
     if (recorded !== undefined && published !== null && Object.hasOwn(published.icons, recorded.sha256)) {
       reuse.push({ key, sha256: recorded.sha256 })
       continue
@@ -491,6 +494,9 @@ export function foldIconResults(
     if (!isFetchable(subject)) return { kind: 'not-yet-read' }
     const outcome = record.get(subject.key)
     if (outcome === undefined) return { kind: 'not-yet-read' }
+    // Bytes the file's budget kept out are not in hand this build: the row's
+    // size says they exist, and the next build fetches them to try again.
+    if (outcome.outcome === 'withheld-for-size') return { kind: 'not-yet-read' }
     if (outcome.outcome !== 'published') return { kind: outcome.outcome, detail: outcome.detail }
     const dataUrl = dataUrlOf(outcome.sha256)
     return dataUrl === undefined ? { kind: 'not-yet-read' } : { kind: 'icon', key: subject.key, sha256: outcome.sha256, dataUrl }
@@ -504,6 +510,17 @@ export function foldIconResults(
   }
   const assembled = assembleIcons([...icons.values()], budget)
   const turnedAway = new Set(assembled.withheldForSize)
+  // A key the file's budget kept out was fetched and is valid, but the file
+  // does not carry it; recorded `published`, the committed record claimed an
+  // icon the published file did not have, and the next build could not tell the
+  // two apart. Its row says what happened, and carries the size the plan needs
+  // to decide whether the file has room for it later.
+  for (const key of turnedAway) {
+    const recorded = record.get(key)
+    if (recorded?.outcome === 'published') {
+      record.set(key, { outcome: 'withheld-for-size', sha256: recorded.sha256, mediaType: recorded.mediaType, bytes: recorded.bytes })
+    }
+  }
 
   const counts: IconCounts = { declared: 0, published: 0, withheldByHand: 0, withheldForSize: 0, refused: 0, notRead: 0, notYetRead: 0 }
   const byIdentity = new Map<string, string>()

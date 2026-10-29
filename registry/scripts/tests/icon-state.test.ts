@@ -225,7 +225,7 @@ describe('parseIconState', () => {
   })
 
   const NOT_AN_OBJECT = 'is not an object'
-  const NO_SUCH_OUTCOME = 'has an outcome that is none of published, refused or not-read'
+  const NO_SUCH_OUTCOME = 'has an outcome that is none of published, withheld-for-size, refused or not-read'
   const PUBLISHED_FIELDS = 'has a published row whose fields are not exactly outcome, sha256, mediaType, bytes'
   const REFUSED_FIELDS = 'has a refused row whose fields are not exactly outcome, detail'
   const NOT_READ_FIELDS = 'has a not-read row whose fields are not exactly outcome, detail'
@@ -333,5 +333,26 @@ describe('the committed outcome record', () => {
     // rather than at the next daily run.
     const committed = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'icon-state.json')
     expect(() => parseIconState(readFileSync(committed, 'utf8'))).not.toThrow()
+  })
+})
+
+describe('parseIconState: a row whose bytes the icons file kept out', () => {
+  // The bytes were read and passed; the file's own budget kept them out of the
+  // published file. The row says so, rather than `published`, which claimed a
+  // file carried bytes it did not.
+  const withheld = {
+    outcome: 'withheld-for-size',
+    sha256: sha256Hex(SVG),
+    mediaType: 'image/svg+xml',
+    bytes: SVG.length,
+  } satisfies IconOutcome
+
+  it('round-trips through the file', () => {
+    expect(parseIconState(serializeIconState(new Map<IconKey, IconOutcome>([[NPM, withheld]])))).toEqual(new Map([[NPM, withheld]]))
+  })
+
+  it('refuses a row without the size the plan needs, naming what the row is', () => {
+    expect(() => parseIconState(fileOf(KEY, { outcome: 'withheld-for-size', sha256: sha256Hex(SVG), mediaType: 'image/svg+xml' })))
+      .toThrow('has a withheld-for-size row whose fields are not exactly outcome, sha256, mediaType, bytes')
   })
 })
