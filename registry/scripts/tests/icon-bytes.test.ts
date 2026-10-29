@@ -1,5 +1,5 @@
 import { isUtf8 } from 'node:buffer'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { MAX_CATALOG_ICON_BYTES, checkIconBytes, iconDataUrl, sha256Hex, sniffIconBytes } from '../src/icon-bytes.ts'
 import { iconDetail, shownPath } from '../src/icon-declaration.ts'
 import type { IconDeclaration, IconMediaType } from '../src/icon-declaration.ts'
@@ -345,6 +345,26 @@ describe('sniffIconBytes: SVG, the encodings a browser reads', () => {
     ['an svg element followed by a lone surrogate written as UTF-8', bytesOf(...ascii('<svg>'), 0xed, 0xa0, 0x80)],
   ])('reads %s as SVG', (_what, bytes) => {
     expect(sniffIconBytes(bytes, 'image/svg+xml')).toBe(true)
+  })
+
+  it('reads big-endian text without the decoder that needs ICU', () => {
+    // A Node built with `--with-intl=none` throws when `utf-16be` is
+    // constructed, and a throw here would take down the whole build for one
+    // file. Big-endian bytes are swapped into the little-endian decoder every
+    // build carries instead, so a platform without that decoder still reads them.
+    const Real = globalThis.TextDecoder
+    class NoBigEndian extends Real {
+      constructor(label?: string, options?: { fatal?: boolean; ignoreBOM?: boolean }) {
+        if (label === 'utf-16be') throw new TypeError('utf-16be needs ICU')
+        super(label, options)
+      }
+    }
+    vi.stubGlobal('TextDecoder', NoBigEndian)
+    try {
+      expect(sniffIconBytes(utf16be(SVG_ROOT), 'image/svg+xml')).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   // Replacement decodes what is ill-formed and makes no root of it: a stray byte
