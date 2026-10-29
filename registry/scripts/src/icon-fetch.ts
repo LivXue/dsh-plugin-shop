@@ -41,7 +41,7 @@ import type { IconKey } from './icon-state.ts'
 import { ICONS_FILE_BUDGET_BYTES, parseIconsFile } from './icons-assemble.ts'
 import type { IconsFile } from './icons-assemble.ts'
 import { withTimeout } from './npm-client.ts'
-import { echo, MAX_INFLATED_BYTES, normalize, singleRoot } from './release-asset.ts'
+import { echo, MAX_INFLATED_BYTES, memberName, normalize, singleRoot } from './release-asset.ts'
 
 /**
  * Where the catalog is published, and so where the last build's `index.json`,
@@ -467,9 +467,9 @@ type Opened =
  * members.
  *
  * A name is looked up as the reader spells it: one character for each byte, so
- * a declared path is looked up as `Buffer.from(path, 'utf8').toString('latin1')`
- * and `图标.svg` is found where it is. Decoding names as ASCII, as the reader
- * once did, dropped the high bit of every byte, which made `é.svg` (C3 A9) and
+ * a declared path is looked up as {@link memberName} writes it and `图标.svg`
+ * is found where it is. Decoding names as ASCII, as the reader once did,
+ * dropped the high bit of every byte, which made `é.svg` (C3 A9) and
  * `C).svg` one name and took the bytes of one for the other's.
  *
  * What the reader does not see is a name that does not fit a ustar header: 100
@@ -499,7 +499,7 @@ function openMember(archive: Uint8Array, path: string, inflatedBytes: number): O
   if (files.size === 0) return { kind: 'missing' }
   const rooted = singleRoot([...files.keys()].map(normalize))
   if ('detail' in rooted) return { kind: 'unreadable' }
-  const wanted = `${rooted.root}/${Buffer.from(path, 'utf8').toString('latin1')}`
+  const wanted = `${rooted.root}/${memberName(path)}`
   let found: Buffer | undefined
   for (const [raw, member] of files) {
     // A name that appears twice, `package/x` and `./package/x` say, is not what
