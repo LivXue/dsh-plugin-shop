@@ -259,6 +259,11 @@
   by: human
   reason: "DeepSeek Harness 独立社区插件商店：发现、安装并提交经过验证的插件、工具与扩展。 | Independent community plugin directory."
 
+- name: "dsh-abstract-index"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: An open-source, curated index of the most gloriously absurd DSH plugins — published rubric, editorial verdicts, native install. · 抽象插件名录"
+
 - name: "dsh-agency-market"
   market: false
   by: human
@@ -324,6 +329,11 @@
   by: llm
   reason: "Judged a dsh plugin market from: DeepSeek Harness plugin: browse, search, and install Dify Marketplace plugins from Settings, with daemon-based .difypkg installs and Cordis child fibers."
 
+- name: "dsh-local-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: DSH 中文插件市场：实时社区目录、中文检索、界面预览与一键安装"
+
 - name: "dsh-lumen-market"
   market: true
   by: llm
@@ -359,6 +369,11 @@
   by: human
   reason: "极简收纳规则 — minimalist tidying rules. \"store\" is the verb."
 
+- name: "dsh-nano-market"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: 个人的 DSH 插件市场——每天都在用、持续打磨的高频工具"
+
 - name: "dsh-new-year-shop"
   market: false
   by: human
@@ -368,6 +383,11 @@
   market: true
   by: llm
   reason: "Judged a dsh plugin market from: Open Plugin Market for DeepSeek Harness: adds a community plugin index that favors fast-growing, actively maintained plugins."
+
+- name: "dsh-pet-market"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: DeepSeek Harness 的桌宠乐园：序列帧宠物包市场 + 系统桌面画家（WPF）。装素材包，宠物就住到 Windows 桌面上。"
 
 - name: "dsh-pickle-store"
   market: false
@@ -603,6 +623,11 @@
   market: true
   by: human
   reason: "KPM'H 纪代插件市场（Hub）：侧边栏一键启动的独立全屏市场页，支持多源目录（GitHub/npm/awesome）、一键安装、已装管理与卸载、孤儿插件扫描、通用安全防线（审计/入口校验/运行时兼容/自动修补）。"
+
+- name: "omnimux-market"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: OmniMux 插件市场：技能 · 插件 · 专家 · 连接器（基于 @cocofhu/skillhub 二次开发，MIT）"
 
 - name: "portfolio-os-marketplace"
   market: false
