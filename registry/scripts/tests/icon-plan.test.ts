@@ -844,17 +844,20 @@ describe('foldIconResults: what did not answer', () => {
     expect(fold.counts).toEqual({ ...ZERO, declared: 1, notYetRead: 1 })
   })
 
-  it('counts a declared icon with nothing to fetch it from as not yet read, with no row, and keeps its record', () => {
+  it('keeps an icon whose bytes are in the file even with nothing to fetch it from', () => {
+    // The key names one immutable artifact and the file carries its bytes;
+    // whether a FETCH is possible today says nothing about whether the icon is
+    // available. Consulted after `isFetchable`, this key lost its icon.
     const noTarget = only(iconSubjects([npmEntry('x')], [npmCandidate('x', declared(), { distTarball: undefined })], []))
     const bytes = svgOf('x')
     const state = stateOf([keyOf(noTarget), publishedRow(bytes)])
     const { plan, fold } = runDay([noTarget], { state, published: fileOf([[keyOf(noTarget), bytes]]) })
     expect(plan).toEqual({ reuse: [], fetch: [], deferred: [] })
     expect(fold.nextState).toEqual(state)
-    expect(fold.file).toBeNull()
-    expect(fold.byIdentity.size).toBe(0)
+    expect(fold.file).toEqual(fileOf([[keyOf(noTarget), bytes]]))
+    expect(fold.byIdentity).toEqual(new Map([['npm:x', sha256Hex(bytes)]]))
     expect(fold.rows).toEqual([])
-    expect(fold.counts).toEqual({ ...ZERO, declared: 1, notYetRead: 1 })
+    expect(fold.counts).toEqual({ ...ZERO, declared: 1, published: 1 })
   })
 
   it('ignores an answer for a key the plan did not ask for', () => {
@@ -882,6 +885,19 @@ describe('foldIconResults: reusing what an earlier build published', () => {
     expect(fold.nextState).toEqual(state)
     expect(fold.byIdentity).toEqual(new Map([['npm:x', sha256Hex(bytes)]]))
     expect(fold.rows).toEqual([])
+    expect(fold.counts).toEqual({ ...ZERO, declared: 1, published: 1 })
+  })
+
+  it('keeps an icon whose bytes are in the file when the artifact has no fetch target', () => {
+    // The key names one immutable artifact and the file carries its bytes;
+    // whether a FETCH is possible today says nothing about whether the icon is
+    // available. Consulted before `isFetchable`, this key lost its icon.
+    const subject = only(iconSubjects([npmEntry('x')], [npmCandidate('x', declared(), { distTarball: undefined })], []))
+    const state = stateOf([keyOf(subject), publishedRow(bytes)])
+    const published = fileOf([[keyOf(subject), bytes]])
+    const { plan, fold } = runDay([subject], { state, published })
+    expect(plan).toEqual({ reuse: [], fetch: [], deferred: [] })
+    expect(fold.byIdentity).toEqual(new Map([['npm:x', sha256Hex(bytes)]]))
     expect(fold.counts).toEqual({ ...ZERO, declared: 1, published: 1 })
   })
 
@@ -1451,8 +1467,14 @@ describe('foldIconResults: every day for one entry', () => {
     }
     // A withheld entry is withheld whatever else is true of it, and its record stays.
     if (scenario.withheld) return withheldByHand(recorded)
-    // With nothing to fetch it from it is no icon this build, and its record stays.
-    if (!scenario.target) return { bucket: 'notYetRead', row: null, state: recorded }
+    // With nothing to fetch it from it is no icon this build, unless the bytes
+    // are already in yesterday's file — those are in hand, and the record stays.
+    if (!scenario.target) {
+      if (scenario.record !== 'published-in-file') return { bucket: 'notYetRead', row: null, state: recorded }
+      return scenario.sized
+        ? { bucket: 'withheldForSize', row: ['withheld', iconDetail.withheldForSize()], state: withheldRow(A) }
+        : { bucket: 'published', row: null, bytes: A, state: recorded }
+    }
     // A refusal and a package past the caps are recorded once, and reported from the record.
     if (scenario.record === 'refused') return { bucket: 'refused', row: ['refused', RECORD_REFUSED.detail], state: recorded }
     if (scenario.record === 'not-read') return { bucket: 'notRead', row: ['not-read', RECORD_NOT_READ.detail], state: recorded }

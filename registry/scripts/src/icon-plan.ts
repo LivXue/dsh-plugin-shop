@@ -490,16 +490,23 @@ export function foldIconResults(
     const hold = withheld.get(subject.withheldKey)
     if (hold !== undefined) return { kind: 'withheld-by-hand', reason: hold.reason }
     if (read.kind === 'refused') return { kind: 'refused', detail: read.detail }
+    const outcome = record.get(subject.key)
+    // Bytes already in the published file are in hand whatever the artifact
+    // does now: the key names one immutable artifact, and the file carries a
+    // copy. Consulted before `isFetchable`, which decides whether a FETCH is
+    // possible, not whether the icon is available.
+    if (outcome?.outcome === 'published') {
+      const dataUrl = dataUrlOf(outcome.sha256)
+      if (dataUrl !== undefined) return { kind: 'icon', key: subject.key, sha256: outcome.sha256, dataUrl }
+    }
     // A declared icon with nothing to fetch it from is no icon this build.
     if (!isFetchable(subject)) return { kind: 'not-yet-read' }
-    const outcome = record.get(subject.key)
     if (outcome === undefined) return { kind: 'not-yet-read' }
     // Bytes the file's budget kept out are not in hand this build: the row's
     // size says they exist, and the next build fetches them to try again.
     if (outcome.outcome === 'withheld-for-size') return { kind: 'not-yet-read' }
     if (outcome.outcome !== 'published') return { kind: outcome.outcome, detail: outcome.detail }
-    const dataUrl = dataUrlOf(outcome.sha256)
-    return dataUrl === undefined ? { kind: 'not-yet-read' } : { kind: 'icon', key: subject.key, sha256: outcome.sha256, dataUrl }
+    return { kind: 'not-yet-read' }
   }
   const standings = subjects.map((subject) => ({ subject, standing: standingOf(subject) }))
 
