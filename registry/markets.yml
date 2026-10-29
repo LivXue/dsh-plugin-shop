@@ -429,6 +429,11 @@
   by: llm
   reason: "Judged a dsh plugin market from: A dsh plugin marketplace CLI: browse, install, and uninstall community plugins from the dsh-plugin GitHub topic"
 
+- name: "dsh-plugin-market-selfhosted"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: A self-hosted, internal DSH plugin marketplace supporting plugin publishing, discovery, distribution, access control, and plugin recall/retrieval."
+
 - name: "dsh-plugin-market-zh"
   market: true
   by: llm
