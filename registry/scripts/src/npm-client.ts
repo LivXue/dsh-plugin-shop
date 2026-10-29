@@ -4,7 +4,7 @@ import { compareStrings } from './identity.ts'
 import { escapeCell, lockNpmNames } from './emit.ts'
 import { classifyDeparture, departedNames, departureRejection, summarizeDepartures, type DepartureAnswer, type DepartureOutcome, type DepartureSummary } from './departures.ts'
 import { deprecationMessageOf } from './gate.ts'
-import { allocateProbeBudgets, atRiskNameCount, atRiskOwners, cursorFor, earnsPin, isMaintainerName, isPinnableKeyword, judgedPins, MAX_PINNED_PER_KEYWORD, probeOrder, seedableNames, type AxisOutcome, type HarvestedName, type PinObservation, type PinPass, type PublisherState } from './publisher-state.ts'
+import { allocateProbeBudgets, atRiskNameCount, atRiskOwners, countedWholeInsideWindow, cursorFor, earnsPin, isMaintainerName, isPinnableKeyword, judgedPins, MAX_PINNED_PER_KEYWORD, probeOrder, seedableNames, type AxisOutcome, type HarvestedName, type PinObservation, type PinPass, type PublisherState } from './publisher-state.ts'
 import { FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, isDeprecated, NO_FEED, planConfirmations, planFeedVerification, type FeedCoverage, type FeedInput } from './feed-state.ts'
 import type { Candidate, Compatibility, Rejection } from './types.ts'
 
@@ -1638,10 +1638,18 @@ function readTotal(body: SearchBody, query: string, from: number, stake: string)
  * message was `registry request exceeded 30000ms`, which names no query.
  *
  * Bounded, and loud at the bound. On every path that stops the run, a request
- * that keeps failing costs two more deadlines and the two waits before it
- * stops as it did before, and a page read on a later attempt is checked
- * exactly like one read on the first, so nothing downstream can tell a
- * retried page from any other.
+ * that keeps failing costs three attempts before it stops as it did before,
+ * and a page read on a later attempt is checked exactly like one read on the
+ * first, so nothing downstream can tell a retried page from any other.
+ *
+ * The bound is attempts, not REQUESTS: each attempt runs through
+ * {@link fetchWithFailover}, whose {@link fetchWithRetry} ladder re-asks a 429
+ * or a 5xx up to `RETRY_LIMIT` times. A ladder that answers and ends is an
+ * answer and stops here (`!response.ok`), but a ladder whose LATER request
+ * throws a transport error reaches this retry, so a pathological run can cost
+ * three ladders. That is the price of not duplicating the ladder's
+ * Retry-After handling here; the population this applies to is the paged
+ * search, not the probes ({@link searchTotal}'s callers).
  *
  * ONE attempt for a verification cell (`pageOwnerCell` in
  * {@link searchByKeywords}). Its failure is swallowed: the cell's names are
@@ -1652,6 +1660,10 @@ function readTotal(body: SearchBody, query: string, from: number, stake: string)
  * timeout where it used to publish (PR-1 review, measured: 32 minutes of
  * feed step at 64 stalled owners became 102).
  *
+ * ONE attempt for every publisher probe for the same reason at a larger
+ * population: `searchTotal` takes the count as a parameter and {@link
+ * searchByKeywords}' `probe` passes one.
+ *
  * This retry does not ask again for an ANSWER: a non-ok status (a 429 or a
  * 5xx has already been through {@link fetchWithRetry}'s own ladder), a body
  * over its cap, a body that is JSON but no search response, a page with no
@@ -1661,6 +1673,26 @@ function readTotal(body: SearchBody, query: string, from: number, stake: string)
  * over-cap body is not.
  */
 const SEARCH_TRANSPORT_ATTEMPTS = 3
+
+/**
+ * The connection failures a proxy or an undici version reports as text rather
+ * than as a `TypeError`. Deliberately its own list and not `/network/`: a
+ * message has to name a connection failure to be asked again.
+ */
+const TRANSPORT_FAILURE_TEXT = /ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|socket hang up|other side closed|terminated|fetch failed/i
+
+/**
+ * Whether a failed attempt is one to ask again: our deadline, the edge
+ * answering 200 with something that is not JSON, a `fetch` that threw
+ * (undici's `TypeError`), or a proxy that rejected with the connection's own
+ * error text — `Error('read ECONNRESET')`, which is no TypeError and was the
+ * #107 symptom's spelling on a proxied host (PR-1 review). Anything else is an
+ * answer or a fault of ours, and leaves as it came.
+ */
+function isTransportFailure(error: unknown): error is Error {
+  if (error instanceof FetchTimeoutError || error instanceof EdgeAnswerError || error instanceof TypeError) return true
+  return error instanceof Error && TRANSPORT_FAILURE_TEXT.test(error.message)
+}
 
 /**
  * Fetch and parse one search request, trying again when it fails in transport
@@ -1685,22 +1717,30 @@ async function fetchSearchBody(
   timeoutMs: number,
   attempts: number,
 ): Promise<SearchBody> {
+  /** What each attempt failed with, so the message names the deadline that fired as well as the reset that followed it. */
+  const failures: string[] = []
   for (let attempt = 1; ; attempt += 1) {
     try {
       const response = await fetchWithFailover(path, fetchImpl, sleep, token, backupRegistry, timeoutMs)
-      if (!response.ok) throw new Error(`npm search for ${query} failed: ${response.status}`)
+      if (!response.ok) throw new Error(`npm search for ${query} at from=${from} failed: ${response.status}`)
       return await readSearchBody(response, query, from)
     } catch (error) {
       // The refusals above, and readSearchBody's own but the edge answer, are
       // plain Errors: an answer, which leaves here as it came.
-      if (!(error instanceof FetchTimeoutError || error instanceof TypeError || error instanceof EdgeAnswerError)) throw error
+      if (!isTransportFailure(error)) throw error
+      failures.push(error instanceof FetchTimeoutError ? `a deadline fired (${error.message})` : error.message)
       if (attempt >= attempts) {
-        throw new Error(
-          `npm search for ${query} at from=${from} got no usable answer in ${attempt} ${attempt === 1 ? 'attempt' : 'attempts'}: ${error.message}`,
-          { cause: error },
-        )
+        // The class is kept where it is one the callers catch: a deadline that
+        // outlived every attempt is still this module's deadline, and
+        // `searchByKeywords` tells that from a malformed body by class.
+        const message = `npm search for ${query} at from=${from} got no usable answer in ${attempt} ${attempt === 1 ? 'attempt' : 'attempts'}: ${failures.join('; ')}`
+        const Failed = error instanceof FetchTimeoutError ? FetchTimeoutError : Error
+        throw new Failed(message, { cause: error })
       }
-      await sleep(RETRY_BASE_DELAY_MS * 2 ** (attempt - 1))
+      // A deadline has already waited; asking again after it is the retry, and
+      // the rate-limit ladder is `fetchWithRetry`'s to pace. Charging the
+      // backoff here as well would add two seconds to every stalled request.
+      if (!(error instanceof FetchTimeoutError)) await sleep(RETRY_BASE_DELAY_MS * 2 ** (attempt - 1))
     }
   }
 }
@@ -1719,10 +1759,11 @@ async function searchTotal(
   token: string | undefined,
   backupRegistry: string | undefined,
   timeoutMs: number,
+  attempts: number,
 ): Promise<number> {
   const query = cellQuery(cell)
   const path = `-/v1/search?text=${encodeURIComponent(query)}&size=1&from=0`
-  const body = await fetchSearchBody(path, query, 0, fetchImpl, sleep, token, backupRegistry, timeoutMs, SEARCH_TRANSPORT_ATTEMPTS)
+  const body = await fetchSearchBody(path, query, 0, fetchImpl, sleep, token, backupRegistry, timeoutMs, attempts)
   return readTotal(body, query, 0, "a keyword's size cannot be measured without it")
 }
 
@@ -2525,8 +2566,17 @@ export async function searchByKeywords(
    * same registry record.
    */
   const indexedKeywords = new Map<string, readonly string[]>()
+  /**
+   * ONE attempt for every publisher probe. A probe's request is one of up to
+   * `PUBLISHER_PROBE_BUDGET_DEFAULT` per partitioning keyword — roughly 1,600
+   * a run — and three attempts each would allow three 30-second deadlines
+   * plus waits for every one of them, tens of minutes against a 180-minute
+   * job whose kill publishes nothing. The verification carve-out below is the
+   * same trade at a smaller population; this is the population that makes it
+   * matter (PR-1 review).
+   */
   const probe = (cell: Cell): Promise<number> =>
-    searchTotal(cell, fetchImpl, sleep, token, backupRegistry, timeoutMs)
+    searchTotal(cell, fetchImpl, sleep, token, backupRegistry, timeoutMs, 1)
   /**
    * Page one query to its answered total, into `into` and into the union.
    * @param pastWindow - what a `from` past {@link MAX_SEARCH_FROM} means here.
@@ -2562,9 +2612,15 @@ export async function searchByKeywords(
      * does, outside `keywordRun` below — pays nothing extra.
      */
     harvested?: Map<string, HarvestedName>,
-    /** Per request; see {@link SEARCH_TRANSPORT_ATTEMPTS} for why a
-     * verification cell gets one. */
-    attempts: number = SEARCH_TRANSPORT_ATTEMPTS,
+    /**
+     * The request options this cell needs beyond the defaults. An OBJECT, not
+     * a sixth positional: `attempts` was the one call that changed it, and the
+     * call read `pageCell(..., 'stop', undefined, undefined, 1)` — two
+     * unlabelled `undefined`s before the value that mattered (PR-1 review).
+     * `attempts` is per request; {@link SEARCH_TRANSPORT_ATTEMPTS} says why a
+     * verification cell gets one.
+     */
+    options: { attempts?: number } = {},
   ): Promise<number> => {
     const query = cellQuery(cell)
     // The last total this cell answered, so a `from` past the cap can tell a
@@ -2589,7 +2645,7 @@ export async function searchByKeywords(
         )
       }
       const path = `-/v1/search?text=${encodeURIComponent(query)}&size=${PAGE_SIZE}&from=${from}`
-      const body = await fetchSearchBody(path, query, from, fetchImpl, sleep, token, backupRegistry, timeoutMs, attempts)
+      const body = await fetchSearchBody(path, query, from, fetchImpl, sleep, token, backupRegistry, timeoutMs, options.attempts ?? SEARCH_TRANSPORT_ATTEMPTS)
       // Array-checked, not `?? []`: a non-array `objects` is not iterable
       // and `for…of` would throw on it. An unusable `objects` reads as an
       // empty page, which the coverage check below refuses BY NAME rather
@@ -2996,7 +3052,7 @@ export async function searchByKeywords(
       try {
         // One attempt a request: this failure is swallowed, and asking again
         // only adds deadlines (SEARCH_TRANSPORT_ATTEMPTS).
-        const answered = await pageCell({ keywords: [keyword], maintainer: owner }, served, 'stop', undefined, undefined, 1)
+        const answered = await pageCell({ keywords: [keyword], maintainer: owner }, served, 'stop', undefined, undefined, { attempts: 1 })
         complete = served.size >= answered
       } catch {
         // A 5xx after retries, a deadline or a malformed page from ONE
@@ -3293,7 +3349,7 @@ export async function searchByKeywords(
       onPublisherAxis({
         keyword,
         partitioned,
-        seedingComplete: !partitioned && shortfall <= 0,
+        seedingComplete: countedWholeInsideWindow(partitioned, shortfall, required),
         vocabulary: publishers.length,
         pinnedSet: (publisherState.pinned?.[keyword] ?? []).length,
         pinnedProbed,

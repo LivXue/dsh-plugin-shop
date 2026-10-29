@@ -5527,10 +5527,15 @@ describe('a search request that fails in transport is tried again, then named', 
     expect(requestsFor(urls, page('dsh-plugin'))).toBe(2)
   })
 
-  it('reads a total when a size=1 probe stalls once', async () => {
-    const { fetchImpl } = failing(probe('deepseek-harness'), 1, stall)
-    const names = await searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50)
-    expect([...names].sort()).toEqual(['dsh-a', 'dsh-b'])
+  it('asks a size=1 probe once: its retries would outnumber the page retries by hundreds', async () => {
+    // Up to PUBLISHER_PROBE_BUDGET_DEFAULT probes per partitioning keyword —
+    // roughly 1,600 a run — each allowed three 30-second deadlines plus waits
+    // would add tens of minutes to a job bounded at 180, whose kill publishes
+    // nothing. One attempt keeps the pre-retry cost envelope; a stall here
+    // still stops the run, naming the query and the page.
+    const { fetchImpl, urls } = failing(probe('deepseek-harness'), 1, stall)
+    await expect(searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50)).rejects.toThrow(/at from=0/)
+    expect(requestsFor(urls, probe('deepseek-harness'))).toBe(1)
   })
 
   it('asks again when a page stalls after its headers, mid-body', async () => {
@@ -5545,6 +5550,22 @@ describe('a search request that fails in transport is tried again, then named', 
     const names = await searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50)
     expect([...names].sort()).toEqual(['dsh-a', 'dsh-b'])
     expect(requestsFor(urls, page('dsh-plugin'))).toBe(2)
+  })
+
+  it('asks again when a proxied fetch rejects with the connection\'s own error text', async () => {
+    // `Error('read ECONNRESET')` is what a proxied host reports, and it is not
+    // a TypeError: classified by class alone, it got no retry and named no
+    // query, which is exactly the #107 failure again (PR-1 review).
+    const { fetchImpl, urls } = failing(page('dsh-plugin'), 1, () => Promise.reject(new Error('read ECONNRESET')))
+    const names = await searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50)
+    expect([...names].sort()).toEqual(['dsh-a', 'dsh-b'])
+    expect(requestsFor(urls, page('dsh-plugin'))).toBe(2)
+  })
+
+  it('does not ask again for an error that names no connection failure', async () => {
+    const { fetchImpl, urls } = failing(page('dsh-plugin'), 1, () => Promise.reject(new Error('a bug of ours')))
+    await expect(searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50)).rejects.toThrow('a bug of ours')
+    expect(requestsFor(urls, page('dsh-plugin'))).toBe(1)
   })
 
   it('asks again when a page answers 200 with a body that is not JSON', async () => {
@@ -5577,7 +5598,7 @@ describe('a search request that fails in transport is tried again, then named', 
     expect(urls.filter(url => url.includes('from=250'))).toHaveLength(3)
   })
 
-  it('stops after three attempts, waiting longer before each, and names the query and the page', async () => {
+  it('stops after three attempts, waiting nothing after a deadline, and names the query and the page', async () => {
     const { fetchImpl, urls } = failing(page('dsh-plugin'), Number.POSITIVE_INFINITY, stall)
     const delays: number[] = []
     const error = await searchByKeywords(fetchImpl, async (ms: number) => { delays.push(ms) }, undefined, undefined, 50)
@@ -5586,6 +5607,17 @@ describe('a search request that fails in transport is tried again, then named', 
     expect((error as Error).message).toContain('npm search for keywords:dsh-plugin at from=0 got no usable answer in 3 attempts')
     expect((error as Error).message).toContain('exceeded 50ms')
     expect((error as Error).cause).toBeInstanceOf(FetchTimeoutError)
+    expect(requestsFor(urls, page('dsh-plugin'))).toBe(3)
+    // A deadline IS the wait: charging the backoff after it would add two
+    // seconds to every stalled request for no rate-limit signal to honour.
+    expect(delays).toHaveLength(0)
+  })
+
+  it('waits longer before each attempt when the failure is a dropped connection, not a deadline', async () => {
+    const { fetchImpl, urls } = failing(page('dsh-plugin'), Number.POSITIVE_INFINITY, reset)
+    const delays: number[] = []
+    await searchByKeywords(fetchImpl, async (ms: number) => { delays.push(ms) }, undefined, undefined, 50)
+      .then(() => undefined, () => undefined)
     expect(requestsFor(urls, page('dsh-plugin'))).toBe(3)
     expect(delays).toHaveLength(2)
     expect(delays[0]).toBeGreaterThan(0)
