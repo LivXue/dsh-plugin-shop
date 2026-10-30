@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { isCatalogNpmName } from '../../../packages/dsh-plugin-shop/src/shared/npm-name.ts'
 import { compareEntries, compareRejections, compareStrings, installIdentity } from './identity.ts'
 import type { Entry, Rejection } from './types.ts'
 
@@ -127,6 +128,11 @@ export function escapeCell(value: string): string {
  * sets it after the gate (so the payload budget never counts it) and the gate
  * never sees it. The shop's schema holds it to the same grammar, and a value
  * outside it costs a reader the whole data file.
+ *
+ * An npm entry's `name` is held to the clients' grammar for the same reason
+ * and with the same reach: the clients parse the whole data file as one zod
+ * object, so a single name they refuse costs every listing (2026-10-30). The
+ * gate refuses one first; this is the last line before the bytes.
  * @param entries - the accepted entries, pre-sort.
  * @param builtAt - the build timestamp; its date part is the "now" reference.
  */
@@ -150,6 +156,16 @@ export function assertCatalogInvariants(entries: Entry[], builtAt: string): void
     // data URL taken for a sha256 does not fill the log.
     if (entry.icon !== undefined && !/^[0-9a-f]{64}$/.test(entry.icon)) {
       throw new Error(`catalog invariant: ${installIdentity(entry)} has an icon that is not a sha256: ${JSON.stringify(entry.icon.slice(0, 80))}`)
+    }
+    // The npm name must be one the CLIENTS parse, not merely one npm accepted.
+    // The gate refuses one first; this is the last line before the bytes,
+    // because every installed client parses the data file as ONE zod object,
+    // so a single name outside their grammar costs every listing — the
+    // 2026-10-30 outage, where a name npm allows (a scope may begin with `_`)
+    // emptied the shelf for every 0.8.0+ shop. A github entry is exempt: its
+    // name is a bundle name and the clients hold no npm grammar over it.
+    if (entry.source === 'npm' && !isCatalogNpmName(entry.name)) {
+      throw new Error(`catalog invariant: ${entry.name} is outside the npm package-name grammar the clients parse`)
     }
   }
   const identities = new Set<string>()

@@ -588,6 +588,24 @@ describe('assertCatalogInvariants', () => {
       .toThrow(/unparseable added date yesterday/)
   })
 
+  it('throws on an npm name the clients cannot parse, rather than publish a dead catalogue', () => {
+    // The gate refuses one first (gate.test.ts carries the live case); this
+    // is the last line before the bytes, because the data file is parsed as
+    // ONE zod object by every installed client — a single name outside their
+    // grammar costs every listing, not one.
+    const bad = entry('@_iluxury/dsh-routerai-price-watcher')
+    expect(() => emit([bad], [], '2026-08-31T00:00:00Z'))
+      .toThrow(/outside the npm package-name grammar the clients parse/)
+  })
+
+  it('leaves a github bundle name alone, because the clients hold no npm grammar over it', () => {
+    // The clients' grammar check runs on `source === 'npm'` entries only; a
+    // repository's bundle name may carry uppercase (`BUNDLE_NAME_RE`, npm's
+    // grammar minus the lowercase-for-a-new-publication rule). Applying the
+    // npm rule to every entry would refuse repositories that install fine.
+    expect(() => emit([repoEntry('DSH-FS-TOOL', 'owner/slug')], [], '2026-08-31T00:00:00Z')).not.toThrow()
+  })
+
   // An icon is the sha256 that keys the icons sidecar, and a reader looks the
   // icon up by it. Anything else means the build handed the pipeline the wrong
   // value (an icon KEY, a data URL), which a reader would meet as the default

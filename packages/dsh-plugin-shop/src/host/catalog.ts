@@ -9,6 +9,7 @@ import { normalizeRegistryUrl, npmOrigin } from './npm-origin.ts'
 import { inCompletionOrder } from './race.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { COMMIT_SHA, RELEASE_TAG } from '../shared/identity.ts'
+import { CATALOG_NPM_NAME } from '../shared/npm-name.ts'
 
 /** Highest schemaVersion this build understands; a higher one is refused (§10).
  * 3 adds `source` and repo entries (github install channel); 4 adds `subdir`
@@ -66,9 +67,8 @@ async function withCommitBudget<T>(
   }
 }
 
-/** npm's package-name grammar. The value becomes half of an install spec, so
- * aliases and shell punctuation must not reach the CLI. */
-const NPM_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/
+// npm's package-name grammar lives in `shared/npm-name.ts` so the registry's
+// gate and `emit`'s last-line invariant read the same definition.
 
 /** Canonical SemVer 2.0.0, including legal prerelease/build metadata. */
 const NPM_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(?:\+[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*)?$/
@@ -299,7 +299,7 @@ const entrySchema = z.object({
   // The install spec differs by source, so the grammar does too. Refusing at
   // this boundary prevents catalog bytes from reaching the process layer.
   if (entry.source === 'npm') {
-    if (!NPM_NAME.test(entry.name)) {
+    if (!CATALOG_NPM_NAME.test(entry.name)) {
       ctx.addIssue({ code: 'custom', path: ['name'], message: `npm entry name ${JSON.stringify(entry.name)} is outside npm package-name grammar` })
     }
     if (!NPM_VERSION.test(entry.version)) {

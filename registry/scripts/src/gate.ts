@@ -1,4 +1,5 @@
 import { distance } from 'fastest-levenshtein'
+import { isCatalogNpmName } from '../../../packages/dsh-plugin-shop/src/shared/npm-name.ts'
 import { githubOwnerName, isHarnessRepo } from './github-repo.ts'
 import { isOwnPackage } from './own.ts'
 import { parseCatalogSection } from './schema.ts'
@@ -315,6 +316,22 @@ export function gate(
   if (denial !== undefined) {
     const suffix = denial.replacement === undefined ? '' : ` Known replacement: ${denial.replacement}.`
     return reject(name, 'denied', `Denied by the registry: ${denial.reason}${suffix}`, denial.replacement)
+  }
+
+  // The name must be one the installed clients can PARSE, not merely one npm
+  // accepted for publication — npm's validator is more permissive here, and
+  // the difference is not academic. The clients' entry schema parses the
+  // whole data file as one zod object, so a single name outside their
+  // grammar costs every listing, not one: on 2026-10-30
+  // `@_iluxury/dsh-routerai-price-watcher` (npm-valid, because a scope may
+  // begin with `_`) made the published catalogue unreadable to every 0.8.0+
+  // client. After the denial above on purpose: a recorded human verdict is
+  // the more useful answer, and renaming would only meet it again. The
+  // constant is the clients' own, imported rather than copied, so the two
+  // grammars cannot drift apart (shared/npm-name.ts).
+  if (!isCatalogNpmName(name)) {
+    return reject(name, 'no-manifest',
+      "Declares a name outside the package-name grammar the shop's clients parse (lowercase, and a scope must start with a letter or digit). One such name makes the whole catalogue unreadable to every installed client, so this package cannot be listed until it is published under a name those clients parse.")
   }
 
   if (!candidate.hasBundle) {
