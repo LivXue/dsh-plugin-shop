@@ -80,8 +80,9 @@ function argumentValue(argv: readonly string[], name: string): string | undefine
   const index = argv.indexOf(name)
   if (index === -1) return undefined
   const next = argv[index + 1]
-  // `--flag --other` must not take the next flag as its value.
-  return next === undefined || next.startsWith('--') ? undefined : next
+  // `--flag --other` must not take the next flag as its value, and `--flag ''`
+  // names no file either.
+  return next === undefined || next === '' || next.startsWith('--') ? undefined : next
 }
 
 /**
@@ -249,12 +250,18 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && argumentGiven(process.argv
     throw new Error('--axis-from applies a red run\'s publisher axis alone and cannot be combined with --harvest-from')
   }
   const where = `--axis-from ${axisFrom}`
+  let text: string
+  try {
+    text = readFileSync(axisFrom, 'utf8')
+  } catch (error) {
+    // A read failure is not a parse failure: naming the wrong defect sent a
+    // reader looking at the file's contents (PR #118 review).
+    throw new Error(`${where}: ${error instanceof Error ? error.message : String(error)}`)
+  }
   let handoff: { publishers?: unknown; publisherAxis?: unknown } | null
   try {
-    handoff = JSON.parse(readFileSync(axisFrom, 'utf8')) as typeof handoff
+    handoff = JSON.parse(text) as typeof handoff
   } catch (error) {
-    // Named, as every sibling parse is: a truncated handoff used to die as a
-    // bare `Unexpected end of JSON input` with no file in the message.
     throw new Error(`${where}: not JSON (${error instanceof Error ? error.message : String(error)})`)
   }
   // Both fields required, where --harvest-from takes either as optional: an
@@ -272,8 +279,10 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && argumentGiven(process.argv
     ? parsePublisherState(readFileSync(publisherStatePath, 'utf8'))
     : { publishers: [] }
   const spent = spendPublisherAxis(prior, [...saw], axis, where)
-  for (const part of spent.parts) process.stderr.write(`npm: ${part}\n`)
+  // Written FIRST: a failed write used to leave a log claiming a transition
+  // the file never took (PR #118 review).
   writeFileSync(publisherStatePath, serializePublisherState(spent.state))
+  for (const part of spent.parts) process.stderr.write(`npm: ${part}\n`)
   process.stderr.write(`npm: publisher vocabulary ${prior.publishers.length} -> ${spent.state.publishers.length}\n`)
 }
 
@@ -508,6 +517,10 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && !argumentGiven(process.arg
         process.stderr.write(`npm: ${describeShortfall(s)}\n`)
       }
       for (const report of axis) process.stderr.write(`npm: ${describePublisherAxis(report)}\n`)
+      // The feed lines are measured before the search returns too, and a green
+      // run prints them: a red local run dropped the third array (PR #118
+      // review).
+      for (const part of feedParts) process.stderr.write(`npm: ${part}\n`)
       throw error
     }
     nextFeed = applyConfirmations(feedRun.next, feedConfirmations)
@@ -527,7 +540,20 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && !argumentGiven(process.arg
     rejections = departureRun.rejections
     departureSummary = departureRun.summary
   } else {
-    const parsed = JSON.parse(readFileSync(harvestFrom, 'utf8')) as {
+    const harvestWhere = `--harvest-from ${harvestFrom}`
+    let harvestText: string
+    try {
+      harvestText = readFileSync(harvestFrom, 'utf8')
+    } catch (error) {
+      throw new Error(`${harvestWhere}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    let parsedJson: unknown
+    try {
+      parsedJson = JSON.parse(harvestText)
+    } catch (error) {
+      throw new Error(`${harvestWhere}: not JSON (${error instanceof Error ? error.message : String(error)})`)
+    }
+    const parsed = parsedJson as {
       candidates?: unknown; rejections?: unknown; shortfalls?: unknown; publishers?: unknown
       publisherAxis?: unknown; feed?: unknown; departures?: unknown
     }
@@ -567,10 +593,11 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && !argumentGiven(process.arg
     // stayed green. Optional as a WHOLE, like its siblings: a handoff written
     // before this field existed must still build.
     if (parsed.publisherAxis !== undefined) {
-      const fromHandoff = parsePublisherAxisField(parsed.publisherAxis, `--harvest-from ${harvestFrom}`)
-      // Validated here, before the pipeline: the spend happens after it, and a
-      // stale handoff used to leave the artifacts written before the throw.
-      assertAxisKeywords(fromHandoff, `--harvest-from ${harvestFrom}`)
+      const fromHandoff = parsePublisherAxisField(parsed.publisherAxis, harvestWhere)
+      // COMPLETE, like `--axis-from`: a handoff holding one keyword applied
+      // that cursor alone and re-probed the other band. Validated here, before
+      // the pipeline, so a stale handoff leaves no artifacts behind.
+      assertCompleteAxis(fromHandoff, harvestWhere)
       axis.push(...fromHandoff)
     }
     if (parsed.feed === undefined) {

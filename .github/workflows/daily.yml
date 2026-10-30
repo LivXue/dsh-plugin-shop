@@ -577,7 +577,7 @@ jobs:
         id: axis
         if: failure() && steps.classify.outcome == 'failure' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push') && github.ref == 'refs/heads/main'
         run: |
-          [ -f dist/publisher-axis.json ] || { echo "no publisher axis was handed over: Classify failed on something other than a coverage check, so nothing is committed"; exit 0; }
+          [ -f dist/publisher-axis.json ] || { echo "no publisher axis was written: either Classify failed on something other than a coverage check, or it failed to write its handoff (classify's own log says which), so nothing is committed"; exit 0; }
           node --experimental-strip-types registry/scripts/src/build.ts --axis-from dist/publisher-axis.json
       - name: Commit the publisher axis a failed coverage check left
         # Commits the one file the step above wrote, through the same
