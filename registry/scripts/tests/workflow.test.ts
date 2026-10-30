@@ -1254,3 +1254,17 @@ describe('the catalog job writes its own deadline before any other step runs', (
     }
   })
 })
+
+describe('the red-run handoff, producer to consumer', () => {
+  it('writes and reads the same two fields', () => {
+    // They were written apart with nothing connecting them: renaming a field
+    // on one side left both suites green and every red run unapplied (PR #118
+    // review). This file reads both sources, and classify.ts has no importable
+    // entry, so a source-level check is the connection available here.
+    const write = classifyTs.slice(classifyTs.indexOf('publisher-axis.json'))
+    expect(write).toContain('publisherAxis: axis')
+    expect(write).toContain('publishers')
+    expect(buildTs).toContain('handoff.publisherAxis')
+    expect(buildTs).toContain('handoff.publishers')
+  })
+})

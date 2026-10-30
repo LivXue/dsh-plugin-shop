@@ -112,9 +112,11 @@ function spendPublisherAxis(
   prior: PublisherState,
   saw: Iterable<string>,
   axis: readonly PublisherAxisReport[],
+  where: string,
 ): { state: PublisherState; parts: string[] } {
   let state = retainPinned(mergePublishers(prior, [...saw]), HARVEST_KEYWORDS)
   const parts: string[] = []
+  const seenKeywords = new Set<string>()
   for (const report of axis) {
     // Pruning above keeps an unharvested key out of the MERGED state, and
     // would not keep one out of a key the REPORT names: `applyAxisReport`
@@ -122,8 +124,15 @@ function spendPublisherAxis(
     // handoff was enough to add a keyword the file's own bound refuses, and
     // every later parse throws (PR #118 review).
     if (!HARVEST_KEYWORDS.includes(report.keyword)) {
-      throw new Error(`publisher axis record names keyword \`${report.keyword}\`, which this build does not harvest`)
+      throw new Error(`${where}: publisher axis record names keyword \`${report.keyword}\`, which this build does not harvest`)
     }
+    // One record per keyword. Two for one and none for another pass a count
+    // check, and the duplicated keyword's cursor advances twice while the
+    // other stays stale (PR #118 review).
+    if (seenKeywords.has(report.keyword)) {
+      throw new Error(`${where}: publisher axis names keyword \`${report.keyword}\` more than once`)
+    }
+    seenKeywords.add(report.keyword)
     const applied = applyAxisReport(state, report)
     state = applied.state
     const notes: string[] = []
@@ -194,11 +203,18 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && argumentGiven(process.argv
   if (axisFrom === undefined) {
     throw new Error('--axis-from requires a path')
   }
-  if (process.argv.includes('--harvest-from')) {
+  if (argumentGiven(process.argv, '--harvest-from')) {
     throw new Error('--axis-from applies a red run\'s publisher axis alone and cannot be combined with --harvest-from')
   }
   const where = `--axis-from ${axisFrom}`
-  const handoff = JSON.parse(readFileSync(axisFrom, 'utf8')) as { publishers?: unknown; publisherAxis?: unknown } | null
+  let handoff: { publishers?: unknown; publisherAxis?: unknown } | null
+  try {
+    handoff = JSON.parse(readFileSync(axisFrom, 'utf8')) as typeof handoff
+  } catch (error) {
+    // Named, as every sibling parse is: a truncated handoff used to die as a
+    // bare `Unexpected end of JSON input` with no file in the message.
+    throw new Error(`${where}: not JSON (${error instanceof Error ? error.message : String(error)})`)
+  }
   // Both fields required, where --harvest-from takes either as optional: an
   // older classifier wrote neither into its harvest, but every axis handoff
   // is written with both, and without them there is nothing to apply.
@@ -212,7 +228,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && argumentGiven(process.argv
   const prior = existsSync(publisherStatePath)
     ? parsePublisherState(readFileSync(publisherStatePath, 'utf8'))
     : { publishers: [] }
-  const spent = spendPublisherAxis(prior, saw, axis)
+  const spent = spendPublisherAxis(prior, saw, axis, where)
   for (const part of spent.parts) process.stderr.write(`npm: ${part}\n`)
   writeFileSync(publisherStatePath, serializePublisherState(spent.state))
   process.stderr.write(`npm: publisher vocabulary ${prior.publishers.length} -> ${spent.state.publishers.length}\n`)
@@ -247,9 +263,11 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && !argumentGiven(process.arg
 
   // `classify.ts` writes the harvest it already paid for; the workflow passes it
   // here so the daily run does not fetch the ecosystem twice.
-  const harvestFromIndex = process.argv.indexOf('--harvest-from')
-  const harvestFrom = harvestFromIndex === -1 ? undefined : process.argv[harvestFromIndex + 1]
-  if (harvestFromIndex !== -1 && harvestFrom === undefined) {
+  // Both spellings, through the same helpers the axis guard uses: read only
+  // for `--harvest-from x`, the `=` form left this undefined and ran a LIVE
+  // harvest where the operator asked to replay a handoff (PR #118 review).
+  const harvestFrom = argumentValue(process.argv, '--harvest-from')
+  if (argumentGiven(process.argv, '--harvest-from') && harvestFrom === undefined) {
     throw new Error('--harvest-from requires a path')
   }
 
@@ -424,15 +442,31 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && !argumentGiven(process.arg
       },
     }
     const shortfalls: KeywordShortfall[] = []
-    const names = await searchByKeywords(
-      fetch, undefined, npmToken, undefined, undefined,
-      s => shortfalls.push(s),
-      users => { for (const u of users) sawPublishers.add(u) },
-      priorPublishers,
-      PUBLISHER_PROBE_BUDGET_DEFAULT,
-      report => axis.push(report),
-      feedInput,
-    )
+    let names: string[]
+    try {
+      names = await searchByKeywords(
+        fetch, undefined, npmToken, undefined, undefined,
+        s => shortfalls.push(s),
+        users => { for (const u of users) sawPublishers.add(u) },
+        priorPublishers,
+        PUBLISHER_PROBE_BUDGET_DEFAULT,
+        report => axis.push(report),
+        feedInput,
+      )
+    } catch (error) {
+      // A coverage failure is thrown once every keyword has finished, so the
+      // reports it HELD never reached the prints below: the later keyword's
+      // shortfall and every axis line were measured and then dropped, on the
+      // one path a maintainer uses to reproduce a red run locally (PR #118
+      // review). Printed here without applying them — applying is what the
+      // red run's own `--axis-from` step is for.
+      for (const s of shortfalls) {
+        npmParts.push(describeShortfall(s))
+        process.stderr.write(`npm: ${describeShortfall(s)}\n`)
+      }
+      for (const report of axis) process.stderr.write(`npm: ${describePublisherAxis(report)}\n`)
+      throw error
+    }
     nextFeed = applyConfirmations(feedRun.next, feedConfirmations)
     for (const s of shortfalls) {
       npmParts.push(describeShortfall(s))
@@ -893,7 +927,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && !argumentGiven(process.arg
   // `--axis-from` instead (design 2026-10-22-publisher-axis-on-a-red-run), so
   // a red run moves its cursor and keeps the pins it earned, where it used to
   // re-probe its slice on the next run.
-  const spent = spendPublisherAxis(priorPublishers, sawPublishers, axis)
+  const spent = spendPublisherAxis(priorPublishers, sawPublishers, axis, harvestFrom === undefined ? 'the direct build' : `--harvest-from ${harvestFrom}`)
   const nextPublishers = spent.state
   axisParts.push(...spent.parts)
   for (const part of axisParts) process.stderr.write(`npm: ${part}\n`)
