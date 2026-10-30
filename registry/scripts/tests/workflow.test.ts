@@ -1261,9 +1261,10 @@ describe('the red-run handoff, producer to consumer', () => {
     // on one side left both suites green and every red run unapplied (PR #118
     // review). This file reads both sources, and classify.ts has no importable
     // entry, so a source-level check is the connection available here.
-    const write = classifyTs.slice(classifyTs.indexOf('publisher-axis.json'))
-    expect(write).toContain('publisherAxis: axis')
-    expect(write).toContain('publishers')
+    // The RED write's object literal exactly, not a slice to EOF: the green
+    // `dist/harvest.json` write further down carries `publisherAxis: axis`
+    // too, so a slice let a rename in the red write pass (PR #118 review).
+    expect(classifyTs).toContain('JSON.stringify({ publishers: [...sawPublishers].sort(compareStrings), publisherAxis: axis })')
     expect(buildTs).toContain('handoff.publisherAxis')
     expect(buildTs).toContain('handoff.publishers')
   })

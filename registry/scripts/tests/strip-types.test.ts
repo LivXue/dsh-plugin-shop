@@ -149,6 +149,20 @@ function guardedNames(source: string): string[] {
   return names
 }
 
+/**
+ * Lines that COMPARE `process.argv[1]` to a `.ts` name, in ANY spelling. The
+ * per-entry test holds every one of these to the exact form: collecting only
+ * lines that already match let a guard rewritten as
+ * `process.argv[1]?.endsWith('build.ts')` vanish from the set instead of
+ * failing (PR #118 review).
+ */
+function guardShapedLines(source: string): string[] {
+  return source.split('\n')
+    .map(line => line.trim())
+    .filter(line => !line.startsWith('//') && !line.startsWith('*') && !line.startsWith('/*'))
+    .filter(line => /process\.argv\[1\]/.test(line) && /\.ts['"]/.test(line))
+}
+
 /** The first guard's name, for the unit tests of the matcher itself. */
 function guardedName(source: string): string | undefined {
   return guardedNames(source)[0]
@@ -349,9 +363,10 @@ describe('every entry point guards its work on its own exact file name', () => {
       // build and one for `--axis-from`, and reading only the first let the
       // full-build guard regress to an `endsWith` with the suite green (PR
       // #118 review).
-      const names = guardedNames(source)
-      expect(names.length, `${file} must carry at least one guard`).toBeGreaterThan(0)
-      for (const name of names) {
+      const shaped = guardShapedLines(source)
+      expect(shaped.length, `${file} must carry at least one guard`).toBeGreaterThan(0)
+      for (const line of shaped) {
+        const name = /basename\(\s*process\.argv\[1\]\s*\?\?\s*''\s*\)\s*===\s*'([A-Za-z0-9._-]+\.ts)'/.exec(line)?.[1]
         expect(
           name,
           `${file} must run its module-scope work inside `
