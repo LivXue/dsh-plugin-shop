@@ -5527,15 +5527,36 @@ describe('a search request that fails in transport is tried again, then named', 
     expect(requestsFor(urls, page('dsh-plugin'))).toBe(2)
   })
 
-  it('asks a size=1 probe once: its retries would outnumber the page retries by hundreds', async () => {
-    // Up to PUBLISHER_PROBE_BUDGET_DEFAULT probes per partitioning keyword —
-    // roughly 1,600 a run — each allowed three 30-second deadlines plus waits
-    // would add tens of minutes to a job bounded at 180, whose kill publishes
-    // nothing. One attempt keeps the pre-retry cost envelope; a stall here
-    // still stops the run, naming the query and the page.
-    const { fetchImpl, urls } = failing(probe('deepseek-harness'), 1, stall)
-    await expect(searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50)).rejects.toThrow(/at from=0/)
-    expect(requestsFor(urls, probe('deepseek-harness'))).toBe(1)
+  it('reads a total when the keyword\'s own size=1 probe stalls once', async () => {
+    // The probes whose failure STOPS the run keep three attempts: a few dozen
+    // requests a run, and the two extra deadlines are only spent when one has
+    // already failed — which is the #107 symptom. The one-attempt carve-out is
+    // for the PUBLISHER cells, of which a run makes up to ~1,600 (PR-1
+    // review's second round found the carve-out had been applied to both).
+    const { fetchImpl } = failing(probe('deepseek-harness'), 1, stall)
+    const names = await searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50)
+    expect([...names].sort()).toEqual(['dsh-a', 'dsh-b'])
+  })
+
+  it('does not call a keyword counted whole when the registry answers a zero total', async () => {
+    // `required` is the minimum of the keyword's total and its re-probe, so an
+    // answer of zero makes the shortfall zero too. Without the positive-total
+    // term every pin seeding did not name would be released through the
+    // unbounded complete-seeding exit (PR-1 review, round two).
+    const reports: PublisherAxisReport[] = []
+    const zero = (async () => new Response(JSON.stringify({ objects: [], total: 0 }), { status: 200 })) as unknown as typeof fetch
+    await searchByKeywords(zero, noSleep, undefined, undefined, 50, () => {}, () => {}, { publishers: [] }, 0, (report) => reports.push(report))
+    expect(reports).toHaveLength(2)
+    expect(reports.every(report => !report.seedingComplete)).toBe(true)
+  })
+
+  it('does not ask again for a non-ok status, which is the registry\'s answer', async () => {
+    // A 403 is no transport failure and no ladder input; it leaves on its
+    // first reading, before the text match could ever see it (it is a
+    // `SearchAnswerError`, whose message quotes the query).
+    const { fetchImpl, urls } = failing(page('dsh-plugin'), 1, async () => new Response('no', { status: 403 }))
+    await expect(searchByKeywords(fetchImpl, noSleep, undefined, undefined, 50)).rejects.toThrow('failed: 403')
+    expect(requestsFor(urls, page('dsh-plugin'))).toBe(1)
   })
 
   it('asks again when a page stalls after its headers, mid-body', async () => {
