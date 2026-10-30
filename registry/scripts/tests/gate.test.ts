@@ -418,6 +418,49 @@ describe('the identity and provenance fields npm hands us', () => {
     expect(gate(candidate({ name: 'd'.repeat(NAME_MAX_LENGTH) }), config).ok).toBe(true)
   })
 
+  it('rejects a name the shop\'s clients cannot parse, which would take the whole catalogue down', () => {
+    // The live case, 2026-10-30: `@_iluxury/dsh-routerai-price-watcher` is a
+    // name npm itself accepts — its validator allows a scope starting with
+    // `_` — so nothing in the gate saw a problem and the build listed it.
+    // The clients' entry schema parses the whole data file with one zod
+    // object, so that single name made every 0.8.0+ shop refuse the entire
+    // catalogue; the reported symptom was "暂时无法读取目录", not one missing
+    // card. A name is admitted only when the clients' own grammar accepts it.
+    const result = gate(candidate({ name: '@_iluxury/dsh-routerai-price-watcher' }), config)
+    if (result.ok) throw new Error('expected rejection')
+    expect(result.rejection.code).toBe('no-manifest')
+    expect(result.rejection.detail).toBe(
+      "Declares a name outside the package-name grammar the shop's clients parse (lowercase, and a scope must start with a letter or digit). One such name makes the whole catalogue unreadable to every installed client, so this package cannot be listed until it is published under a name those clients parse.")
+  })
+
+  it('accepts an underscore after the scope\'s first character, which the clients do parse', () => {
+    // The control for the rule above. `@a_b/...` is legal for npm AND for the
+    // clients, so a rule that refused any underscore anywhere would delist a
+    // package that installs fine — the failure mode this rule is meant to
+    // prevent, pointed the other way.
+    expect(gate(candidate({ name: '@a_b/dsh-hello-plugin' }), config).ok).toBe(true)
+  })
+
+  it('reports a recorded denial before the name grammar, so a human verdict is the answer', () => {
+    // `denied.yml` accepts an uppercase name (config.ts's grammar does) while
+    // the clients' grammar does not, so both rules can apply to one name. A
+    // person looked at this one and said no; renaming would only meet that
+    // verdict again, so the denial is what the author should read. Same
+    // precedence the denial already holds over the typosquatting hold.
+    const denied = parseRegistryConfig({
+      verified: '[]',
+      denied: '- name: DSH-OLD\n  reason: Exfiltrates credentials.\n',
+      allowedSimilar: '[]',
+      withheldIcons: '[]',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    const result = gate(candidate({ name: 'DSH-OLD' }), denied)
+    if (result.ok) throw new Error('expected rejection')
+    expect(result.rejection.code).toBe('denied')
+    expect(result.rejection.detail).toContain('Exfiltrates credentials.')
+  })
+
   it('rejects an over-long version with a reason about its length', () => {
     const result = gate(candidate({ version: `1.0.0-${'b'.repeat(200)}` }), config)
     expect(result.ok).toBe(false)

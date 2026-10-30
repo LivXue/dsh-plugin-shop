@@ -35,6 +35,11 @@ const REGISTRY_TYPES = fileURLToPath(new URL('../src/types.ts', import.meta.url)
 const CONSUMER_SCHEMA = fileURLToPath(
   new URL('../../../packages/dsh-plugin-shop/src/host/catalog.ts', import.meta.url),
 )
+const GATE = fileURLToPath(new URL('../src/gate.ts', import.meta.url))
+const EMIT = fileURLToPath(new URL('../src/emit.ts', import.meta.url))
+const SHARED_NPM_NAME = fileURLToPath(
+  new URL('../../../packages/dsh-plugin-shop/src/shared/npm-name.ts', import.meta.url),
+)
 
 /**
  * Keys the registry publishes that the consumer deliberately does not declare.
@@ -119,5 +124,37 @@ describe('every key the registry publishes is declared by the consumer that pars
     const published = new Set([...registryEntry, ...registryReview])
     const stale = Object.keys(NOT_CONSUMED).filter(key => !published.has(key))
     expect(stale, `${stale.join(', ')} is exempted but no longer published — an exemption outliving its key covers whatever next takes that name`).toEqual([])
+  })
+})
+
+describe('the npm name grammar the producer enforces is the one the consumer parses', () => {
+  // The 2026-10-30 outage, in one line: the consumer's entry schema refused
+  // `@_iluxury/dsh-routerai-price-watcher` and, because it parses the whole
+  // data file as one zod object, took every listing with it — while the
+  // registry had no npm-name rule at all. The fix reads one constant in three
+  // places (the consumer's schema, the gate, emit's last-line invariant).
+  // This guard is what keeps a later edit from reintroducing a local copy
+  // that drifts from it, which is the exact shape of the bug.
+  const shared = readFileSync(SHARED_NPM_NAME, 'utf8')
+  const consumer = readFileSync(CONSUMER_SCHEMA, 'utf8')
+  const gate = readFileSync(GATE, 'utf8')
+  const emit = readFileSync(EMIT, 'utf8')
+
+  it('declares it once, and every side reads that declaration', () => {
+    // The floor: a guard whose own parse matched nothing would pass forever.
+    expect(shared).toMatch(/export const CATALOG_NPM_NAME = \/\^/)
+    expect(consumer, `${CONSUMER_SCHEMA} must import the shared grammar`)
+      .toContain("from '../shared/npm-name.ts'")
+    expect(gate, `${GATE} must import the shared grammar`)
+      .toContain("from '../../../packages/dsh-plugin-shop/src/shared/npm-name.ts'")
+    expect(emit, `${EMIT} must import the shared grammar`)
+      .toContain("from '../../../packages/dsh-plugin-shop/src/shared/npm-name.ts'")
+  })
+
+  it('leaves no local definition that could drift from it', () => {
+    for (const [name, source] of [['catalog.ts', consumer], ['gate.ts', gate], ['emit.ts', emit]] as const) {
+      expect(source, `${name} defines its own npm name regex`)
+        .not.toMatch(/const (?:NPM_NAME|CATALOG_NPM_NAME)\s*=\s*\/\^/)
+    }
   })
 })

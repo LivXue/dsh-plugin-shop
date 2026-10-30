@@ -1594,6 +1594,12 @@ describe('entry grammar at the boundary (G-6 / F-3)', () => {
       .rejects.toThrow(/npm package-name grammar/)
     await expect(loadWith([{ ...base, name: 'dsh x', source: 'npm' }]))
       .rejects.toThrow(/npm package-name grammar/)
+    // The live case, 2026-10-30. npm's own validator accepts this name — a
+    // scope may begin with `_` — but this schema does not, and because it
+    // parses the whole data file as one object, the name emptied the shelf
+    // for every 0.8.0+ shop rather than costing one card.
+    await expect(loadWith([{ ...base, name: '@_iluxury/dsh-routerai-price-watcher', source: 'npm' }]))
+      .rejects.toThrow(/npm package-name grammar/)
   })
 
   it('refuses an npm version that is not a plain semver version', async () => {
@@ -1606,6 +1612,7 @@ describe('entry grammar at the boundary (G-6 / F-3)', () => {
   it('keeps every shape the live catalog actually publishes', async () => {
     const result = await loadWith([
       { ...base, name: '@scope/dsh-plugin', version: '0.1.4-alpha.2', source: 'npm' },
+      { ...base, name: '@a_b/dsh-plugin', version: '1.0.0', source: 'npm' },
       { ...base, name: 'dsh.dot_under-name', version: '1.0.0+build.7', source: 'npm' },
       { ...base, name: 'sub-plugin', version: 'd'.repeat(40), source: 'github', repo: 'someone/monorepo', subdir: 'packages/sub-plugin' },
       { ...base, name: '{{PKG_NAME}}', version: 'e'.repeat(40), source: 'github', repo: 'someone/template' },
@@ -1614,7 +1621,7 @@ describe('entry grammar at the boundary (G-6 / F-3)', () => {
         tarball: { url: 'https://github.com/owner/slug/releases/download/v1.0.0/plugin.tgz', sha256: 'a'.repeat(64) },
       },
     ]) as { snapshot: { entries: unknown[] } }
-    expect(result.snapshot.entries).toHaveLength(5)
+    expect(result.snapshot.entries).toHaveLength(6)
   })
 
   it('refuses a repo that is not owner/slug', async () => {
