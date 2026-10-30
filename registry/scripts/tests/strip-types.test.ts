@@ -138,14 +138,20 @@ function invokedFiles(text: string): string[] {
  * trimmed form opens with a comment marker is prose, and prose about a guard
  * is not a guard. `undefined` when the module carries no such guard.
  */
-function guardedName(source: string): string | undefined {
+function guardedNames(source: string): string[] {
+  const names: string[] = []
   for (const raw of source.split('\n')) {
     const line = raw.trim()
     if (line.startsWith('//') || line.startsWith('*') || line.startsWith('/*')) continue
     const match = /basename\(\s*process\.argv\[1\]\s*\?\?\s*''\s*\)\s*===\s*'([A-Za-z0-9._-]+\.ts)'/.exec(line)
-    if (match?.[1] !== undefined) return match[1]
+    if (match?.[1] !== undefined) names.push(match[1])
   }
-  return undefined
+  return names
+}
+
+/** The first guard's name, for the unit tests of the matcher itself. */
+function guardedName(source: string): string | undefined {
+  return guardedNames(source)[0]
 }
 
 function srcFiles(): string[] {
@@ -175,7 +181,7 @@ function wiredEntryPoints(): string[] {
 /** Modules that guard module-scope work on their own file name — an entry
  * point by construction, whether or not anything in the repo invokes them. */
 function guardedEntryPoints(): string[] {
-  return srcFiles().filter(file => guardedName(readFileSync(join(srcDir, file), 'utf8')) !== undefined)
+  return srcFiles().filter(file => guardedNames(readFileSync(join(srcDir, file), 'utf8')).length > 0)
 }
 
 const ENTRY_POINTS = [...new Set([...wiredEntryPoints(), ...guardedEntryPoints()])].sort()
@@ -339,14 +345,22 @@ describe('every entry point guards its work on its own exact file name', () => {
   for (const file of ENTRY_POINTS) {
     it(`${file} compares basename(process.argv[1]) to '${file}'`, () => {
       const source = readFileSync(join(srcDir, file), 'utf8')
-      expect(
-        guardedName(source),
-        `${file} must run its module-scope work inside `
-          + `\`if (basename(process.argv[1] ?? '') === '${file}') { … }\`. A negative guard ending in `
-          + 'process.exit(0) kills whatever imports this module, and reports success doing it; '
-          + `an endsWith('${file}') comparison also admits pre${file} and re${file}, and a name that `
-          + 'no longer matches the file leaves the invocation exiting 0 having done nothing.',
-      ).toBe(file)
+      // EVERY guard, not the first: build.ts now carries one for the full
+      // build and one for `--axis-from`, and reading only the first let the
+      // full-build guard regress to an `endsWith` with the suite green (PR
+      // #118 review).
+      const names = guardedNames(source)
+      expect(names.length, `${file} must carry at least one guard`).toBeGreaterThan(0)
+      for (const name of names) {
+        expect(
+          name,
+          `${file} must run its module-scope work inside `
+            + `\`if (basename(process.argv[1] ?? '') === '${file}') { … }\`. A negative guard ending in `
+            + 'process.exit(0) kills whatever imports this module, and reports success doing it; '
+            + `an endsWith('${file}') comparison also admits pre${file} and re${file}, and a name that `
+            + 'no longer matches the file leaves the invocation exiting 0 having done nothing.',
+        ).toBe(file)
+      }
     })
   }
 })

@@ -223,8 +223,10 @@ deciding whether to re-run will see it (final review).
   axis, and the error is a `CoverageCheckError` naming the first.
 - Two keywords failing are both named.
 - An error that is not a coverage check (a page with no total on the retry
-  pass, the feed's disagreement bound) is thrown at once, and the later
-  keyword does not report.
+  pass, the feed's disagreement bound) is thrown at once. The keyword that
+  failed does not go on to its later checks, but its own axis record has
+  already fired — `onPublisherAxis` runs before each check — so the run prints
+  it; a later keyword that never reached `finish()` reports nothing.
 
 `publisher-handoff.test.ts`, running the real scripts:
 - **`classify.ts` on a coverage failure** writes `dist/publisher-axis.json`
