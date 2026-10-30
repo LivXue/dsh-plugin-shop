@@ -759,6 +759,13 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
         case null:
           // Unreachable by construction: `released.length > 0` gives an exit.
           throw new Error('publisher axis: a report that released pins named no release exit')
+        default: {
+          // A `switch` over a union compiles fine when the union grows; this
+          // arm is what turns a third exit into a compile error instead of a
+          // release published with no sentence (PR-1 review).
+          const unreached: never = applied.releaseExit
+          throw new Error(`publisher axis: unknown release exit ${String(unreached)}`)
+        }
       }
     }
     // Loud, because the alternative reading of a large eviction list is a

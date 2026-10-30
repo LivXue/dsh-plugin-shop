@@ -1561,6 +1561,15 @@ export function keywordsOf(pkg: unknown): string[] {
 class EdgeAnswerError extends Error {}
 
 /**
+ * An ANSWER this module built: a non-ok status, a body over its cap, a total
+ * that is no count. Never retried, and — unlike a transport failure — never
+ * matched against {@link TRANSPORT_FAILURE_TEXT}: those messages quote the
+ * query, and a maintainer named `epipe` would otherwise turn a 503 into a
+ * retry the moment a probe carries one.
+ */
+class SearchAnswerError extends Error {}
+
+/**
  * Parse one search response, naming the query on a body that is not JSON.
  * Observed live: page 13 of `keywords:dsh-plugin` answered 200 with
  * `<!doctype html>`, and the bare `SyntaxError` named no keyword.
@@ -1575,7 +1584,7 @@ async function readSearchBody(response: Response, query: string, from: number): 
     // candidate set, and reading it as empty is indistinguishable from an
     // empty ecosystem; an unusable packument is one package, and gets a row.
     if (read.reason === 'too-large') {
-      throw new Error(`npm search for ${query} at from=${from} answered a body larger than ${MAX_SEARCH_BODY_BYTES} bytes, which no search page can legitimately produce`)
+      throw new SearchAnswerError(`npm search for ${query} at from=${from} answered a body larger than ${MAX_SEARCH_BODY_BYTES} bytes, which no search page can legitimately produce`)
     }
     throw new EdgeAnswerError(`npm search for ${query} at from=${from} answered 200 with a body that is not JSON`)
   }
@@ -1611,10 +1620,10 @@ async function readSearchBody(response: Response, query: string, from: number): 
 function readTotal(body: SearchBody, query: string, from: number, stake: string): number {
   const total = body.total
   if (typeof total !== 'number') {
-    throw new Error(`npm search for ${query} at from=${from} answered no total; ${stake}`)
+    throw new SearchAnswerError(`npm search for ${query} at from=${from} answered no total; ${stake}`)
   }
   if (!Number.isInteger(total) || total < 0) {
-    throw new Error(`npm search for ${query} at from=${from} answered total=${total}, which is not a count of packages; ${stake}`)
+    throw new SearchAnswerError(`npm search for ${query} at from=${from} answered total=${total}, which is not a count of packages; ${stake}`)
   }
   return total
 }
@@ -1623,9 +1632,14 @@ function readTotal(body: SearchBody, query: string, from: number, stake: string)
  * Attempts at one search request that gets no usable answer: our deadline,
  * before the headers or mid-body; a connection the network dropped (undici's
  * `TypeError`); or a 200 whose body is not JSON, an edge answering in npm's
- * place ({@link EdgeAnswerError}). Three, waiting {@link RETRY_BASE_DELAY_MS}
- * and then twice that between them, and then the request throws, naming its
+ * place ({@link EdgeAnswerError}). Three, then the request throws, naming its
  * query and page.
+ *
+ * The WAITS between them are `RETRY_BASE_DELAY_MS` and then twice that for a
+ * dropped connection or an edge answer. After a deadline there is no wait: the
+ * deadline was the wait, and no rate-limit signal is left to honour, so the
+ * motivating stall costs three back-to-back deadlines rather than the two
+ * waits the backoff would add on top.
  *
  * The search is the one npm read with nothing to fall back on. A packument
  * fails over to the backup registry, and one that still fails is a
@@ -1690,6 +1704,9 @@ const TRANSPORT_FAILURE_TEXT = /ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|socket h
  * answer or a fault of ours, and leaves as it came.
  */
 function isTransportFailure(error: unknown): error is Error {
+  // Our own answer, first: its message quotes the query, and the text match
+  // below must never read author-controlled words as a connection failure.
+  if (error instanceof SearchAnswerError) return false
   if (error instanceof FetchTimeoutError || error instanceof EdgeAnswerError || error instanceof TypeError) return true
   return error instanceof Error && TRANSPORT_FAILURE_TEXT.test(error.message)
 }
@@ -1722,7 +1739,7 @@ async function fetchSearchBody(
   for (let attempt = 1; ; attempt += 1) {
     try {
       const response = await fetchWithFailover(path, fetchImpl, sleep, token, backupRegistry, timeoutMs)
-      if (!response.ok) throw new Error(`npm search for ${query} at from=${from} failed: ${response.status}`)
+      if (!response.ok) throw new SearchAnswerError(`npm search for ${query} at from=${from} failed: ${response.status}`)
       return await readSearchBody(response, query, from)
     } catch (error) {
       // The refusals above, and readSearchBody's own but the edge answer, are
@@ -2567,15 +2584,26 @@ export async function searchByKeywords(
    */
   const indexedKeywords = new Map<string, readonly string[]>()
   /**
-   * ONE attempt for every publisher probe. A probe's request is one of up to
+   * The probes whose failure STOPS the run: the keyword's own total, the
+   * partition cells built from it, and the two coverage re-probes. A few dozen
+   * requests a run, and the two extra deadlines are only spent when one has
+   * already failed — which is the whole point of the retry, and the #107
+   * symptom was one stalled request.
+   */
+  const probe = (cell: Cell): Promise<number> =>
+    searchTotal(cell, fetchImpl, sleep, token, backupRegistry, timeoutMs, SEARCH_TRANSPORT_ATTEMPTS)
+  /**
+   * ONE attempt for every PUBLISHER cell probe. Those are up to
    * `PUBLISHER_PROBE_BUDGET_DEFAULT` per partitioning keyword — roughly 1,600
    * a run — and three attempts each would allow three 30-second deadlines
    * plus waits for every one of them, tens of minutes against a 180-minute
    * job whose kill publishes nothing. The verification carve-out below is the
    * same trade at a smaller population; this is the population that makes it
-   * matter (PR-1 review).
+   * matter (PR-1 review). A probe here that stalls ends the run too, but the
+   * population is what makes the retry unaffordable, and a run that reaches
+   * this many probes has already spent its budget.
    */
-  const probe = (cell: Cell): Promise<number> =>
+  const probePublisherCell = (cell: Cell): Promise<number> =>
     searchTotal(cell, fetchImpl, sleep, token, backupRegistry, timeoutMs, 1)
   /**
    * Page one query to its answered total, into `into` and into the union.
@@ -2908,7 +2936,7 @@ export async function searchByKeywords(
       for (const [source, users] of [['pinned', order.pinned], ['rotated', order.rotated]] as const) {
         for (const maintainer of users) {
           const cell: Cell = { keywords: [keyword], maintainer }
-          const cellTotal = await probe(cell)
+          const cellTotal = await probePublisherCell(cell)
           // Counted as each probe answers, not taken from the plan: the
           // handoff parser holds `judged` to `pinnedProbed`, because a pin is
           // judged only by its own probe, and that check is only as good as
@@ -2936,7 +2964,7 @@ export async function searchByKeywords(
             // second probe costs one request and only ever on a zero, which
             // is rare by construction: every maintainer in the vocabulary was
             // read off a `keywords:<harvest>` result.
-            if (source === 'pinned' && await probe(cell) === 0) evicted.push(maintainer)
+            if (source === 'pinned' && await probePublisherCell(cell) === 0) evicted.push(maintainer)
             continue
           }
           // A publisher cell is bounded by one account's output under one

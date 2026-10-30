@@ -932,12 +932,16 @@ export interface AxisOutcome {
    * feed does not carry — an unpublish, a package that gained a refinement
    * keyword, or one the feed has come to carry (design
    * `docs/design/2026-10-20-cross-keyword-credit-and-feed-aware-pins.md`,
-   * §4.1). It is false past the window — there `seeded` is only what the
-   * window sweep showed, so its silence about an owner says nothing unless
-   * something else showed that owner's names — and false on a tolerated
-   * shortfall, where a handful of names went unseen and one of them may be a
-   * pinned owner's only at-risk package. That shortfall case is why this is
-   * not simply `!partitioned`: the cost of getting it wrong is a pin missing
+   * §4.1). It is also false unless the run MEASURED a positive total
+   * ({@link countedWholeInsideWindow}): a `{"total":0}` answer makes every
+   * shortfall negative, and trusting it would release the whole pinned set on
+   * a number nobody can stand behind. It is false past the window — there
+   * `seeded` is only what the window sweep showed, so its silence about an
+   * owner says nothing unless something else showed that owner's names — and
+   * false on a tolerated shortfall, where a handful of names went unseen and
+   * one of them may be a pinned owner's only at-risk package. That shortfall
+   * case is why this is not simply `!partitioned`: the cost of getting it
+   * wrong is a pin missing
    * on the day the keyword crosses, which is the one day this whole mechanism
    * exists for.
    *
