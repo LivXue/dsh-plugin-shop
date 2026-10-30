@@ -188,10 +188,20 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   // missing a keyword is not one to commit.
   const names = await search.catch((error: unknown) => {
     if (error instanceof CoverageCheckError && axis.length === HARVEST_KEYWORDS.length) {
-      mkdirSync(DIST_DIR, { recursive: true })
-      writeFileSync(join(DIST_DIR, 'publisher-axis.json'),
-        `${JSON.stringify({ publishers: [...sawPublishers].sort(compareStrings), publisherAxis: axis })}\n`)
-      process.stderr.write('classify: handed the publisher axis to dist/publisher-axis.json for the commit step\n')
+      // The coverage failure is this run's diagnosis, and it leaves either
+      // way: a write that fails here (a full disk, `dist` a file) must not
+      // replace it, or the log names the wrong cause and the failure-path
+      // steps describe a run they never saw (PR #118 review). The runner
+      // then finds no handoff and commits nothing, which is the honest
+      // outcome of a write that did not happen.
+      try {
+        mkdirSync(DIST_DIR, { recursive: true })
+        writeFileSync(join(DIST_DIR, 'publisher-axis.json'),
+          `${JSON.stringify({ publishers: [...sawPublishers].sort(compareStrings), publisherAxis: axis })}\n`)
+        process.stderr.write('classify: handed the publisher axis to dist/publisher-axis.json for the commit step\n')
+      } catch (writeError) {
+        process.stderr.write(`classify: could not hand the publisher axis over (${writeError instanceof Error ? writeError.message : String(writeError)}); nothing will be committed for it\n`)
+      }
     }
     throw error
   })

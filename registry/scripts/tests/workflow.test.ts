@@ -330,9 +330,15 @@ const classifyStep = findStep(buildSteps, s => s.run?.includes('classify.ts') ==
 const buildCatalogStep = findStep(buildSteps, s => s.run?.includes('build:catalog') === true, 'build:catalog')
 const commitClassifierStep = findStep(buildSteps, s => s.name === "Commit the classifier's output", "Commit the classifier's output")
 const commitSnapshotStep = findStep(buildSteps, s => s.name === 'Commit the snapshot', 'Commit the snapshot')
+const commitAxisStep = findStep(
+  buildSteps,
+  s => s.name === 'Commit the publisher axis a failed coverage check left',
+  'Commit the publisher axis a failed coverage check left',
+)
 
 const stagedByClassifierCommit = gitAddPaths(commitClassifierStep.step.run, "Commit the classifier's output")
 const stagedBySnapshotCommit = gitAddPaths(commitSnapshotStep.step.run, 'Commit the snapshot')
+const stagedByAxisCommit = gitAddPaths(commitAxisStep.step.run, 'Commit the publisher axis a failed coverage check left')
 
 describe('every REGISTRY_DIR join site in build.ts and classify.ts is accounted for', () => {
   const modules: ReadonlyArray<readonly [string, string]> = [
@@ -375,6 +381,10 @@ describe('the daily workflow stages every registry file the build writes', () =>
     // `git commit`, would otherwise satisfy every check below vacuously.
     expect(commitClassifierStep.step.run ?? '').toContain('git commit')
     expect(commitSnapshotStep.step.run ?? '').toContain('git commit')
+    // The red run's axis commit: without this, deleting its `git commit` left
+    // every test green while the step staged the file, pushed an unchanged
+    // HEAD and printed that the axis was on main (PR #118 review).
+    expect(commitAxisStep.step.run ?? '').toContain('git commit')
   })
 
   it('commits the classifier\'s output only in a step that runs after classify.ts', () => {
@@ -409,7 +419,11 @@ describe('the daily workflow stages every registry file the build writes', () =>
     // the commit down with it (PR #74 review). A file build.ts may skip
     // writing -- feed-state.json, on a handoff with no feed record -- has to
     // be committed, not merely written.
-    const steps = [["Commit the classifier's output", stagedByClassifierCommit], ['Commit the snapshot', stagedBySnapshotCommit]] as const
+    const steps = [
+      ["Commit the classifier's output", stagedByClassifierCommit],
+      ['Commit the snapshot', stagedBySnapshotCommit],
+      ['Commit the publisher axis a failed coverage check left', stagedByAxisCommit],
+    ] as const
     for (const [label, staged] of steps) {
       for (const path of staged) {
         expect(existsSync(join(repoRoot, path)), `"${label}" stages ${path}, which is not in the tree`).toBe(true)
