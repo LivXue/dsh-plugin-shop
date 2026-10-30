@@ -69,11 +69,53 @@ function argumentGiven(argv: readonly string[], name: string): boolean {
 
 /** The value of `--name` from either spelling, or undefined when absent or valueless. */
 function argumentValue(argv: readonly string[], name: string): string | undefined {
-  const index = argv.indexOf(name)
-  if (index !== -1) return argv[index + 1]
   const prefixed = `${name}=`
   const joined = argv.find(arg => arg.startsWith(prefixed))
-  return joined === undefined ? undefined : joined.slice(prefixed.length)
+  if (joined !== undefined) {
+    // `--flag=` names no file; reading it as an empty path died as an ENOENT
+    // against `''` with no flag in the message (PR #118 review).
+    const value = joined.slice(prefixed.length)
+    return value === '' ? undefined : value
+  }
+  const index = argv.indexOf(name)
+  if (index === -1) return undefined
+  const next = argv[index + 1]
+  // `--flag --other` must not take the next flag as its value.
+  return next === undefined || next.startsWith('--') ? undefined : next
+}
+
+/**
+ * Every record names a harvested keyword, and no keyword twice. Run where the
+ * handoff is PARSED rather than where it is spent: the spend happens after the
+ * pipeline, so a stale handoff's refusal used to leave the catalog artifacts,
+ * `manifest.lock` and `first-seen.yml` written before the throw (PR #118
+ * review).
+ */
+function assertAxisKeywords(axis: readonly PublisherAxisReport[], where: string): void {
+  const seen = new Set<string>()
+  for (const report of axis) {
+    if (!HARVEST_KEYWORDS.includes(report.keyword)) {
+      throw new Error(`${where}: publisher axis record names keyword \`${report.keyword}\`, which this build does not harvest`)
+    }
+    if (seen.has(report.keyword)) {
+      throw new Error(`${where}: publisher axis names keyword \`${report.keyword}\` more than once`)
+    }
+    seen.add(report.keyword)
+  }
+}
+
+/**
+ * `--axis-from` applies a RED RUN's axis, and a red run reports every keyword:
+ * a handoff holding one of two is applied alone, and the other keyword
+ * re-probes the same band — the failure the mechanism exists to end (PR #118
+ * review). Enforced before anything is written.
+ */
+function assertCompleteAxis(axis: readonly PublisherAxisReport[], where: string): void {
+  assertAxisKeywords(axis, where)
+  const missing = HARVEST_KEYWORDS.filter((keyword) => !axis.some((report) => report.keyword === keyword))
+  if (missing.length > 0) {
+    throw new Error(`${where}: publisher axis has no record for ${missing.map((keyword) => `\`${keyword}\``).join(', ')}, and a red run reports every keyword`)
+  }
 }
 
 /**
@@ -110,11 +152,11 @@ function parsePublisherAxisField(raw: unknown, where: string): PublisherAxisRepo
  */
 function spendPublisherAxis(
   prior: PublisherState,
-  saw: Iterable<string>,
+  saw: readonly string[],
   axis: readonly PublisherAxisReport[],
   where: string,
 ): { state: PublisherState; parts: string[] } {
-  let state = retainPinned(mergePublishers(prior, [...saw]), HARVEST_KEYWORDS)
+  let state = retainPinned(mergePublishers(prior, saw), HARVEST_KEYWORDS)
   const parts: string[] = []
   const seenKeywords = new Set<string>()
   for (const report of axis) {
@@ -223,12 +265,13 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && argumentGiven(process.argv
   }
   const saw = parsePublishersField(handoff.publishers, where)
   const axis = parsePublisherAxisField(handoff.publisherAxis, where)
+  assertCompleteAxis(axis, where)
   const REGISTRY_DIR = 'registry'
   const publisherStatePath = join(REGISTRY_DIR, 'publisher-state.json')
   const prior = existsSync(publisherStatePath)
     ? parsePublisherState(readFileSync(publisherStatePath, 'utf8'))
     : { publishers: [] }
-  const spent = spendPublisherAxis(prior, saw, axis, where)
+  const spent = spendPublisherAxis(prior, [...saw], axis, where)
   for (const part of spent.parts) process.stderr.write(`npm: ${part}\n`)
   writeFileSync(publisherStatePath, serializePublisherState(spent.state))
   process.stderr.write(`npm: publisher vocabulary ${prior.publishers.length} -> ${spent.state.publishers.length}\n`)
@@ -524,7 +567,11 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && !argumentGiven(process.arg
     // stayed green. Optional as a WHOLE, like its siblings: a handoff written
     // before this field existed must still build.
     if (parsed.publisherAxis !== undefined) {
-      axis.push(...parsePublisherAxisField(parsed.publisherAxis, `--harvest-from ${harvestFrom}`))
+      const fromHandoff = parsePublisherAxisField(parsed.publisherAxis, `--harvest-from ${harvestFrom}`)
+      // Validated here, before the pipeline: the spend happens after it, and a
+      // stale handoff used to leave the artifacts written before the throw.
+      assertAxisKeywords(fromHandoff, `--harvest-from ${harvestFrom}`)
+      axis.push(...fromHandoff)
     }
     if (parsed.feed === undefined) {
       feedParts.push('no change-feed record in this handoff: registry/feed-state.json was left as it was')
@@ -927,7 +974,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && !argumentGiven(process.arg
   // `--axis-from` instead (design 2026-10-22-publisher-axis-on-a-red-run), so
   // a red run moves its cursor and keeps the pins it earned, where it used to
   // re-probe its slice on the next run.
-  const spent = spendPublisherAxis(priorPublishers, sawPublishers, axis, harvestFrom === undefined ? 'the direct build' : `--harvest-from ${harvestFrom}`)
+  const spent = spendPublisherAxis(priorPublishers, [...sawPublishers], axis, harvestFrom === undefined ? 'the direct build' : `--harvest-from ${harvestFrom}`)
   const nextPublishers = spent.state
   axisParts.push(...spent.parts)
   for (const part of axisParts) process.stderr.write(`npm: ${part}\n`)

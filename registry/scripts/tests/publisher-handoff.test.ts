@@ -600,6 +600,36 @@ describe('build.ts --axis-from', () => {
     }
   })
 
+  it('refuses a handoff that omits a harvest keyword, before writing anything', () => {
+    // A red run reports every keyword; a hand-edited file holding one of the
+    // two applied that cursor alone and re-probed the other band (PR #118
+    // review).
+    const partial = [axis[0]]
+    const cwd = workspace({ 'publisher-axis.json': { publishers: seen, publisherAxis: partial } })
+    try {
+      const run = runEntry(cwd, 'build.ts', ['--axis-from', 'dist/publisher-axis.json'], [])
+      expect(run.status).not.toBe(0)
+      expect(run.stderr).toContain('no record for')
+      expect(stateOf(cwd)).toBe(committed)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a flag given without a value, instead of an empty path', () => {
+    // `--axis-from=` read as '' and died as an ENOENT against a path that was
+    // never named (PR #118 review).
+    const cwd = workspace({ 'publisher-axis.json': { publishers: seen, publisherAxis: axis } })
+    try {
+      const run = runEntry(cwd, 'build.ts', ['--axis-from='], [])
+      expect(run.status).not.toBe(0)
+      expect(run.stderr).toContain('--axis-from requires a path')
+      expect(stateOf(cwd)).toBe(committed)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
   it('refuses two records for one keyword and none for another', () => {
     // A count check let this through: the duplicated keyword's cursor
     // advanced twice and the unrecorded one stayed stale (PR #118 review).

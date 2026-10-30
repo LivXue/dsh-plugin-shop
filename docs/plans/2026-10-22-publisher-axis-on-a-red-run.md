@@ -142,9 +142,9 @@
   - The existing `it('classify.ts carries what it saw in the handoff, …')` gains `expect(existsSync(join(cwd, 'dist', 'publisher-axis.json'))).toBe(false)`.
 - [ ] **Step 2: Run** `npx vitest run registry/scripts/tests/publisher-handoff.test.ts -t 'axis'`. Expected: the first test fails, because there is no file.
 - [ ] **Step 3: Implement.**
-  - Catch around `searchByKeywords`. When the error is a `CoverageCheckError` and `axis.length === HARVEST_KEYWORDS.length`, write the file, log `classify: handed the publisher axis to dist/publisher-axis.json for the commit step`, then rethrow.
+  - Catch around `searchByKeywords`. When the error is a `CoverageCheckError` and the records name every `HARVEST_KEYWORDS` entry exactly once — a set check, not a count: `[A, A, B]` passes a count and lets the consumer refuse the file the producer just wrote — write the file, log `classify: handed the publisher axis to dist/publisher-axis.json for the commit step`, then rethrow.
   - Rethrow everything else untouched.
-  - The comment cites design 2026-10-22 §3.2, and why the count is a guard rather than a branch the run can take.
+  - The comment cites design 2026-10-22 §3.2, and why the set check is a guard rather than a branch the run can take.
 - [ ] **Step 4: Run** `pnpm test`, then `pnpm typecheck`. Expected: all pass.
 - [ ] **Step 5: Commit** `feat(registry): classify.ts hands its publisher axis over when a coverage check fails`.
 

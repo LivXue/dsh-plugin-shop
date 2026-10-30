@@ -191,7 +191,12 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   /** Read at the CATCH, not before `await`: the reports arrive while the search runs. */
   const completeAxis = (): boolean => {
     const reported = new Set(axis.map(report => report.keyword))
-    return reported.size === HARVEST_KEYWORDS.length && HARVEST_KEYWORDS.every(keyword => reported.has(keyword))
+    // `reported.size === axis.length` refuses a DUPLICATE: `[A, A, B]` has the
+    // right set and the wrong records, and the consumer would refuse the file
+    // the producer just wrote (PR #118 review).
+    return reported.size === axis.length
+      && reported.size === HARVEST_KEYWORDS.length
+      && HARVEST_KEYWORDS.every(keyword => reported.has(keyword))
   }
   const names = await search.catch((error: unknown) => {
     if (error instanceof CoverageCheckError && completeAxis()) {
