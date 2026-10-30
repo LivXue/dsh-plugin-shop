@@ -600,6 +600,36 @@ describe('build.ts --axis-from', () => {
     }
   })
 
+  it('refuses two records for one keyword and none for another', () => {
+    // A count check let this through: the duplicated keyword's cursor
+    // advanced twice and the unrecorded one stayed stale (PR #118 review).
+    const doubled = [axis[0], axis[0], record('deepseek-harness', {})]
+    const cwd = workspace({ 'publisher-axis.json': { publishers: seen, publisherAxis: doubled } })
+    try {
+      const run = runEntry(cwd, 'build.ts', ['--axis-from', 'dist/publisher-axis.json'], [])
+      expect(run.status).not.toBe(0)
+      expect(run.stderr).toContain('more than once')
+      expect(stateOf(cwd)).toBe(committed)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('replays a harvest named with the = spelling, rather than fetching live', () => {
+    // `--harvest-from=x` read as undefined and ran a LIVE harvest where the
+    // operator asked to replay a handoff (PR #118 review).
+    const cwd = workspace({ 'harvest.json': { candidates: [], rejections: [], shortfalls: [] } })
+    try {
+      const run = runEntry(cwd, 'build.ts', ['--harvest-from=dist/harvest.json'], [])
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      // The published icons index is read on every build; a SEARCH request is
+      // what a live harvest would have made instead of replaying the handoff.
+      expect(run.urls.filter(url => url.includes('/-/v1/search'))).toEqual([])
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
   it('applies the handoff with the = spelling too, and does not run the full build', () => {
     // Tested only for `--axis-from path`, an `--axis-from=path` fell through
     // BOTH guards and ran a live harvest that wrote the six registry files

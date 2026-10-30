@@ -181,13 +181,20 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   // module still writes no state file: the handoff is the same two fields
   // dist/harvest.json carries, in the same shapes.
   //
-  // The count is a guard, not a branch a real run takes. `searchByKeywords`
-  // throws CoverageCheckError only once every keyword has finished, and each
-  // reports its axis before its checks run; so a short count says this
-  // module and that one disagree about when a record is due, and an axis
-  // missing a keyword is not one to commit.
+  // The guard is the SET, not the count. `searchByKeywords` throws
+  // CoverageCheckError only once every keyword has finished, and each reports
+  // its axis before its checks run; so a set that is not exactly
+  // HARVEST_KEYWORDS says this module and that one disagree about when a
+  // record is due. A COUNT let two records for one keyword and none for
+  // another through, and the duplicated keyword's cursor advanced twice
+  // while the other stayed stale (PR #118 review).
+  /** Read at the CATCH, not before `await`: the reports arrive while the search runs. */
+  const completeAxis = (): boolean => {
+    const reported = new Set(axis.map(report => report.keyword))
+    return reported.size === HARVEST_KEYWORDS.length && HARVEST_KEYWORDS.every(keyword => reported.has(keyword))
+  }
   const names = await search.catch((error: unknown) => {
-    if (error instanceof CoverageCheckError && axis.length === HARVEST_KEYWORDS.length) {
+    if (error instanceof CoverageCheckError && completeAxis()) {
       // The coverage failure is this run's diagnosis, and it leaves either
       // way: a write that fails here (a full disk, `dist` a file) must not
       // replace it, or the log names the wrong cause and the failure-path
