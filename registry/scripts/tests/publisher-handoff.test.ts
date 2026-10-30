@@ -310,7 +310,10 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
         // build that REFUSED the handoff from one that never started, so the
         // reason is asserted too — and the loader's own error is named as the
         // thing this must not be mistaken for.
-        expect(run.stderr, `stderr:\n${run.stderr}`).toContain('publisher-state.json')
+        // Named against the HANDOFF it came from, not the committed file the
+        // rule is borrowed from (PR #118 review): the file is valid and
+        // untouched, and pointing at it sends a reader to the wrong place.
+        expect(run.stderr, `stderr:\n${run.stderr}`).toContain('--harvest-from dist/harvest.json')
         expect(run.stderr).not.toContain('ERR_UNSUPPORTED_ESM_URL_SCHEME')
         expect(run.stderr).not.toContain('preload-fetch:')
         expect(existsSync(join(cwd, 'registry', 'publisher-state.json'))).toBe(false)
@@ -537,6 +540,12 @@ describe('build.ts --axis-from', () => {
       expect(existsSync(join(alone, 'registry', 'snapshots', 'manifest.lock'))).toBe(false)
       expect(existsSync(join(alone, 'registry', 'feed-state.json'))).toBe(false)
       expect(existsSync(join(alone, 'registry', 'first-seen.yml'))).toBe(false)
+      // The other two the full build writes on this fixture: the icon record
+      // and the Pages directory. Absence of four artifacts established nothing
+      // about these two (PR #118 review; CLAUDE.md, "Assert on every artifact a
+      // property claims to cover").
+      expect(existsSync(join(alone, 'registry', 'icon-state.json'))).toBe(false)
+      expect(existsSync(join(alone, 'dist', 'pages'))).toBe(false)
       expect(run.urls).toEqual([])
       expect(run.stderr).toContain('released 1 judged pin(s) seeding no longer names')
       expect(run.stderr).toContain('publisher vocabulary 600 -> 602')
@@ -564,7 +573,45 @@ describe('build.ts --axis-from', () => {
       const run = runEntry(cwd, 'build.ts', ['--axis-from', 'dist/publisher-axis.json'], [])
       expect(run.status).not.toBe(0)
       expect(run.stderr).toContain('is not a maintainer username')
+      // Reported against the handoff it came from, not against the committed
+      // file, which is valid and untouched (PR #118 review).
+      expect(run.stderr).toContain('--axis-from dist/publisher-axis.json')
+      expect(run.stderr).not.toContain('publisher-state.json')
       expect(stateOf(cwd)).toBe(committed)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a record naming a keyword this build does not harvest, before writing it', () => {
+    // `retainPinned` prunes the MERGED state; a report's own keyword went
+    // straight through into `pinned[k]` and `cursors[k]`. Enough of them make
+    // the file exceed its keyword bound, and every later parse throws (PR #118
+    // review).
+    const mixed = [...axis, record('some-other-keyword', { seeded: ['u700'] })]
+    const cwd = workspace({ 'publisher-axis.json': { publishers: seen, publisherAxis: mixed } })
+    try {
+      const run = runEntry(cwd, 'build.ts', ['--axis-from', 'dist/publisher-axis.json'], [])
+      expect(run.status).not.toBe(0)
+      expect(run.stderr).toContain('which this build does not harvest')
+      expect(stateOf(cwd)).toBe(committed)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('applies the handoff with the = spelling too, and does not run the full build', () => {
+    // Tested only for `--axis-from path`, an `--axis-from=path` fell through
+    // BOTH guards and ran a live harvest that wrote the six registry files
+    // (PR #118 review).
+    const cwd = workspace({ 'publisher-axis.json': { publishers: seen, publisherAxis: axis } })
+    try {
+      const run = runEntry(cwd, 'build.ts', ['--axis-from=dist/publisher-axis.json'], [])
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      expect(stateOf(cwd)).not.toBe(committed)
+      expect(existsSync(join(cwd, 'dist', 'v1'))).toBe(false)
+      expect(existsSync(join(cwd, 'registry', 'snapshots', 'manifest.lock'))).toBe(false)
+      expect(run.urls).toEqual([])
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }

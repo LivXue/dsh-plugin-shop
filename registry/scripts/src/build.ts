@@ -42,8 +42,38 @@ import type { Candidate, Rejection, RepoCandidate } from './types.ts'
  * it on read, or a build can persist a vocabulary the next build refuses to
  * parse.
  */
-function parsePublishersField(raw: unknown): string[] {
-  return [...parsePublisherState(JSON.stringify({ publishers: raw })).publishers]
+function parsePublishersField(raw: unknown, where: string): string[] {
+  try {
+    return [...parsePublisherState(JSON.stringify({ publishers: raw })).publishers]
+  } catch (error) {
+    // The rule is the committed file's, and the FILE is not where this value
+    // came from: a handoff's bad username used to be reported against a valid,
+    // untouched publisher-state.json (PR #118 review).
+    // The inner message opens with the committed file's name; the value came
+    // from the handoff, so that prefix is dropped rather than left to read as
+    // a complaint about a file nobody touched.
+    const message = (error instanceof Error ? error.message : String(error)).replace(/^publisher-state\.json: /, '')
+    throw new Error(`${where}: ${message}`)
+  }
+}
+
+/**
+ * Whether `--name` was given, in either spelling: `--name value` or
+ * `--name=value`. Both are what an operator types, and a guard that tested
+ * only the first left `--axis-from=x` falling through BOTH entry guards and
+ * running the full live build (PR #118 review).
+ */
+function argumentGiven(argv: readonly string[], name: string): boolean {
+  return argv.includes(name) || argv.some(arg => arg.startsWith(`${name}=`))
+}
+
+/** The value of `--name` from either spelling, or undefined when absent or valueless. */
+function argumentValue(argv: readonly string[], name: string): string | undefined {
+  const index = argv.indexOf(name)
+  if (index !== -1) return argv[index + 1]
+  const prefixed = `${name}=`
+  const joined = argv.find(arg => arg.startsWith(prefixed))
+  return joined === undefined ? undefined : joined.slice(prefixed.length)
 }
 
 /**
@@ -86,6 +116,14 @@ function spendPublisherAxis(
   let state = retainPinned(mergePublishers(prior, [...saw]), HARVEST_KEYWORDS)
   const parts: string[] = []
   for (const report of axis) {
+    // Pruning above keeps an unharvested key out of the MERGED state, and
+    // would not keep one out of a key the REPORT names: `applyAxisReport`
+    // writes `pinned[k]` and `cursors[k]` straight through. One hand-edited
+    // handoff was enough to add a keyword the file's own bound refuses, and
+    // every later parse throws (PR #118 review).
+    if (!HARVEST_KEYWORDS.includes(report.keyword)) {
+      throw new Error(`publisher axis record names keyword \`${report.keyword}\`, which this build does not harvest`)
+    }
     const applied = applyAxisReport(state, report)
     state = applied.state
     const notes: string[] = []
@@ -151,8 +189,8 @@ function spendPublisherAxis(
 // other file. A sibling of the full build's guard rather than a branch inside
 // it, so that body keeps its shape; both guards are positive and exact, for
 // the reasons the comment above the full build's gives.
-if (basename(process.argv[1] ?? '') === 'build.ts' && process.argv.includes('--axis-from')) {
-  const axisFrom = process.argv[process.argv.indexOf('--axis-from') + 1]
+if (basename(process.argv[1] ?? '') === 'build.ts' && argumentGiven(process.argv, '--axis-from')) {
+  const axisFrom = argumentValue(process.argv, '--axis-from')
   if (axisFrom === undefined) {
     throw new Error('--axis-from requires a path')
   }
@@ -167,7 +205,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && process.argv.includes('--a
   if (handoff === null || typeof handoff !== 'object' || handoff.publishers === undefined || handoff.publisherAxis === undefined) {
     throw new Error(`${where}: expected { publishers, publisherAxis }, which every red run's handoff carries`)
   }
-  const saw = parsePublishersField(handoff.publishers)
+  const saw = parsePublishersField(handoff.publishers, where)
   const axis = parsePublisherAxisField(handoff.publisherAxis, where)
   const REGISTRY_DIR = 'registry'
   const publisherStatePath = join(REGISTRY_DIR, 'publisher-state.json')
@@ -195,7 +233,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && process.argv.includes('--a
 // and a bare import runs nothing.
 // registry/scripts/tests/strip-types.test.ts derives the entry-point list and
 // holds every member of it to both halves of this.
-if (basename(process.argv[1] ?? '') === 'build.ts' && !process.argv.includes('--axis-from')) {
+if (basename(process.argv[1] ?? '') === 'build.ts' && !argumentGiven(process.argv, '--axis-from')) {
   // The clock, read exactly once, here at the start, and never again: every
   // time the build needs is this reading plus what the monotonic clock has
   // counted since, which no step of the system clock can move. `builtAt` is
@@ -440,7 +478,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && !process.argv.includes('--
     // field that IS present goes through the same parser the committed file
     // does (`parsePublishersField`).
     if (parsed.publishers !== undefined) {
-      for (const username of parsePublishersField(parsed.publishers)) sawPublishers.add(username)
+      for (const username of parsePublishersField(parsed.publishers, `--harvest-from ${harvestFrom}`)) sawPublishers.add(username)
     }
     // STRICT where `shortfalls`/`publishers` above are lenient, and
     // deliberately so: those two only widen a report or a vocabulary, but this
