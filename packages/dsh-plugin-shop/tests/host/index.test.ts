@@ -102,7 +102,7 @@ describe('two catalog entries share one name (G-1)', () => {
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: Object.keys(dependencies) } }, dependencies }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [alice, bob], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [alice, bob], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
       prefetcher: fixturePrefetcher(),
     })
@@ -163,7 +163,7 @@ describe('two catalog entries share one name (G-1)', () => {
     }
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [npmTwin, bob], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [npmTwin, bob], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
     })
     await gateway.catalog({})
     expect(await gateway.installed()).toEqual([{
@@ -182,7 +182,7 @@ describe('two catalog entries share one name (G-1)', () => {
     const npmTwin: CatalogEntry = { ...alice, version: '2.0.0', integrity: 'sha512-x', source: 'npm', repo: undefined }
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [sibling, npmTwin], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [sibling, npmTwin], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
     })
   }
 
@@ -443,7 +443,7 @@ describe('ShopGateway.catalog', () => {
     builtAt: '2026-08-25T00:00:00Z',
     entries: [{ name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' }],
     denied: [{ name: 'dsh-blocked', detail: 'matched the denylist' }],
-    stars: {},
+    stars: {}, icons: {},
   }
 
   it('forwards the refresh flag to the catalog loader and maps the snapshot', async () => {
@@ -542,7 +542,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   const listed: CatalogEntry = { name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' }
 
   it('rejects not-in-catalog without spawning', async () => {
-    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
+    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {}, icons: {} })
     const result = await gateway.install({ name: 'dsh-unknown', version: '1.0.0' })
     expect(result).toMatchObject({ ok: false, code: 'not-in-catalog' })
     // A spawned fixture would have created the calls log within this settle window.
@@ -551,7 +551,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   })
 
   it('rejects denied without spawning', async () => {
-    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [], denied: [{ name: 'dsh-blocked', detail: 'matched the denylist' }], stars: {} })
+    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [], denied: [{ name: 'dsh-blocked', detail: 'matched the denylist' }], stars: {}, icons: {} })
     const result = await gateway.install({ name: 'dsh-blocked', version: '1.0.0' })
     expect(result).toMatchObject({ ok: false, code: 'denied' })
     await new Promise(resolve => setTimeout(resolve, 50))
@@ -559,7 +559,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   })
 
   it('rejects version-mismatch without spawning', async () => {
-    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
+    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {}, icons: {} })
     const result = await gateway.install({ name: 'dsh-hello-plugin', version: '9.9.9' })
     expect(result).toMatchObject({ ok: false, code: 'version-mismatch' })
     await new Promise(resolve => setTimeout(resolve, 50))
@@ -567,7 +567,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   })
 
   it('rejects needs-acknowledgement without spawning', async () => {
-    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
+    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {}, icons: {} })
     const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0' })
     expect(result).toMatchObject({ ok: false, code: 'needs-acknowledgement' })
     await new Promise(resolve => setTimeout(resolve, 50))
@@ -586,7 +586,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
       dependencies: { 'dsh-hello-plugin': 'github:someone-else/dsh-hello-plugin' },
     }))
     const { gateway, callsLog } = gatewayWithSnapshot(
-      { schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} },
+      { schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {}, icons: {} },
       { profileDir },
     )
     const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
@@ -605,7 +605,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
       dependencies: { 'dsh-hello-plugin': '^1.0.0' },
     }))
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} },
+      { schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {}, icons: {} },
       { profileDir },
     )
     const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
@@ -620,7 +620,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-broken-manifest-'))
     writeFileSync(join(profileDir, 'package.json'), '{ this is not json')
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 2, builtAt: '', entries: [], denied: [{ name: 'dsh-blocked', detail: 'matched the denylist' }], stars: {} },
+      { schemaVersion: 2, builtAt: '', entries: [], denied: [{ name: 'dsh-blocked', detail: 'matched the denylist' }], stars: {}, icons: {} },
       { profileDir },
     )
     const result = await gateway.install({ name: 'dsh-blocked', version: '1.0.0' })
@@ -629,7 +629,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   })
 
   it('spawns only for an acknowledged install and reports progress', async () => {
-    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
+    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {}, icons: {} })
     const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -655,7 +655,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   })
 
   it('returns the true terminal state for a finished install', async () => {
-    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {}, icons: {} })
     const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -675,7 +675,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   })
 
   it('retains at most 32 finished installs, evicting the oldest on the next add', async () => {
-    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {}, icons: {} })
     const ids: string[] = []
     for (let i = 0; i < 33; i += 1) {
       const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
@@ -707,7 +707,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   })
 
   it('retains every finished install below the 32-record cap (no eviction under the cap)', async () => {
-    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {}, icons: {} })
     const ids: string[] = []
     for (let i = 0; i < 20; i += 1) {
       const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
@@ -735,7 +735,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   })
 
   it('reports an unknown installId as not found', () => {
-    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {}, icons: {} })
     const status = gateway.installStatus({ installId: 'nope' })
     expect(status.found).toBe(false)
     expect(status.detail).toContain('nope')
@@ -1015,7 +1015,7 @@ describe("switches through dsh's pluginManager", () => {
       { get: (name: string) => name === 'pluginManager' ? service : undefined, reflect: { provide: () => {} } } as never,
       {
         catalogUrl: 'https://shop.test/v1/', cacheDir: mkdtempSync(join(TEMP_ROOT, 'dsh-switch-busy-cache-')), profile, profileDir,
-        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
         inventory: { list: async () => ({ entries: [
           { entryId: 'include:host-row', moduleName: 'dsh-two-rows/host', enabled: true },
           { entryId: 'include:client-row', moduleName: 'dsh-two-rows/client', enabled: true },
@@ -1056,7 +1056,7 @@ describe('ShopGateway.installed', () => {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: Object.keys(dependencies) } }, dependencies }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
     })
   }
 
@@ -1071,7 +1071,7 @@ describe('ShopGateway.installed', () => {
     const proto = { ...entries[0]!, name: 'constructor' }
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [proto], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [proto], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
     })
     await gateway.catalog({})
     expect(await gateway.installed()).toEqual([])
@@ -1088,7 +1088,7 @@ describe('ShopGateway.installed', () => {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-one'] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       inventory: { list: async () => ({ entries: [{ entryId: 'one-row', moduleName: 'dsh-one/host', enabled: false }] }) },
     })
     await gateway.catalog({})
@@ -1106,7 +1106,7 @@ describe('ShopGateway.installed', () => {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-one'] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       inventory: { list: async () => ({ entries: [{ entryId: 'include:one-row', moduleName: 'dsh-one/host', enabled: false }] }) },
     })
     await gateway.catalog({})
@@ -1142,7 +1142,7 @@ describe('ShopGateway.installed', () => {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
       loadCatalog: async () => {
         loadCalls += 1
-        return { snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false } as CatalogResult
+        return { snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {}, icons: {} }, stale: false } as CatalogResult
       },
     })
     const installed = await gateway.installed()
@@ -1172,7 +1172,7 @@ describe('ShopGateway.installed — shadowed github recovery (C10)', () => {
     }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [npmTwin], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [npmTwin], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
     })
   }
 
@@ -1248,7 +1248,7 @@ describe('ShopGateway.installed — shadowed github recovery (C10)', () => {
     }))
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries, denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
     })
     await gateway.catalog({})
     const rows = await gateway.installed()
@@ -1279,7 +1279,7 @@ describe('ShopGateway.uninstall — shadowed github arm (C10)', () => {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
       // The catalog holds a DIFFERENT-dsh-foo (the npm one that shadowed the
       // github install it shares the name with).
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [npmTwin], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [npmTwin], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
       prefetcher: fixturePrefetcher(),
     })
@@ -1320,7 +1320,7 @@ describe('ShopGateway.uninstall — shadowed github arm (C10)', () => {
     }))
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
       prefetcher: fixturePrefetcher(),
     })
@@ -1424,7 +1424,7 @@ describe("the bundle switch of dsh 0.1.7's own Plugins page", () => {
     const dir = profileWith('dsh-one', "- insert:\n    - id: one-row\n      name: 'dsh-one/host'\n", bundles)
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       // Silent, as the real inventory is about a bundle nothing composes.
       inventory: { list: async () => ({ entries: [] }) },
     })
@@ -1570,7 +1570,7 @@ describe('forwards-only outdated', () => {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: Object.keys(dependencies) } }, dependencies }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
     })
   }
 
@@ -1618,7 +1618,7 @@ describe('forwards-only outdated', () => {
     }
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [repoEntry], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
     })
     await gateway.catalog({})
     expect(await gateway.installed()).toEqual([{
@@ -1638,7 +1638,7 @@ describe('ShopGateway.uninstall', () => {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
     })
   }
 
@@ -1673,7 +1673,7 @@ describe('ShopGateway.uninstall', () => {
     const proto = { ...entries[0]!, name: 'constructor' }
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [proto], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [proto], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
     })
     await gateway.catalog({})
     expect(await gateway.uninstall({ name: 'constructor' })).toEqual({
@@ -2261,7 +2261,7 @@ describe('ShopGateway github entries', () => {
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 3, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 3, builtAt: '', entries: [repoEntry], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
       prefetcher: fixturePrefetcher(),
     })
@@ -2293,7 +2293,7 @@ describe('ShopGateway github entries', () => {
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-repo-plugin'] } }, dependencies: { 'dsh-repo-plugin': 'github:someone/dsh-repo-plugin' } }))
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 3, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 3, builtAt: '', entries: [repoEntry], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
     })
     await gateway.catalog({})
     expect(await gateway.installed()).toEqual([{ name: 'dsh-repo-plugin', source: 'github', repo: 'someone/dsh-repo-plugin', installed: oldCommit, latest: commit, outdated: true, enabled: true }])
@@ -2307,7 +2307,7 @@ describe('ShopGateway github entries', () => {
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-repo-plugin': 'github:someone/dsh-repo-plugin' } }))
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 3, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 3, builtAt: '', entries: [repoEntry], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       dshBin: '/bin/false',
     })
     await gateway.catalog({})
@@ -2334,7 +2334,7 @@ describe('subpackage install spec', () => {
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 4, builtAt: '', entries: [subEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 4, builtAt: '', entries: [subEntry], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
       prefetcher: fixturePrefetcher(),
     })
@@ -2392,7 +2392,7 @@ describe('release-rescued tarball install', () => {
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [tarballEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [tarballEntry], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
       fetchTarball,
       prefetcher: fixturePrefetcher(),
@@ -2464,7 +2464,7 @@ describe('release-rescued tarball install', () => {
     writeFileSync(join(npmProfileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     const npmGateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(npmDir, 'cache'), profile: 'web', profileDir: npmProfileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [npmEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [npmEntry], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       dshBin: npmBin,
       fetchTarball,
       prefetcher: fixturePrefetcher(),
@@ -2486,7 +2486,7 @@ describe('release-rescued tarball install', () => {
     writeFileSync(join(repoProfileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     const repoGateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(repoDir, 'cache'), profile: 'web', profileDir: repoProfileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [repoEntry], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       dshBin: repoBin,
       fetchTarball,
       prefetcher: fixturePrefetcher(),
@@ -2511,7 +2511,7 @@ describe('release-rescued tarball install', () => {
     }
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [newer], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [newer], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
     })
     await gateway.catalog({})
     expect(await gateway.installed()).toEqual([{
@@ -2571,7 +2571,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
       { name: 'dsh-goodbye-plugin', version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' },
     ],
     denied: [],
-    stars: {},
+    stars: {}, icons: {},
   }
 
   function hotGateway(options: {
@@ -2760,7 +2760,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
       ...gatewayOptions(),
       importedModules: undefined,
       profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [probe], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [probe], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       hot: { mount, unmount: hotUnmount },
       loaderEntries: () => [],
     })
@@ -3277,7 +3277,7 @@ describe('ShopGateway.catalog incompatibility', () => {
 
   it('names the missing peer on the catalog result', async () => {
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 6, builtAt: '', entries: [peered], denied: [], stars: {} },
+      { schemaVersion: 6, builtAt: '', entries: [peered], denied: [], stars: {}, icons: {} },
       { resolvePeer: (spec: string) => spec !== '@deepseek-ai/dsh-client-store' },
     )
     const result = await gateway.catalog({})
@@ -3286,7 +3286,7 @@ describe('ShopGateway.catalog incompatibility', () => {
 
   it('reports nothing when every peer resolves', async () => {
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 6, builtAt: '', entries: [peered], denied: [], stars: {} },
+      { schemaVersion: 6, builtAt: '', entries: [peered], denied: [], stars: {}, icons: {} },
       { resolvePeer: () => true },
     )
     expect((await gateway.catalog({})).incompatible).toEqual({})
@@ -3294,7 +3294,7 @@ describe('ShopGateway.catalog incompatibility', () => {
 
   it('reports nothing for an entry that carries no peers, however resolution would answer', async () => {
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 5, builtAt: '', entries: [{ ...peered, peers: undefined }], denied: [], stars: {} },
+      { schemaVersion: 5, builtAt: '', entries: [{ ...peered, peers: undefined }], denied: [], stars: {}, icons: {} },
       { resolvePeer: () => false },
     )
     expect((await gateway.catalog({})).incompatible).toEqual({})
@@ -3319,7 +3319,7 @@ describe('ShopGateway.catalog incompatibility', () => {
       cacheDir: '/cache',
       profile: 'web',
       loadCatalog: async () => ({
-        snapshot: { schemaVersion: 6, builtAt: '', entries: [peered], denied: [], stars: {} },
+        snapshot: { schemaVersion: 6, builtAt: '', entries: [peered], denied: [], stars: {}, icons: {} },
         stale: false,
       }) as CatalogResult,
     })
@@ -3336,7 +3336,7 @@ describe('ShopGateway.catalog incompatibility', () => {
     // case of `ShopGateway.catalog harness compatibility`.)
     const malformed = { ...peered, name: 'malformed', peers: 5 } as unknown as CatalogEntry
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 6, builtAt: '', entries: [peered, malformed], denied: [], stars: {} },
+      { schemaVersion: 6, builtAt: '', entries: [peered, malformed], denied: [], stars: {}, icons: {} },
       { resolvePeer: () => false },
     )
     const result = await gateway.catalog({})
@@ -3354,7 +3354,7 @@ describe('ShopGateway.catalog incompatibility', () => {
     // and moves under it.
     let installed = false
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 5, builtAt: '', entries: [peered], denied: [], stars: {} },
+      { schemaVersion: 5, builtAt: '', entries: [peered], denied: [], stars: {}, icons: {} },
       { resolvePeer: (spec: string) => spec !== '@deepseek-ai/dsh-client-store' || installed },
     )
 
@@ -3395,7 +3395,7 @@ describe('ShopGateway.catalog incompatibility', () => {
       profile: 'web',
       profileDir,
       loadCatalog: async () => ({
-        snapshot: { schemaVersion: 6, builtAt: '', entries: [{ ...peered, peers: [servedName, missingName] }], denied: [], stars: {} },
+        snapshot: { schemaVersion: 6, builtAt: '', entries: [{ ...peered, peers: [servedName, missingName] }], denied: [], stars: {}, icons: {} },
         stale: false,
       }) as CatalogResult,
     })
@@ -3514,7 +3514,7 @@ describe('ShopGateway.catalog: what the running dsh itself refuses', () => {
   it("carries dsh's refusal and the command that exempts it, beside what the author declared", async () => {
     const declared: CatalogEntry = { ...pinned, compatibility: { dsh: '0.9.0' } }
     const { readHarness, asked } = refusingHarness({ record: {} })
-    const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [declared], denied: [], stars: {} }, { readHarness })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [declared], denied: [], stars: {}, icons: {} }, { readHarness })
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({
       'npm:dsh-pinned': { dsh: { range: '0.9.0', running: '0.1.7-rc.2' }, peers: REFUSAL },
     })
@@ -3530,7 +3530,7 @@ describe('ShopGateway.catalog: what the running dsh itself refuses', () => {
     // the card refused for as long as the snapshot is served.
     const held: { record: Record<string, string[]> } = { record: {} }
     const { readHarness } = refusingHarness(held)
-    const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [pinned], denied: [], stars: {} }, { readHarness })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [pinned], denied: [], stars: {}, icons: {} }, { readHarness })
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({ 'npm:dsh-pinned': { peers: REFUSAL } })
     held.record = { 'dsh-pinned@1.2.0': ['0.1.7-rc.2'] }
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({})
@@ -3548,7 +3548,7 @@ describe('ShopGateway.catalog: what the running dsh itself refuses', () => {
     // An exemption recorded under the commit is one dsh never reads.
     const held: { record: Record<string, string[]> } = { record: { [`dsh-pinned@${commit}`]: ['0.1.7-rc.2'] } }
     const { readHarness } = refusingHarness(held)
-    const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [fromGithub], denied: [], stars: {} }, { readHarness })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [fromGithub], denied: [], stars: {}, icons: {} }, { readHarness })
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({ 'github:owner/dsh-pinned#': { peers: REFUSAL } })
     held.record = { 'dsh-pinned@1.2.0': ['0.1.7-rc.2'] }
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({})
@@ -3556,7 +3556,7 @@ describe('ShopGateway.catalog: what the running dsh itself refuses', () => {
 
   it('says nothing on a dsh that has no such check, which refuses no install on its peers', async () => {
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 5, builtAt: '', entries: [pinned], denied: [], stars: {} },
+      { schemaVersion: 5, builtAt: '', entries: [pinned], denied: [], stars: {}, icons: {} },
       { readHarness: injectedHarness().readHarness },
     )
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({})
@@ -3567,7 +3567,7 @@ describe('ShopGateway.catalog: what the running dsh itself refuses', () => {
     // same, and a refusal nobody could justify is the worst answer.
     const declared: CatalogEntry = { ...pinned, compatibility: { dsh: '0.9.0' } }
     const { readHarness } = refusingHarness({ record: 'throws' })
-    const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [declared], denied: [], stars: {} }, { readHarness })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [declared], denied: [], stars: {}, icons: {} }, { readHarness })
     const result = await gateway.catalog({})
     expect(result.incompatibleHarness).toEqual({ 'npm:dsh-pinned': { dsh: { range: '0.9.0', running: '0.1.7-rc.2' } } })
     expect(result.plugins).toHaveLength(1)
@@ -3602,7 +3602,7 @@ describe('ShopGateway.catalog harness compatibility', () => {
     // fails. Injected: without a readable table, `web` would be no template
     // at all, and the profile half silent for that reason instead.
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 5, builtAt: '', entries: [dshIm], denied: [], stars: {} },
+      { schemaVersion: 5, builtAt: '', entries: [dshIm], denied: [], stars: {}, icons: {} },
       { profile: 'tui', readHarness: injectedHarness().readHarness },
     )
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({
@@ -3626,7 +3626,7 @@ describe('ShopGateway.catalog harness compatibility', () => {
     writeFileSync(join(hoisted, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.2-rc.1' }))
     const declaresHoisted: CatalogEntry = { ...dshIm, name: 'declares-hoisted', compatibility: { dsh: '0.1.2-rc.1' } }
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 5, builtAt: '', entries: [declaresHoisted], denied: [], stars: {} },
+      { schemaVersion: 5, builtAt: '', entries: [declaresHoisted], denied: [], stars: {}, icons: {} },
       { profileDir, restartScript: fixtureHarness().script },
     )
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({
@@ -3642,7 +3642,7 @@ describe('ShopGateway.catalog harness compatibility', () => {
     // takes it from the running dsh's own app-boot is harness.test.ts's case.
     const acpOnly: CatalogEntry = { ...dshIm, name: 'acp-only', compatibility: { profiles: ['acp'] } }
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 5, builtAt: '', entries: [acpOnly], denied: [], stars: {} },
+      { schemaVersion: 5, builtAt: '', entries: [acpOnly], denied: [], stars: {}, icons: {} },
       { readHarness: injectedHarness().readHarness },
     )
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({
@@ -3660,7 +3660,7 @@ describe('ShopGateway.catalog harness compatibility', () => {
     const host = mkdtempSync(join(TEMP_ROOT, 'dsh-harness-other-'))
     writeFileSync(join(host, 'package.json'), JSON.stringify({ name: 'some-host', version: '1.0.0' }))
     writeFileSync(join(host, 'main.js'), '')
-    const snapshot: CatalogSnapshot = { schemaVersion: 5, builtAt: '', entries: [headlessOnly], denied: [], stars: {} }
+    const snapshot: CatalogSnapshot = { schemaVersion: 5, builtAt: '', entries: [headlessOnly], denied: [], stars: {}, icons: {} }
     for (const options of [{ restartScript: join(host, 'main.js') }, {}]) {
       const { gateway } = gatewayWithSnapshot(snapshot, options)
       expect((await gateway.catalog({})).incompatibleHarness, JSON.stringify(options)).toEqual({})
@@ -3680,7 +3680,7 @@ describe('ShopGateway.catalog harness compatibility', () => {
       profile: 'web',
       readHarness: injectedHarness().readHarness,
       loadCatalog: async () => ({
-        snapshot: { schemaVersion: 5, builtAt: '', entries: [headlessOnly], denied: [], stars: {} },
+        snapshot: { schemaVersion: 5, builtAt: '', entries: [headlessOnly], denied: [], stars: {}, icons: {} },
         stale: false,
       }) as CatalogResult,
     })
@@ -3702,7 +3702,7 @@ describe('ShopGateway.catalog harness compatibility', () => {
     // no semver in. harness.test.ts pins that reading, and that the table is
     // read beside each of them.
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 5, builtAt: '', entries: [headlessOnly], denied: [], stars: {} },
+      { schemaVersion: 5, builtAt: '', entries: [headlessOnly], denied: [], stars: {}, icons: {} },
       { readHarness: injectedHarness(dshVersion).readHarness },
     )
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({ 'npm:dsh-headless-only': HEADLESS_UNMET })
@@ -3716,7 +3716,7 @@ describe('ShopGateway.catalog harness compatibility', () => {
     // profile anchor — which is where a hoisted copy could move it.)
     const harness = injectedHarness()
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 5, builtAt: '', entries: [headlessOnly], denied: [], stars: {} },
+      { schemaVersion: 5, builtAt: '', entries: [headlessOnly], denied: [], stars: {}, icons: {} },
       { readHarness: harness.readHarness },
     )
     const both = { 'npm:dsh-headless-only': { dsh: { range: '0.9.0', running: '0.1.5-rc.3' }, ...HEADLESS_UNMET } }
@@ -3735,7 +3735,7 @@ describe('ShopGateway.catalog harness compatibility', () => {
       writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles } }, dependencies: {} }))
     writeBundles(['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'])
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 5, builtAt: '', entries: [acpOnly], denied: [], stars: {} },
+      { schemaVersion: 5, builtAt: '', entries: [acpOnly], denied: [], stars: {}, icons: {} },
       { profileDir, readHarness: injectedHarness().readHarness },
     )
     expect(Object.keys((await gateway.catalog({})).incompatibleHarness)).toEqual(['npm:acp-only'])
@@ -3752,7 +3752,7 @@ describe('ShopGateway.catalog harness compatibility', () => {
     const prototypeNamed: CatalogEntry = { ...dshIm, name: 'prototype-named', compatibility: { profiles: ['constructor'] } }
     const acpOnly: CatalogEntry = { ...dshIm, name: 'acp-only', compatibility: { profiles: ['acp'] } }
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 5, builtAt: '', entries: [prototypeNamed, acpOnly], denied: [], stars: {} },
+      { schemaVersion: 5, builtAt: '', entries: [prototypeNamed, acpOnly], denied: [], stars: {}, icons: {} },
       { readHarness: injectedHarness().readHarness },
     )
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({
@@ -3772,7 +3772,7 @@ describe('ShopGateway.catalog harness compatibility', () => {
     const acpOnly: CatalogEntry = { ...dshIm, name: 'acp-only', compatibility: { profiles: ['acp'] } }
     const peered: CatalogEntry = { ...dshIm, name: 'peered', compatibility: undefined, peers: ['dsh-peer-installed-nowhere'] }
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 5, builtAt: '', entries: [acpOnly, malformed, peered], denied: [], stars: {} },
+      { schemaVersion: 5, builtAt: '', entries: [acpOnly, malformed, peered], denied: [], stars: {}, icons: {} },
       { readHarness: injectedHarness().readHarness, resolvePeer: () => false },
     )
     const result = await gateway.catalog({})
@@ -3798,7 +3798,7 @@ describe('concurrent catalog loads (G-7)', () => {
       loadCatalog: async () => {
         loadCalls += 1
         await gate
-        return { snapshot: { schemaVersion: 6, builtAt: '', entries, denied: [], stars: {} }, stale: false } as CatalogResult
+        return { snapshot: { schemaVersion: 6, builtAt: '', entries, denied: [], stars: {}, icons: {} }, stale: false } as CatalogResult
       },
     })
     const both = Promise.all([gateway.catalog({}), gateway.installed()])
@@ -3818,7 +3818,7 @@ describe('concurrent catalog loads (G-7)', () => {
       loadCatalog: async () => {
         loadCalls += 1
         if (loadCalls === 1) throw new Error('offline')
-        return { snapshot: { schemaVersion: 6, builtAt: '', entries, denied: [], stars: {} }, stale: false } as CatalogResult
+        return { snapshot: { schemaVersion: 6, builtAt: '', entries, denied: [], stars: {}, icons: {} }, stale: false } as CatalogResult
       },
     })
     await expect(gateway.catalog({})).rejects.toThrow('offline')
@@ -3834,7 +3834,7 @@ describe('concurrent catalog loads (G-7)', () => {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
       loadCatalog: async options => {
         seen.push(options.refresh)
-        return { snapshot: { schemaVersion: 6, builtAt: '', entries, denied: [], stars: {} }, stale: false } as CatalogResult
+        return { snapshot: { schemaVersion: 6, builtAt: '', entries, denied: [], stars: {}, icons: {} }, stale: false } as CatalogResult
       },
     })
     await gateway.catalog({})
@@ -3860,7 +3860,7 @@ describe('concurrent catalog loads (G-7)', () => {
         seen.push(options.refresh)
         await gate
         const builtAt = options.refresh === true ? 'from-the-refresh' : 'from-a-plain-load'
-        return { snapshot: { schemaVersion: 6, builtAt, entries, denied: [], stars: {} }, stale: false } as CatalogResult
+        return { snapshot: { schemaVersion: 6, builtAt, entries, denied: [], stars: {}, icons: {} }, stale: false } as CatalogResult
       },
     })
     const refreshing = gateway.catalog({ refresh: true })
@@ -3897,7 +3897,7 @@ describe('restart while an install is running (F-5)', () => {
       // A dead pid lets the pre-fix helper run without waiting for this test
       // worker; the failing assertion is the returned restart outcome.
       restartParentPid: 1_000_000_000,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [listed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [listed], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       prefetcher: fixturePrefetcher(),
     })
     const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm' })
@@ -3946,7 +3946,7 @@ describe('restart while an install is running (F-5)', () => {
       // `restart()` has returned, and lands in restart.log where the stubbed
       // `exit` leaves it harmless.
       platform: 'linux',
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [listed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [listed], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       prefetcher: fixturePrefetcher(),
     })
     const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm' })
@@ -3976,7 +3976,7 @@ describe('a queued install is live, not finished', () => {
     // The existing 33-install eviction case cannot catch this: it awaits every
     // install's completion before adding the one that triggers eviction, so no
     // record is 'downloading' at that moment. This one never awaits.
-    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {}, icons: {} })
     const ids: string[] = []
     for (let i = 0; i < 34; i += 1) {
       const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
@@ -4011,7 +4011,7 @@ describe('a queued install is live, not finished', () => {
     // helper exec'ing the fixture `dshBin` instead of the test runner's own
     // argv.
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} },
+      { schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {}, icons: {} },
       { exit: vi.fn(), restartParentPid: 1_000_000_000, restartExitDelayMs: 1, restartArgv: ['web'] },
     )
     const first = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
@@ -4044,7 +4044,7 @@ describe('a queued install is live, not finished', () => {
     ].join('\n'))
     const holder = startInstall({ profile: 'web', spec: 'a@1', dshBin: slow })
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} },
+      { schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {}, icons: {} },
       { exit: vi.fn(), restartParentPid: 1_000_000_000, restartExitDelayMs: 1, restartArgv: ['web'] },
     )
     const queued = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
@@ -4190,7 +4190,7 @@ describe("installs and updates through dsh's pluginManager", () => {
     const cliDir = mkdtempSync(join(TEMP_ROOT, 'dsh-managed-cli-'))
     const gateway = new ShopGateway(ctx, {
       catalogUrl: 'https://shop.test/v1/', cacheDir, profile, profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed, other, managedRepo, ...entries], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed, other, managedRepo, ...entries], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       importedModules,
       prefetcher,
       dshBin: cli(cliDir),
@@ -4630,7 +4630,7 @@ describe("installs and updates through dsh's pluginManager", () => {
       { get: (name: string) => name === 'pluginManager' ? service : undefined, reflect: { provide: () => {} } } as never,
       {
         catalogUrl: 'https://shop.test/v1/', cacheDir: mkdtempSync(join(TEMP_ROOT, 'dsh-forget-pins-cache-')), profile, profileDir,
-        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
         pinFs: pinned,
         // The F-5 cases' safety net, for the order in which the gate does not
         // hold: a permitted restart starts the takeover helper and schedules
@@ -4683,7 +4683,7 @@ describe("installs and updates through dsh's pluginManager", () => {
       { get: (name: string) => name === 'pluginManager' ? service : undefined, reflect: { provide: () => {} } } as never,
       {
         catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir,
-        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       },
     )
     const started = await gateway.uninstall({ name: 'dsh-managed' })
@@ -4715,7 +4715,7 @@ describe("installs and updates through dsh's pluginManager", () => {
       { get: (name: string) => name === 'pluginManager' ? service : undefined, reflect: { provide: () => {} } } as never,
       {
         catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir,
-        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       },
     )
     const started = await gateway.uninstall({ name: 'dsh-managed' })
@@ -4824,7 +4824,7 @@ describe("installs and updates through dsh's pluginManager", () => {
       { get: (name: string) => name === 'pluginManager' ? service : undefined, reflect: { provide: () => {} } } as never,
       {
         catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'desktop', profileDir,
-        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       },
     )
     const started = await gateway.uninstall({ name: 'dsh-managed' })
@@ -4881,7 +4881,7 @@ describe("dsh's pluginManager events, through a real cordis Context", () => {
     await root.plugin((ctx: Context) => {
       gateway = new ShopGateway(ctx, {
         catalogUrl: 'https://shop.test/v1/', cacheDir: mkdtempSync(join(TEMP_ROOT, 'dsh-cordis-cache-')), profile: 'cordis', profileDir,
-        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [entry('dsh-cordis-a'), entry('dsh-cordis-b')], denied: [], stars: {} }, stale: false }) as CatalogResult,
+        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [entry('dsh-cordis-a'), entry('dsh-cordis-b')], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
         importedModules: new Set<string>(),
         prefetcher: fixturePrefetcher(),
       })

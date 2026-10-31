@@ -62,6 +62,13 @@ import { createHash } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
+/** The icon `dsh-shop-e2e-config` declares: a data URL built here so the e2e
+ * can compare a card's `img.src` with the bytes the catalog carried, not with
+ * whatever the page drew. */
+export const FIXTURE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24" fill="#2f6fed"/></svg>'
+export const FIXTURE_ICON_DATA_URL = `data:image/svg+xml;base64,${Buffer.from(FIXTURE_ICON_SVG, 'utf8').toString('base64')}`
+export const FIXTURE_ICON_SHA256 = createHash('sha256').update(Buffer.from(FIXTURE_ICON_SVG, 'utf8')).digest('hex')
+
 export interface CatalogServer {
   /** Catalog base, e.g. `http://127.0.0.1:<port>/v1/` — what the profile's
    * shop row reads from DSH_SHOP_CATALOG_URL. */
@@ -139,6 +146,9 @@ const FIXTURE_ENTRIES = [
   {
     name: 'dsh-shop-e2e-config',
     version: '1.0.0',
+    // The one fixture with an icon, so the e2e can prove the card draws the
+    // bytes the catalog carried and the default elsewhere.
+    icon: FIXTURE_ICON_SHA256,
     integrity: null,
     publishedAt: '2026-08-25T00:00:00.000Z',
     repository: 'https://github.com/octocat/dsh-shop-e2e-config',
@@ -214,17 +224,22 @@ export async function startCatalogServer(): Promise<CatalogServer> {
   })
   const starsSha = createHash('sha256').update(stars).digest('hex')
   const starsName = `stars.${starsSha}.json`
+  const icons = JSON.stringify({ icons: { [FIXTURE_ICON_SHA256]: FIXTURE_ICON_DATA_URL } })
+  const iconsSha = createHash('sha256').update(icons).digest('hex')
+  const iconsName = `icons.${iconsSha}.json`
   const pointer = JSON.stringify({
     schemaVersion: 6,
     builtAt: new Date().toISOString(),
     count: FIXTURE_ENTRIES.length,
     plugins: { url: dataName, sha256 },
     stars: { url: starsName, sha256: starsSha },
+    icons: { url: iconsName, sha256: iconsSha },
   })
   const routes = new Map<string, string>([
     ['/v1/index.json', pointer],
     [`/v1/${dataName}`, data],
     [`/v1/${starsName}`, stars],
+    [`/v1/${iconsName}`, icons],
   ])
   const server: Server = createServer((req, res) => {
     const body = routes.get(req.url ?? '')

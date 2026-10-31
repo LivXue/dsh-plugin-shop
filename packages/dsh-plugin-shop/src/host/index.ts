@@ -428,6 +428,9 @@ export interface ShopCatalogResult {
   /** GitHub star counts by package name; {} when the pointer names no sidecar
    * or the sidecar could not be fetched/verified (§5). */
   stars: Record<string, number>
+  /** sha256 → data URL for the catalogue's icons; {} when the pointer names
+   * none or it could not be read (design 2026-10-23-shop-plugin-icons §7). */
+  icons: Record<string, string>
   /** Install identity (`npm:<name>` / `github:<repo>#<subdir>`) → the declared
    * peers node resolution cannot find from the profile. This is the HOST half
    * of the verdict only: a module the browser's module table serves — a
@@ -1376,6 +1379,7 @@ export class ShopGateway extends TypertRemoteService {
       denied: snapshot.denied,
       notAShop: snapshot.notAShop ?? [],
       stars: snapshot.stars,
+      icons: snapshot.icons ?? {},
       incompatible,
       incompatibleHarness,
     }

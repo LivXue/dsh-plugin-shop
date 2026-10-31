@@ -7,7 +7,7 @@
 import { Component, Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type InstallView, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, listedOnShelf, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, updateAwaitsRestart, utcDay, versionLabel, versionLabelKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type InstallView, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, iconOf, identityKey, installPhaseKey, isCustomLicense, listedOnShelf, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, updateAwaitsRestart, utcDay, versionLabel, versionLabelKey } from './present.ts'
 import { createPageStore, switchKey, type OwedNotice, type ShopPageStore, type SwitchSurface } from './page-store.ts'
 import { readRestartMonitor, requestRestart, subscribeRestartMonitor, type RestartMonitorState } from './restart-monitor.ts'
 import { useRegistryFlows, type InstallFlow, type UninstallFlow, type UseUninstallFlows } from './useFlows.ts'
@@ -15,6 +15,7 @@ import { useRegistrySelf } from './useUpdateSelf.ts'
 import { en, type ShopLocaleKey } from './locales.ts'
 import { expandZhQuery, tokenInText } from '../shared/zh-intents.ts'
 import { FoldableRedBlock } from './FoldableRedBlock.tsx'
+import { EntryIcon } from './EntryIcon.tsx'
 import css from './ShopTab.module.css'
 
 /** The project's home on GitHub, linked from the toolbar. */
@@ -150,8 +151,10 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, stars, order, shelfDay, installed, missing, harness, nameTakenBy, t, flow, uninstallFlow, restart, restartBlocked, reload, setEnabled, inInstalledView, page }: {
+const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay, installed, missing, harness, nameTakenBy, t, flow, uninstallFlow, restart, restartBlocked, reload, setEnabled, inInstalledView, page }: {
   entry: CatalogEntry
+  /** The entry's icon as a data URL, or undefined to draw the default. */
+  icon: string | undefined
   stars: number | undefined
   /** The shelf's order, so the card can name the date it shows (design
    * 2026-10-12-shelf-orders §4). */
@@ -234,6 +237,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, order, shelfDay, insta
         aria-controls={detailId}
         onClick={() => { page.toggleExpanded(key); rerender() }}
       >
+        <EntryIcon icon={icon} />
         <span className={css.name}>{entry.name}</span>
         <span className={css.badges}>
           <span className={css.categoryBadge}>{t(categoryKey(entry))}</span>
@@ -1325,8 +1329,10 @@ function EnabledSwitch({ row, surface, page, t, setEnabled, restart, restartBloc
  * carry a `latest` string — a catalog truth to compare against; §C10's
  * shadowed rows hold `latest: null` and never reach this control, so the
  * field is narrowed at the parameter. */
-function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, locked, restart, restartBlocked, reload, page }: {
+function OutdatedRow({ row, icon, tier, missing, harness, t, setEnabled, flowFor, locked, restart, restartBlocked, reload, page }: {
   row: ShopInstalledEntry & { latest: string }
+  /** The row's catalog entry's icon, or undefined when the entry is gone. */
+  icon: string | undefined
   tier: CatalogEntry['tier']
   missing: string[]
   harness: HarnessVerdict | undefined
@@ -1345,10 +1351,13 @@ function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, lock
   return (
     <div className={css.outdatedRow} data-shop-outdated-entry={row.name}>
       <div className={css.outdatedInfo}>
-        <span className={css.name}>{row.name}</span>
-        <span className={css.outdatedVersions}>
+        <EntryIcon icon={icon} />
+        <span className={css.outdatedText}>
+          <span className={css.name}>{row.name}</span>
+          <span className={css.outdatedVersions}>
           <span>{t('installedVersion', { version: versionLabel(row.source, row.installed).text })}</span>
-          <span>{t('latestVersion', { version: versionLabel(row.source, row.latest).text })}</span>
+            <span>{t('latestVersion', { version: versionLabel(row.source, row.latest).text })}</span>
+          </span>
         </span>
       </div>
       <div className={css.outdatedActions}>
@@ -1383,9 +1392,11 @@ const UPDATABLE_HEADING_ID = 'dsh-shop-updatable-heading'
  * community entry's does); an entry absent from the catalog is read as
  * community, so its request acknowledges, which the host accepts for any
  * tier. */
-function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t, setEnabled, flowFor, uninstallFor, restart, restartBlocked, reload, page }: {
+function OutdatedSection({ state, entriesByKey, icons, missingByKey, harnessVerdicts, t, setEnabled, flowFor, uninstallFor, restart, restartBlocked, reload, page }: {
   state: InstalledState
   entriesByKey: ReadonlyMap<string, CatalogEntry>
+  /** sha256 → data URL, from the catalog result. */
+  icons: Readonly<Record<string, string>>
   missingByKey: ReadonlyMap<string, string[]>
   /** The catalog result's `incompatibleHarness`, or undefined from a host that
    * predates it — `harnessVerdictOf` reads either. */
@@ -1426,6 +1437,7 @@ function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t
           <li key={identityKey(row)}>
             <OutdatedRow
               row={row}
+              icon={iconOf(entriesByKey.get(identityKey(row)), icons)}
               tier={entriesByKey.get(identityKey(row))?.tier ?? 'community'}
               missing={missingByKey.get(identityKey(row)) ?? []}
               harness={harnessVerdictOf(harnessVerdicts, identityKey(row))}
@@ -1452,8 +1464,11 @@ function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t
  * naming the harness fact, and an Uninstall button as the only offered
  * action: there is no catalog truth to compare against, so no Install /
  * Update / Enable / Restart control makes sense. */
-function ShadowedSection({ entries, t, uninstallFlows, restart, restartBlocked, reload }: {
+function ShadowedSection({ entries, icons, entriesByKey, t, uninstallFlows, restart, restartBlocked, reload }: {
   entries: readonly ShopInstalledEntry[]
+  /** sha256 → data URL, from the catalog result. */
+  icons: Readonly<Record<string, string>>
+  entriesByKey: ReadonlyMap<string, CatalogEntry>
   t: ShopTabProps['t']
   uninstallFlows: UseUninstallFlows
   restart: ShopTabInjected['restart']
@@ -1471,11 +1486,14 @@ function ShadowedSection({ entries, t, uninstallFlows, restart, restartBlocked, 
             <li key={key}>
               <div className={css.outdatedRow} data-shop-shadowed-entry={row.name}>
                 <div className={css.outdatedInfo}>
-                  <span className={css.name}>{row.name}</span>
-                  <span className={css.badges}>
-                    <span className={css.tierBadge} data-tier="shadowed">{t('shadowedBadge')}</span>
+                  <EntryIcon icon={iconOf(entriesByKey.get(identityKey(row)), icons)} />
+                  <span className={css.outdatedText}>
+                    <span className={css.name}>{row.name}</span>
+                    <span className={css.badges}>
+                      <span className={css.tierBadge} data-tier="shadowed">{t('shadowedBadge')}</span>
+                    </span>
+                    <p className={css.shadowedDetail}>{t('shadowedDetail')}</p>
                   </span>
-                  <p className={css.shadowedDetail}>{t('shadowedDetail')}</p>
                 </div>
                 <div className={css.outdatedActions}>
                   <UninstallPanel name={row.name} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} flow={uninstallFlows.flowFor(key)} />
@@ -1895,6 +1913,12 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   // filtered-list sort repeated the full comparator work on every keystroke.
   const stars = useMemo(
     () => (catalogState.kind === 'ready' ? catalogState.result.stars : {}),
+    [catalogState],
+  )
+  // The icons file's sha256 → data URL map, read once per catalog result. An
+  // older host sends no such field; the empty map draws every default.
+  const icons = useMemo(
+    () => (catalogState.kind === 'ready' ? (catalogState.result.icons ?? {}) : {}),
     [catalogState],
   )
 
@@ -2555,7 +2579,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
               const key = entryKey(entry)
               return (
                 <li key={key} data-shop-identity={key}>
-                  <EntryCard entry={entry} stars={starsOf(entry, stars)} order={order} shelfDay={shelfDayOf(entry)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} harness={harnessVerdictOf(harnessVerdicts, key)} nameTakenBy={nameTakenByKey.get(key)} t={t} flow={flows.flowFor(key)} uninstallFlow={uninstallFlows.flowFor(key)} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} page={page} />
+                  <EntryCard entry={entry} icon={iconOf(entry, icons)} stars={starsOf(entry, stars)} order={order} shelfDay={shelfDayOf(entry)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} harness={harnessVerdictOf(harnessVerdicts, key)} nameTakenBy={nameTakenByKey.get(key)} t={t} flow={flows.flowFor(key)} uninstallFlow={uninstallFlows.flowFor(key)} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} page={page} />
                 </li>
               )
             })}
@@ -2573,6 +2597,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
       <OutdatedSection
         state={installedState}
         entriesByKey={entriesByKey}
+        icons={icons}
         missingByKey={missingByKey}
         harnessVerdicts={harnessVerdicts}
         t={t}
@@ -2591,6 +2616,8 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
       {category === 'installed' && installedState.kind === 'ready' && (
         <ShadowedSection
           entries={installedState.entries}
+          icons={icons}
+          entriesByKey={entriesByKey}
           t={t}
           uninstallFlows={uninstallFlows}
           restart={restart}

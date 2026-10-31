@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { RESTART_GRACE_MS, RESTART_STABLE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
 import { en, zh, type ShopLocaleKey } from '../../src/client/locales.ts'
+import { DEFAULT_ICON_DATA_URL } from '../../src/client/EntryIcon.tsx'
 import { ShopTab, type ShopTabInjected, type ShopTabProps } from '../../src/client/ShopTab.tsx'
 import * as pageStoreModule from '../../src/client/page-store.ts'
 import { createPageStore } from '../../src/client/page-store.ts'
@@ -46,6 +47,7 @@ function snapshot(overrides: Partial<ShopCatalogResult['plugins'][number]> = {})
     }],
     denied: [],
     stars: {},
+    icons: {},
     incompatible: {}, incompatibleHarness: {},
   }
 }
@@ -372,7 +374,12 @@ describe('ShopTab', () => {
     }))
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeTruthy())
-    expect(container.querySelector('img')).toBeNull()
+    // Scoped to the summary paragraph itself: every card draws its icon
+    // through an <img> now (design 2026-10-23 §8), and this case is about the
+    // summary text never becoming an element.
+    const summary = [...container.querySelectorAll('p')].find(node => node.textContent === '<img src=x onerror=alert(1)>')
+    expect(summary, 'the summary renders as a paragraph').toBeTruthy()
+    expect(summary?.querySelector('img, svg, iframe, object, embed')).toBeNull()
   })
 
   it('starts a community install on the first click, acknowledging as it goes', async () => {
@@ -681,7 +688,10 @@ describe('ShopTab', () => {
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
     await waitFor(() => expect(screen.getByText(en.installedRestartNotice)).toBeTruthy(), { timeout: 3000 })
-    expect(container.querySelector('img')).toBeNull()
+    // The notice, not the whole page: every card draws its icon through an
+    // <img> now (design 2026-10-23 §8), and this case is about the notice
+    // never turning host text into markup.
+    expect(container.querySelector('[data-shop-restart-notice] img')).toBeNull()
   })
 
   it('shows the live-uninstall notice and no restart offer when the uninstall needs no restart', async () => {
@@ -3124,6 +3134,7 @@ describe('ShopTab shop-like filtering', () => {
       builtAt: '2026-08-25T00:00:00Z',
       stale: false,
       stars: {},
+      icons: {},
       plugins: [
         snapshot().plugins[0]!,
         {
@@ -3234,7 +3245,7 @@ function manyPlugins(n: number): ShopCatalogResult {
     version: '1.0.0', integrity: null, publishedAt: null,
     repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
   })) as ShopCatalogResult['plugins']
-  return { schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {}, incompatible: {}, incompatibleHarness: {} }
+  return { schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {}, icons: {}, incompatible: {}, incompatibleHarness: {} }
 }
 
 const showingText = (shown: number, total: number): string =>
@@ -3309,7 +3320,7 @@ describe('ShopTab incremental rendering', () => {
       ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-alpha-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' })),
       ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-beta-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' })),
     ] as ShopCatalogResult['plugins']
-    const { injected } = bench({ schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {}, incompatible: {}, incompatibleHarness: {} })
+    const { injected } = bench({ schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {}, icons: {}, incompatible: {}, incompatibleHarness: {} })
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-alpha-00')).toBeTruthy())
 
@@ -3502,7 +3513,7 @@ describe('ShopTab duplicate catalog names', () => {
       repo: `${owner}/dsh-plugin-template`,
     })
     return {
-      schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, stars: {},
+      schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, stars: {}, icons: {},
       plugins: [template('one'), template('two'), template('three'), snapshot().plugins[0]!],
       denied: [], incompatible: {}, incompatibleHarness: {},
     }
@@ -5762,5 +5773,74 @@ describe('the page keeps the reader\'s place across leaving and returning (desig
     fireEvent.click(second.container.querySelector('[data-shop-update-self-dismiss]')!)
     await waitFor(() => expect(second.container.querySelector('[data-shop-update-self]')).toBeTruthy())
     expect(second.container.querySelector('[data-shop-self-update-failed]')).toBeNull()
+  })
+})
+
+describe('the card and the rows draw the entry icon (design 2026-10-23 §8)', () => {
+  const SHA = 'a'.repeat(64)
+  const ICON = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString('base64')}`
+
+  /** A catalog whose one entry declares `SHA`, with the map that carries it. */
+  function withIcon(): ShopCatalogResult {
+    const result = snapshot({ icon: SHA })
+    result.icons = { [SHA]: ICON }
+    return result
+  }
+
+  it('draws an author icon through img.src, and never inline markup', async () => {
+    const { injected } = bench(withIcon())
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = nodeAt(container, '[data-shop-entry="dsh-hello-plugin"]')
+    const img = nodeAt(card, 'img')
+    expect(img.getAttribute('src')).toBe(ICON)
+    expect(img.getAttribute('width')).toBe('24')
+    expect(img.getAttribute('height')).toBe('24')
+    // The tile holds one <img> and nothing drawn from catalog bytes: no inline
+    // <svg>, no <object>/<embed>/<iframe> (§8.5).
+    const tile = img.parentElement!
+    expect(tile.querySelector('svg, object, embed, iframe')).toBeNull()
+    expect(tile.childElementCount).toBe(1)
+  })
+
+  it.each<[what: string, result: () => ShopCatalogResult]>([
+    ['declares no icon', () => snapshot()],
+    ['names a sha256 the map does not carry', () => snapshot({ icon: SHA })],
+  ])('draws the default when the entry %s', async (_what, result) => {
+    const { injected } = bench(result())
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(nodeAt(container, '[data-shop-entry="dsh-hello-plugin"] img').getAttribute('src')).toBe(DEFAULT_ICON_DATA_URL)
+  })
+
+  it('swaps an icon that fails to decode for the default', async () => {
+    const { injected } = bench(withIcon())
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const img = nodeAt(container, '[data-shop-entry="dsh-hello-plugin"] img')
+    expect(img.getAttribute('src')).toBe(ICON)
+    fireEvent.error(img)
+    await waitFor(() => expect(nodeAt(container, '[data-shop-entry="dsh-hello-plugin"] img').getAttribute('src')).toBe(DEFAULT_ICON_DATA_URL))
+  })
+
+  it('draws it on an outdated row too, from the row\'s catalog entry', async () => {
+    const { injected } = bench(withIcon(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')).toBeTruthy())
+    const row = nodeAt(container, '[data-shop-outdated-entry="dsh-hello-plugin"]')
+    expect(nodeAt(row, 'img').getAttribute('src')).toBe(ICON)
+  })
+
+  it('draws the default on a shadowed row whose entry is no longer in the catalog', async () => {
+    const row: InstalledFixture = {
+      name: 'dsh-shadowed-plugin', source: 'github', repo: 'alice/dsh-shadowed-plugin',
+      installed: 'a'.repeat(40), latest: null, outdated: false, enabled: true, shadowed: true,
+    }
+    const { injected } = bench(snapshot(), [row])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-category-installed]') as HTMLElement)
+    await waitFor(() => expect(container.querySelector('[data-shop-shadowed-entry="dsh-shadowed-plugin"]')).toBeTruthy())
+    expect(nodeAt(container, '[data-shop-shadowed-entry="dsh-shadowed-plugin"] img').getAttribute('src')).toBe(DEFAULT_ICON_DATA_URL)
   })
 })

@@ -18,7 +18,7 @@ const entry = (name: string, extra: Partial<Entry> = {}): Entry => ({
   catalog: { category: 'tool', summary: { en: 'x', zh: 'x' }, capabilities: [] }, ...extra,
 })
 const catalogOf = (...plugins: Entry[]): ShopCatalogResult => ({
-  schemaVersion: 2, builtAt: '2026-10-16T00:00:00Z', stale: false, plugins, denied: [], stars: {}, incompatible: {}, incompatibleHarness: {},
+  schemaVersion: 2, builtAt: '2026-10-16T00:00:00Z', stale: false, plugins, denied: [], stars: {}, icons: {}, incompatible: {}, incompatibleHarness: {},
 })
 const bundle = (name: string): PluginsSubject => ({ kind: 'bundle', pkg: { name } })
 

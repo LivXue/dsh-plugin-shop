@@ -778,13 +778,36 @@
   white-space: nowrap;
 }
 
+/* One entry's icon: a 32px tile holding a 24px image (design
+ * 2026-10-23-shop-plugin-icons §8.3). The border and radius are dsh's own
+ * (`PackageArtwork`'s .cardIcon), so a card's icon reads the same here as on
+ * dsh's Plugins page. No backplate in either theme (§8.4). */
+.entryIcon {
+  box-sizing: border-box;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-md);
+  overflow: hidden;
+}
+
+.entryIconImage {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
 .entryHeader {
   display: flex;
   flex-direction: row;
   align-items: center;
   gap: 12px;
   min-width: 0;
-  padding: 8px 12px 2px;
+  padding: 10px 12px 2px;
   border: none;
   background: transparent;
   color: inherit;
@@ -1579,6 +1602,15 @@
 }
 
 .outdatedInfo {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* The name and everything under it, beside the icon. */
+.outdatedText {
   display: flex;
   flex-direction: column;
   gap: 2px;

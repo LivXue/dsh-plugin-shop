@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, activationNoticeKey, categoryKey, entryKey, formatSize, formatStars,
   uninstallActivationNoticeKey,
-  authorOf, blockerBadgeKey, blockersOf, harnessVerdictOf, hasGithubHome, heldBy, isCustomLicense, isShopLike, listedOnShelf, missingPeersOf,
+  authorOf, blockerBadgeKey, blockersOf, harnessVerdictOf, hasGithubHome, heldBy, iconOf, isCustomLicense, isShopLike, listedOnShelf, missingPeersOf,
   nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall, restartBlockedNoticeKey,
   installPhaseKey, reduceInstall, type InstallView,
   reviewHashPin, shelfOrderLocaleKey, shelfTime, SHELF_ORDERS, sortByStars, starsOf, tierKey, utcDay, orderShelf,
@@ -1337,5 +1337,32 @@ describe('listedOnShelf', () => {
   })
   it('lists a name the catalog\'s notAShop clears', () => {
     expect(listedOnShelf(at('dsh-plugin-hub'), new Set(['dsh-plugin-hub']))).toBe(true)
+  })
+})
+
+describe('iconOf', () => {
+  const SHA = 'a'.repeat(64)
+  const URL = 'data:image/svg+xml;base64,PHN2Zy8+'
+  const entry = (icon?: string): CatalogEntry => ({
+    name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null,
+    repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
+    ...(icon === undefined ? {} : { icon }),
+  })
+
+  it('returns the data URL the catalog carries for the entry icon', () => {
+    expect(iconOf(entry(SHA), { [SHA]: URL })).toBe(URL)
+  })
+
+  it('returns undefined when the entry declares none, or the map does not carry its sha256', () => {
+    expect(iconOf(entry(), { [SHA]: URL })).toBeUndefined()
+    expect(iconOf(entry(SHA), {})).toBeUndefined()
+    expect(iconOf(undefined, { [SHA]: URL })).toBeUndefined()
+  })
+
+  it('never borrows an inherited member as a URL', () => {
+    // A hand-made or older catalog could carry anything in `icon`; the map is
+    // keyed by 64-hex sha256, and only an OWN key is a URL.
+    expect(iconOf(entry('constructor'), {})).toBeUndefined()
+    expect(iconOf(entry('__proto__'), {})).toBeUndefined()
   })
 })

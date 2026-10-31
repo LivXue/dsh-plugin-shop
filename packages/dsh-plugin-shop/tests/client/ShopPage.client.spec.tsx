@@ -23,7 +23,7 @@ const CATALOG: ShopCatalogResult = {
     tier: 'community', metadata: 'derived', source: 'npm', added: '2026-10-16',
     catalog: { category: 'tool', summary: { en: 'Says hello.', zh: '打个招呼。' }, capabilities: [] },
   }],
-  denied: [], stars: {}, incompatible: {}, incompatibleHarness: {},
+  denied: [], stars: {}, icons: {}, incompatible: {}, incompatibleHarness: {},
 }
 
 /** The face with every RPC pending but the catalog, which the test decides. */

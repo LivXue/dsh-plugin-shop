@@ -407,6 +407,7 @@ const pointerSchema = z.object({
   count: z.number(),
   plugins: z.object({ url: z.string(), sha256: z.string() }),
   stars: z.object({ url: z.string(), sha256: z.string() }).optional(),
+  icons: z.object({ url: z.string(), sha256: z.string() }).optional(),
 })
 
 export interface CatalogSnapshot {
@@ -422,6 +423,11 @@ export interface CatalogSnapshot {
   /** GitHub star counts by package name; {} when the pointer names no
    * sidecar or the sidecar could not be fetched/verified (spec §5). */
   stars: Record<string, number>
+  /** sha256 → data URL for the catalogue's icons; {} when the pointer names no
+   * sidecar, or it could not be fetched, verified or parsed (design
+   * 2026-10-23-shop-plugin-icons §7). Optional like `notAShop`: `loadCatalog`
+   * always sets it, and a snapshot assembled by hand need not carry it. */
+  icons?: Record<string, string>
 }
 
 export interface CatalogResult { snapshot: CatalogSnapshot; stale: boolean }
@@ -466,6 +472,41 @@ function parseStarsText(text: string): Record<string, number> {
     const out: Record<string, number> = Object.create(null) as Record<string, number>
     for (const [key, value] of Object.entries(parsed.stars)) {
       if (typeof value === 'number') out[key] = value
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+/** The most one catalogue icon may weigh, matching the registry's bound
+ * (design 2026-10-23-shop-plugin-icons §6.2). */
+const MAX_CATALOG_ICON_BYTES = 32 * 1024
+
+/** The longest a data URL holding MAX_CATALOG_ICON_BYTES can be: the base64
+ * alphabet is 4 characters per 3 bytes, and the prefix is the longest of the
+ * four media types' spellings. */
+const MAX_ICON_DATA_URL_LENGTH = 'data:image/svg+xml;base64,'.length + Math.ceil(MAX_CATALOG_ICON_BYTES / 3) * 4
+
+/** The four types a catalogue icon can have (design §6.1); nothing else
+ * reaches an `img.src`. */
+const ICON_DATA_URL = /^data:image\/(?:svg\+xml|png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/
+
+/**
+ * Read and verify an icons sidecar; ANY irregularity degrades to no icons —
+ * icons are presentation, and they never cost the reader the catalog (§7).
+ * The checks are the grammar the build writes: a 64-hex sha256 keying a
+ * `data:` URL of the four types, each within the per-icon bound.
+ */
+function parseIconsText(text: string): Record<string, string> {
+  try {
+    const parsed = JSON.parse(text) as { icons?: unknown }
+    if (typeof parsed.icons !== 'object' || parsed.icons === null || Array.isArray(parsed.icons)) return {}
+    const out: Record<string, string> = Object.create(null) as Record<string, string>
+    for (const [key, value] of Object.entries(parsed.icons)) {
+      if (!/^[0-9a-f]{64}$/.test(key)) return {}
+      if (typeof value !== 'string' || value.length > MAX_ICON_DATA_URL_LENGTH || !ICON_DATA_URL.test(value)) return {}
+      out[key] = value
     }
     return out
   } catch {
@@ -559,6 +600,16 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
         // catalog bytes are already verified above, so nothing else fails.
       }
     }
+    let icons: Record<string, string> = {}
+    if (pointer.icons !== undefined) {
+      try {
+        const iconsText = fsImpl.read(cachePath(cacheDir, pointer.icons.url, 'icons'))
+        const iconsActual = createHash('sha256').update(iconsText).digest('hex')
+        if (iconsActual === pointer.icons.sha256) icons = parseIconsText(iconsText)
+      } catch {
+        // As above, for icons: presentation, degraded rather than fatal.
+      }
+    }
     return {
       schemaVersion: pointer.schemaVersion,
       builtAt: pointer.builtAt,
@@ -566,6 +617,7 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
       denied: data.denied,
       notAShop: data.notAShop,
       stars,
+      icons,
     }
   }
 
@@ -690,6 +742,28 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
     }
   }
 
+  let icons: Record<string, string> = {}
+  if (pointer.icons !== undefined) {
+    const sidecar = pointer.icons
+    try {
+      // Advisory like the stars sidecar: a refused or unreachable icons url
+      // must degrade to default artwork, never cost the reader the catalog.
+      const iconsCachePath = cachePath(cacheDir, sidecar.url, 'icons')
+      const iconsText = await withCommitBudget(
+        handle.id,
+        `serve ${sidecar.url}`,
+        signal => handle!.file(sidecar.url, signal),
+      )
+      const iconsActual = createHash('sha256').update(iconsText).digest('hex')
+      if (iconsActual === sidecar.sha256) {
+        icons = parseIconsText(iconsText)
+        fsImpl.write(iconsCachePath, iconsText)
+      }
+    } catch {
+      // Presentation only (design 2026-10-23 §7).
+    }
+  }
+
   const snapshot: CatalogSnapshot = {
     schemaVersion: pointer.schemaVersion,
     builtAt: pointer.builtAt,
@@ -697,6 +771,7 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
     denied: data.denied,
     notAShop: data.notAShop,
     stars,
+    icons,
   }
   // Order is the invariant: a file becomes reachable only once whatever it
   // names is already on disk. The data file first, then the pointer that
