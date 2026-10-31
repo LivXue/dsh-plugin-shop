@@ -159,9 +159,10 @@ jobs:
         #
         # RESERVE_MINUTES is what the job needs after build:catalog. Measured on
         # the last three main runs (2026-10-21 to 2026-10-23), every step after
-        # it, cleanup included, took 13 to 16 seconds: the two uploads, the
-        # Pages artifact, and two commits whose pushes went through at the
-        # first attempt, in 3 to 7 seconds each. Allowing a bad minute of the
+        # it, cleanup included, took 13 to 16 seconds: the uploads, the Pages
+        # artifact, and the commits whose pushes went through at the first
+        # attempt, in 3 to 7 seconds each. (Measured before the red run's own
+        # commit step existed; its push is the same function on one file.) Allowing a bad minute of the
         # artifact service, a second push attempt for each commit, and the 2 to
         # 3 seconds between the job's own clock starting and this step:
         #
@@ -581,7 +582,7 @@ jobs:
           node --experimental-strip-types registry/scripts/src/build.ts --axis-from dist/publisher-axis.json
       - name: Commit the publisher axis a failed coverage check left
         # Commits the one file the step above wrote, through the same
-        # push_with_rebase as the two commit steps above, byte for byte
+        # push_with_rebase as the other two commit steps above, byte for byte
         # (workflow.test.ts holds the copies equal). Only after that step
         # succeeded, so a handoff build.ts refused commits nothing, and under
         # the trigger and branch guard every push step carries.

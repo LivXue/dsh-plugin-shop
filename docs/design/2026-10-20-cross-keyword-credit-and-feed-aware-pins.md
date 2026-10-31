@@ -11,10 +11,11 @@ section of the authority spec (`2026-08-18-dsh-plugin-shop-design.md`).
 From 2026-10-19 07:35 on, every catalog run but one stopped at Classify on
 `keywords:deepseek-harness`'s tail cap. The runs were 16, 20, 15 and 17 names
 short against the 14 `MAX_UNREACHABLE_RESIDUAL` allows; the exception, at
-2026-10-20 04:40, read 5 and passed Classify. A red run commits nothing, so
-`publisher-state.json` on `main` stood still all that time, and every one of
-those runs probed the same 400 pinned and 400 rotated publishers, from
-cursor 2799.
+2026-10-20 04:40, read 5 and passed Classify. A red run committed nothing then
+— the red run's own axis commit is design
+`2026-10-22-publisher-axis-on-a-red-run`, later — so `publisher-state.json` on
+`main` stood still all that time, and every one of those runs probed the same
+400 pinned and 400 rotated publishers, from cursor 2799.
 
 ## 1. Measurements (2026-10-20)
 
@@ -291,8 +292,9 @@ judged pins than it probed, since a pin is judged only by its own probe.
 
 After the first passing run, a keyword's pins are about 87 plus those earned.
 `probeOrder` hands the remainder of the budget to the rotation, about 710
-of 800. The vocabulary then cycles in about eight passing runs instead of
-fourteen, and the owners of the 12 names that cross credit does not reach
+of 800. The vocabulary then cycles in about eight runs that advance it instead of
+fourteen — a red run advances it too, through its own axis commit (design
+`2026-10-22-publisher-axis-on-a-red-run`), and the owners of the 12 names that cross credit does not reach
 (§5) are found that way.
 
 ## 5. Expected effect

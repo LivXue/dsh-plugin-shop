@@ -480,7 +480,7 @@ if (pushSteps.length !== 3) {
   )
 }
 
-/** The `if:` expression both pushing steps must carry, byte for byte.
+/** The `if:` expression every pushing step must carry, byte for byte.
  *
  * Pinned as a literal rather than matched against a shape. The property that
  * matters is that `github.ref` is a TOP-LEVEL conjunct — that it gates every
@@ -578,6 +578,10 @@ describe('a run that fails its coverage check commits its publisher axis, and no
   it('writes it with build.ts --axis-from, and does nothing when Classify handed nothing over', () => {
     const run = writeStep.step.run ?? ''
     expect(run).toContain('[ -f dist/publisher-axis.json ]')
+    // Without the `exit 0`, a run whose Classify failed for another reason
+    // falls through to `--axis-from` with a missing file and fails the step
+    // (PR #118 review).
+    expect(run).toContain('exit 0; }')
     expect(run).toContain('node --experimental-strip-types registry/scripts/src/build.ts --axis-from dist/publisher-axis.json')
     expect(run).not.toMatch(/\bgit push\b/)
   })
@@ -814,6 +818,10 @@ describe('the daily workflow pushes safely', () => {
 
   for (const step of pushSteps) {
     const label = step.name ?? '(unnamed step)'
+    // The behavioural sandbox cases run ONCE per distinct function text: the
+    // copies are pinned byte-identical above, so the second and third runs
+    // prove nothing new and cost ~7 s each (PR #118 review).
+    const firstCopy = pushSteps.findIndex(candidate => pushFunction(candidate) === pushFunction(step)) === pushSteps.indexOf(step)
 
     it(`runs "${label}" only on refs/heads/main`, () => {
       // `workflow_dispatch` fires on ANY ref — the reason the four other
@@ -845,6 +853,7 @@ describe('the daily workflow pushes safely', () => {
       expect(run).toMatch(/(^|\n)[ \t]*push_with_rebase ["'][^\n]*["']/)
     })
 
+    if (firstCopy) {
     it(`"${label}" pushes cleanly when origin moved under it`, () => {
       const { dir, seed, runner } = sandbox()
       try {
@@ -923,8 +932,8 @@ describe('the daily workflow pushes safely', () => {
         // signals the reapply guard fires on. Asserted here, on the healthy
         // run, because this is the side that decides the guard cannot cost a
         // good morning its push: a guard that fired here would annotate
-        // ::error:: on every ordinary day, since one of the two commit steps
-        // always meets the other's uncommitted files.
+        // ::error:: on every ordinary day, since the commit steps run one
+        // after another and each meets the others' uncommitted files.
         expect(git(runner, 'stash', 'list')).toBe('')
         expect(git(runner, 'ls-files', '--unmerged')).toBe('')
         // And the human's commit survived, as in the clean-tree case.
@@ -1032,6 +1041,7 @@ describe('the daily workflow pushes safely', () => {
         rmSync(dir, { recursive: true, force: true })
       }
     })
+    }
   }
 })
 
