@@ -714,6 +714,19 @@ export function listedOnShelf(entry: CatalogEntry, cleared: ReadonlySet<string>)
 }
 
 /**
+ * An entry's icon as the catalog's data URL, or undefined to draw the default:
+ * it declares none, the catalog predates the icons file, or the sidecar
+ * degraded and the map does not carry its sha256. The map is keyed by 64-hex
+ * sha256, so no name from the catalog is ever used as a lookup here (design
+ * 2026-10-23-shop-plugin-icons §7).
+ */
+export function iconOf(entry: CatalogEntry | undefined, icons: Readonly<Record<string, string>>): string | undefined {
+  const sha = entry?.icon
+  if (sha === undefined) return undefined
+  return Object.hasOwn(icons, sha) ? icons[sha] : undefined
+}
+
+/**
  * One entry's star count from the sidecar, or undefined when it has none.
  *
  * The sidecar keys a github entry by its repo full name and an npm entry by

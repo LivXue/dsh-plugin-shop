@@ -393,7 +393,8 @@ async function openPluginList(dialog: Locator): Promise<void> {
   if (await tab.count() > 0 && (await tab.getAttribute('aria-selected')) !== 'true') await tab.click()
 }
 import { zh } from '../../src/client/locales.ts'
-import { startCatalogServer, type CatalogServer } from '../fixtures/catalog-server.ts'
+import { FIXTURE_ICON_DATA_URL, startCatalogServer, type CatalogServer } from '../fixtures/catalog-server.ts'
+import { DEFAULT_ICON_DATA_URL } from '../../src/client/EntryIcon.tsx'
 import { startLocalRegistry, type LocalRegistry } from '../fixtures/local-registry.ts'
 import { welcomeNoticeVersion } from '../fixtures/onboarding.ts'
 
@@ -1597,6 +1598,19 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await liveSize.waitFor({ state: 'attached', timeout: 10_000 })
       expect(await liveSize.textContent()).toBe('4.1 MB')
       expect(await liveSize.getAttribute('title')).toBe(zh.sizeLabel.replace('{size}', '4.1 MB'))
+
+      // The icon, end to end: the card whose fixture entry declares one draws
+      // the very bytes the catalog server carried, and a card that declares
+      // none draws the default artwork (design 2026-10-23 §8). Comparing the
+      // `src` with the served data URL is what tells the two apart — a client
+      // that ignored the sidecar would show the default on both.
+      const iconCard = shop.locator('[data-shop-entry="dsh-shop-e2e-config"]')
+      await iconCard.waitFor({ state: 'visible', timeout: 15_000 })
+      const iconImage = iconCard.locator('img')
+      await iconImage.waitFor({ state: 'attached', timeout: 10_000 })
+      expect(await iconImage.getAttribute('src')).toBe(FIXTURE_ICON_DATA_URL)
+      await liveCard.locator('img').waitFor({ state: 'attached', timeout: 10_000 })
+      expect(await liveCard.locator('img').getAttribute('src')).toBe(DEFAULT_ICON_DATA_URL)
 
       // Both themes and all three active states: readable text, the shared
       // category hue on the selected border, and exact category-tab widths.

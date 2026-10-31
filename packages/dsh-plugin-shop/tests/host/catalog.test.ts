@@ -71,6 +71,74 @@ async function load(entries: unknown[], schemaVersion: number) {
   return loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
 }
 
+/** A publishable icons sidecar: content-addressed bytes whose sha the pointer
+ * must name, mirroring the stars file's binding. */
+function iconsFile(icons: Record<string, string>): { url: string; sha256: string; text: string } {
+  const text = JSON.stringify({ icons })
+  const sha256 = createHash('sha256').update(text).digest('hex')
+  return { url: `icons.${sha256}.json`, sha256, text }
+}
+
+/** A well-formed value for one sha256: a data URL of an allowed type. */
+const GOOD_ICON = 'data:image/svg+xml;base64,PHN2Zy8+'
+const GOOD_SHA = 'a'.repeat(64)
+
+describe('loadCatalog: the icons sidecar', () => {
+  const entry = {
+    name: 'dsh-hello-plugin', version: '1.2.0', integrity: 'sha512-i', publishedAt: null,
+    repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+    added: '2026-08-25',
+  }
+
+  /** A load whose pointer names `icons` and whose host serves `iconsText`. */
+  async function loadWithIcons(iconsText: string | null, over: { sha?: string } = {}) {
+    const data = dataJson([entry])
+    const icons = iconsFile({ [GOOD_SHA]: GOOD_ICON })
+    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z', undefined)
+    const parsed = JSON.parse(pointer) as Record<string, unknown>
+    parsed.icons = { url: icons.url, sha256: over.sha ?? icons.sha256 }
+    const fetchImpl = (async (input: string | URL) => {
+      const text = String(input)
+      if (text.endsWith('/index.json')) return new Response(JSON.stringify(parsed), { status: 200 })
+      if (text.endsWith(icons.url)) {
+        return iconsText === null ? new Response('not found', { status: 404 }) : new Response(iconsText, { status: 200 })
+      }
+      return new Response(data, { status: 200 })
+    }) as unknown as typeof fetch
+    return loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+  }
+
+  it('loads the icons map when the pointer names a sidecar', async () => {
+    const result = await loadWithIcons(iconsFile({ [GOOD_SHA]: GOOD_ICON }).text)
+    expect(result.snapshot.icons).toEqual({ [GOOD_SHA]: GOOD_ICON })
+    expect(result.stale).toBe(false)
+  })
+
+  it('degrades to no icons when the sidecar fetch fails', async () => {
+    const result = await loadWithIcons(null)
+    expect(result.snapshot.icons).toEqual({})
+    expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
+  })
+
+  it('degrades to no icons when the bytes do not hash to the pointer', async () => {
+    const result = await loadWithIcons(iconsFile({ [GOOD_SHA]: GOOD_ICON }).text, { sha: 'b'.repeat(64) })
+    expect(result.snapshot.icons).toEqual({})
+  })
+
+  it.each<[what: string, text: string]>([
+    ['a key that is not a sha256', JSON.stringify({ icons: { nope: GOOD_ICON } })],
+    ['a value that is not a data URL', JSON.stringify({ icons: { [GOOD_SHA]: 'https://evil.test/x.svg' } })],
+    ['a value of a type the catalog does not carry', JSON.stringify({ icons: { [GOOD_SHA]: 'data:image/gif;base64,R0lG' } })],
+    ['a value past the per-icon bound', JSON.stringify({ icons: { [GOOD_SHA]: `data:image/png;base64,${'A'.repeat(50000)}` } })],
+    ['a body that is not JSON', 'not json'],
+    ['a body with no icons key', JSON.stringify({ sources: {} })],
+  ])('degrades to no icons on %s', async (_what, text) => {
+    const result = await loadWithIcons(text)
+    expect(result.snapshot.icons).toEqual({})
+    expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
+  })
+})
+
 describe('loadCatalog', () => {
   const entry = {
     name: 'dsh-hello-plugin', version: '1.2.0', integrity: 'sha512-i', publishedAt: null,
@@ -1098,6 +1166,8 @@ describe('origin racing', () => {
     dataHangs?: boolean
     /** Never settles on the stars sidecar. */
     starsHangs?: boolean
+    /** Files served by suffix besides the data file — the icons sidecar. */
+    files?: Record<string, string>
     data?: string
     pointer?: string
   }): CatalogOrigin {
@@ -1120,12 +1190,33 @@ describe('origin racing', () => {
             if (opts.starsHangs === true && url.startsWith('stars.')) return new Promise<string>(() => {})
             if (opts.dataFails === 'transport') throw new TransportError(`${id} data down`)
             if (opts.dataFails === 'loud') throw new Error(`${id} data corrupt`)
+            for (const [suffix, text] of Object.entries(opts.files ?? {})) {
+              if (url.endsWith(suffix)) return text
+            }
             return opts.data ?? ''
           },
         }
       },
     }
   }
+
+  it('serves the icons sidecar from whichever origin wins', async () => {
+    // Both origins carry it; only the winner's bytes are read, and the loser is
+    // never asked for a file (design 2026-10-23 §7, §12).
+    const data = dataJson([entry])
+    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const icons = iconsFile({ [GOOD_SHA]: GOOD_ICON })
+    const withIcons = JSON.parse(pointer) as Record<string, unknown>
+    withIcons.icons = { url: icons.url, sha256: icons.sha256 }
+    const result = await loadCatalog({
+      cacheDir: '/cache', fsImpl: memFs(),
+      origins: [
+        fakeOrigin('slow', { delay: 8, pointer: JSON.stringify(withIcons), data, files: { [icons.url]: icons.text } }),
+        fakeOrigin('fast', { delay: 0, pointer: JSON.stringify(withIcons), data, files: { [icons.url]: icons.text } }),
+      ],
+    })
+    expect(result.snapshot.icons).toEqual({ [GOOD_SHA]: GOOD_ICON })
+  })
 
   it('takes the first origin to answer, not the first listed', async () => {
     const slowData = dataJson([entry])

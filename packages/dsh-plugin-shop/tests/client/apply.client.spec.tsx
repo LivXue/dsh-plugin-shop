@@ -243,7 +243,7 @@ describe('shop client apply', () => {
 describe('shop client apply warm', () => {
   const fakeCatalog = {
     schemaVersion: 2, builtAt: '2026-08-27T00:00:00Z', stale: false,
-    plugins: [], denied: [], stars: {}, incompatible: {}, incompatibleHarness: {},
+    plugins: [], denied: [], stars: {}, icons: {}, incompatible: {}, incompatibleHarness: {},
   }
 
   // Equality, not identity, in the three cases below. They asserted `toBe`
@@ -629,7 +629,7 @@ describe('shop client apply: dsh restarting under the page', () => {
   const LOG = '/home/you/.dsh/shop/restart.log'
   const fakeCatalog = {
     schemaVersion: 2, builtAt: '2026-08-27T00:00:00Z', stale: false,
-    plugins: [], denied: [], stars: {}, incompatible: {}, incompatibleHarness: {},
+    plugins: [], denied: [], stars: {}, icons: {}, incompatible: {}, incompatibleHarness: {},
   }
   const answer = (bootId: string): { ok: true; value: ShopVersionResult } => ({
     ok: true,
@@ -813,7 +813,7 @@ describe('shop client apply: the page store (design 2026-10-16-shop-sidebar-page
     }
     const HOST = {
       schemaVersion: 2, builtAt: '2026-09-24T00:00:00Z', stale: false,
-      plugins: [], denied: [], stars: {}, incompatible: { 'npm:needs-dock-base': ['dock-base'] }, incompatibleHarness: {},
+      plugins: [], denied: [], stars: {}, icons: {}, incompatible: { 'npm:needs-dock-base': ['dock-base'] }, incompatibleHarness: {},
     }
     const catalog = vi.fn().mockResolvedValue({ ok: true, value: HOST })
     const uninstallStart = vi.fn().mockResolvedValue({ ok: true, value: { ok: true, installId: 'u1' } })
@@ -833,7 +833,7 @@ describe('shop client apply: the page store (design 2026-10-16-shop-sidebar-page
     // the wire and become the stash itself. `builtAt` tells the answers apart.
     const verdicts = (builtAt: string) => ({
       schemaVersion: 2, builtAt, stale: false,
-      plugins: [], denied: [], stars: {}, incompatible: {}, incompatibleHarness: {},
+      plugins: [], denied: [], stars: {}, icons: {}, incompatible: {}, incompatibleHarness: {},
     })
     const BEFORE = verdicts('2026-10-16T00:00:00Z')
     const AFTER = verdicts('2026-10-17T00:00:00Z')
@@ -1128,7 +1128,7 @@ describe('shop client apply: the hand-over after a hot swap (design 2026-10-16-s
 describe('shop client apply: the Plugins page buttons (design 2026-10-16-shop-sidebar-page §7)', () => {
   const HOST = {
     schemaVersion: 2, builtAt: '2026-10-16T00:00:00Z', stale: false,
-    plugins: [], denied: [], stars: {}, incompatible: {}, incompatibleHarness: {},
+    plugins: [], denied: [], stars: {}, icons: {}, incompatible: {}, incompatibleHarness: {},
   }
   const buttonsOf = (ctx: InstanceType<typeof Context>): ShopDetailActionInjected => {
     const entry = ctx.slots.entries('plugins.detail.actions').find(e => e.options.id === 'shop')

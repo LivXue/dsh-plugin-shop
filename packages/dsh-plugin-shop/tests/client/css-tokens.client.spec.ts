@@ -489,6 +489,11 @@ describe('every control draws one 1px line', () => {
   it('gives every border a width of 1px, or none at all', () => {
     // A shorthand that names a style but no width draws the initial `medium`
     // width, 3px in every engine, so the width has to be stated, not implied.
+    //
+    // One rule states 0.5px on purpose: the icon tile copies dsh's own
+    // `PackageArtwork` border, which is a hairline (design
+    // 2026-10-23-shop-plugin-icons §2.4, decision 4). The width is still
+    // EXPLICIT, which is what this guard is for.
     const SHORTHAND = /^border(-(top|right|bottom|left|block|inline)(-(start|end))?)?$/
     const WIDTH = /^border(-(top|right|bottom|left|block|inline)(-(start|end))?)?-width$/
     const offenders: string[] = []
@@ -502,7 +507,8 @@ describe('every control draws one 1px line', () => {
           let flat = value
           while (/\([^()]*\)/.test(flat)) flat = flat.replace(/\([^()]*\)/g, '')
           const widths = flat.split(/\s+/).filter(t => /^(\d*\.?\d+[a-z%]*|thin|medium|thick)$/.test(t))
-          if (widths.length !== 1 || widths[0] !== '1px') offenders.push(`${rule.selector} { ${prop}: ${value} }`)
+          const allowed = rule.selector === '.entryIcon' ? ['1px', '0.5px'] : ['1px']
+          if (widths.length !== 1 || !allowed.includes(widths[0] ?? '')) offenders.push(`${rule.selector} { ${prop}: ${value} }`)
         } else if (WIDTH.test(prop)) {
           if (!value.split(/\s+/).every(t => t === '1px' || t === '0')) offenders.push(`${rule.selector} { ${prop}: ${value} }`)
         }
@@ -759,5 +765,33 @@ describe('incompatibility reads as an error, not a warning', () => {
     // every refusal is red. It was the §9.3 acknowledgement's gate too until
     // that dialog went (2026-10-14).
     expect(rules.get('.gate')).toMatch(/--dsw-alias-state-warn-primary/)
+  })
+})
+
+describe('the icon tile (design 2026-10-23 §8.3)', () => {
+  const cssRules = rulesOf(css)
+
+  it('is a 32px bordered tile with dsh\'s own radius', () => {
+    const rule = cssRules.get('.entryIcon') ?? ''
+    expect(rule).toMatch(/width:\s*32px/)
+    expect(rule).toMatch(/height:\s*32px/)
+    expect(rule).toMatch(/box-sizing:\s*border-box/)
+    expect(rule).toMatch(/border:\s*0\.5px\s+solid\s+var\(--dsw-alias-border-l3\)/)
+    expect(rule).toMatch(/border-radius:\s*var\(--dsw-radius-md\)/)
+  })
+
+  it('draws the artwork at 24px without distortion', () => {
+    const rule = cssRules.get('.entryIconImage') ?? ''
+    expect(rule).toMatch(/width:\s*24px/)
+    expect(rule).toMatch(/height:\s*24px/)
+    expect(rule).toMatch(/object-fit:\s*contain/)
+  })
+
+  it('centres the card header on the tile', () => {
+    // The tile is taller than the title text, so the row is aligned on it and
+    // padded 2px more above (§8.3).
+    const header = cssRules.get('.entryHeader') ?? ''
+    expect(header).toMatch(/align-items:\s*center/)
+    expect(header).toMatch(/padding:\s*10px 12px 2px/)
   })
 })
