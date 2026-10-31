@@ -45,12 +45,13 @@ jobs:
     #
     # The `dsh` axis, added 2026-09-27, is that pin. Each version is a
     # harness the e2e was RUN against before it was listed here, and each leg
-    # installs exactly its own entry. 0.2.1-rc.2 has been npm's `latest` since
-    # 2026-10-17, and its `next` too; 0.2.0-rc.2 held both from 2026-09-29.
-    # 0.1.5-rc.3, `latest` before that, is the only leg whose fresh installs
-    # still use the CLI. 0.1.7-rc.2, 0.2.0-rc.2 and 0.2.1-rc.2 run the half of
-    # the suite 0.1.5 never reaches (the refusal branch, the 0.1.7 UI fixes,
-    # the harness-package badge), each on its own version of dsh's settings UI.
+    # installs exactly its own entry. 0.2.1-rc.5 has been npm's `latest` since
+    # 2026-10-30, and its `next` too; 0.2.1-rc.2 held both from 2026-10-17,
+    # 0.2.0-rc.2 from 2026-09-29. 0.1.5-rc.3, `latest` before that, is the
+    # only leg whose fresh installs still use the CLI. 0.1.7-rc.2, 0.2.0-rc.2
+    # and 0.2.1-rc.5 run the half of the suite 0.1.5 never reaches (the
+    # refusal branch, the 0.1.7 UI fixes, the harness-package badge), each on
+    # its own version of dsh's settings UI.
     # repo-guards.test.ts reads this list, holds it equal to the e2e contract
     # header's, and fails when the shop's own harness peers refuse an entry.
     #
@@ -62,7 +63,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        dsh: ['0.1.5-rc.3', '0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-rc.2']
+        dsh: ['0.1.5-rc.3', '0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-rc.5']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -178,6 +179,21 @@ jobs:
       # place, so an update continues through dsh's CLI; and its refusals list
       # `requirements` where 0.2.0's listed `peers`. The run behind this entry
       # passed after those changes (design 2026-10-19-dsh-021-readiness).
+      #
+      # 0.2.1-rc.5 REPLACED rc.2 AS THE 0.2.1 LEG ON 2026-10-31, on the same
+      # terms. Nothing in the shop changed for it: diffing the installed rc.2
+      # and rc.5 closures, every contract the shop reads is byte-identical
+      # (`dsh-app-boot`, `dsh-plugin-manager`, `dsh-client-hmr`, the slot and
+      # layout packages, `dsh-typert-protocol`, `dsh-home-paths`, and the CLI
+      # itself), and the differences are UI, telemetry, and a new sidebar
+      # panel-customization package. The whole package suite was run against
+      # rc.5 first (55 files, 1,875 tests, `DSH_SHOP_REQUIRE_E2E=1`), and the
+      # published 0.9.0 loaded the live catalogue on it. What changed for a
+      # listed plugin is API, not UI: `sidebar.panellist.actions` registrations
+      # now receive `entries`, `onOpen` and `onPinnedChange` for customizing
+      # panel rows, but the shipped More menu lists no panel rows and offers
+      # no pin control, so the shop's row stays pinned in the default
+      # composition.
       - run: npm install -g @deepseek-ai/dsh@${{ matrix.dsh }}
       - run: dsh --version
       # The web full-flow e2e (P2 exit criterion) needs a playwright browser;

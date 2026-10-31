@@ -50,6 +50,11 @@ rc.2 carry the same line at `:1991`; no earlier version has it. The e2e
 asserts the shop's continuation from 0.2.1-rc.1, inside that range. This was
 read from the unpacked packages on 2026-10-19, not run.
 
+Amended 2026-10-31: the range now extends through 0.2.1-rc.5, the version CI
+runs the e2e against. Its dsh-plugin-manager is byte-identical to rc.2's (read
+from the installed closures, not the source), so the guard carries at `:1991`
+and the e2e's `gte(..., '0.2.1-rc.1')` gate still runs inside the range.
+
 Which installed package a spec names is `specPackageName`'s answer
 (`lib/index.js:1373`): the name of a registry spec (`name@version`) or of a
 local directory. Any other spec, a `github:` one included, names an installed
@@ -284,6 +289,11 @@ The e2e now reaches Settings through the Account menu from 0.2.1-rc.1
 (`settingsEntry`, `openSettings`). `plugin.yml` gains a 0.2.1-rc.2 leg on both
 operating systems, and the e2e's harness header names it, as
 `repo-guards.test.ts` requires.
+
+Amended 2026-10-31: the leg and the harness header now name 0.2.1-rc.5, npm's
+`latest` since 2026-10-30; rc.2 was superseded inside the same 0.2.1 line and
+is no longer a leg. The two closures' shop contracts were byte-identical, and
+the whole package suite (e2e included) ran on rc.5 before the pin moved.
 
 On 0.2.1, 0.8.7's documented path "Settings → Plugin shop" now starts from the
 Account menu. The README moves at the 0.9.0 promotion, when the shop becomes a
