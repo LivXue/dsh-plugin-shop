@@ -419,6 +419,11 @@
   by: human
   reason: "7 repos publish this name; all are plugin markets. A loud GitHub plugin radar for DeepSeek Harness."
 
+- name: "dsh-plugin-market-index"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: DSH 社区插件市场索引源：awesome-dsh-plugin 目录的过滤镜像，仅保留当前 DSH 版本可安装的插件（format 1）"
+
 - name: "dsh-plugin-market-intelligence"
   market: false
   by: llm
@@ -648,6 +653,11 @@
   market: true
   by: human
   reason: "Verified DSH plugin marketplace (fork of YELEBAI/dsh-plugin-marketplace) with project-stage-aware recommendations: detect your project stage, explain"
+
+- name: "tangyixiao-dsh-plugin-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Tangyixiao DSH plugin market — an independent format-1 index for DeepSeek Harness"
 
 - name: "untr-dsh-marketplace"
   market: true
