@@ -157,6 +157,13 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
       expect(handoff.publishers).toEqual(['alice', 'bob', 'carol'])
       expect(existsSync(join(cwd, 'dist', 'harvest.json'))).toBe(false)
       expect(existsSync(join(cwd, 'registry', 'publisher-state.json'))).toBe(false)
+      // The CONSUMER, on the file the producer just wrote: the round trip this
+      // mechanism exists for, with no hand-built fixture (PR #118 review).
+      const applied = runEntry(cwd, 'build.ts', ['--axis-from', 'dist/publisher-axis.json'], [])
+      expect(applied.status, `stderr:\n${applied.stderr}`).toBe(0)
+      const state = readFileSync(join(cwd, 'registry', 'publisher-state.json'), 'utf8')
+      expect(state).toContain('"dsh-plugin"')
+      expect(state).toContain('"deepseek-harness"')
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
@@ -600,6 +607,21 @@ describe('build.ts --axis-from', () => {
     }
   })
 
+  it('refuses a --harvest-from handoff whose axis omits a keyword, before building', () => {
+    // The completeness rule is the same on both entry points: a handoff
+    // holding one keyword applied that cursor alone (PR #118 review).
+    const cwd = workspace({ 'harvest.json': { candidates: [], rejections: [], shortfalls: [], publisherAxis: [axis[0]] } })
+    try {
+      const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+      expect(run.status).not.toBe(0)
+      expect(run.stderr).toContain('no record for')
+      expect(existsSync(join(cwd, 'dist', 'v1'))).toBe(false)
+      expect(stateOf(cwd)).toBe(committed)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
   it('refuses a handoff that omits a harvest keyword, before writing anything', () => {
     // A red run reports every keyword; a hand-edited file holding one of the
     // two applied that cursor alone and re-probed the other band (PR #118
@@ -630,10 +652,12 @@ describe('build.ts --axis-from', () => {
     }
   })
 
-  it('refuses two records for one keyword and none for another', () => {
-    // A count check let this through: the duplicated keyword's cursor
-    // advanced twice and the unrecorded one stayed stale (PR #118 review).
-    const doubled = [axis[0], axis[0], record('deepseek-harness', {})]
+  it('refuses two records for one keyword, which a count check let through', () => {
+    // Four records for two keywords also counted right; the duplicate alone is
+    // what the guard must refuse, and the missing-keyword case has its own
+    // test above (PR #118 review: this fixture's name described 2+0, its data
+    // was 2+1, and a count check refuses three).
+    const doubled = [axis[0], axis[0]]
     const cwd = workspace({ 'publisher-axis.json': { publishers: seen, publisherAxis: doubled } })
     try {
       const run = runEntry(cwd, 'build.ts', ['--axis-from', 'dist/publisher-axis.json'], [])

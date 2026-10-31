@@ -49,10 +49,12 @@ function parsePublishersField(raw: unknown, where: string): string[] {
     // The rule is the committed file's, and the FILE is not where this value
     // came from: a handoff's bad username used to be reported against a valid,
     // untouched publisher-state.json (PR #118 review).
-    // The inner message opens with the committed file's name; the value came
-    // from the handoff, so that prefix is dropped rather than left to read as
-    // a complaint about a file nobody touched.
-    const message = (error instanceof Error ? error.message : String(error)).replace(/^publisher-state\.json: /, '')
+    // The inner message opens with the file it validated (`<name>.json: …`);
+    // the value came from the handoff, so that prefix is dropped rather than
+    // left to read as a complaint about a file nobody touched. The pattern is
+    // the FILE-NAME SHAPE, not the literal name: a reworded reader message
+    // stays attributed correctly (PR #118 review).
+    const message = (error instanceof Error ? error.message : String(error)).replace(/^[^:\n]+\.json: /, '')
     throw new Error(`${where}: ${message}`)
   }
 }
@@ -86,6 +88,26 @@ function argumentValue(argv: readonly string[], name: string): string | undefine
 }
 
 /**
+ * The JSON in `path`, with the failure attributed to `where`: a read problem
+ * and a parse problem say different things, and neither is reported as the
+ * other (PR #118 review). Shared by both handoff readers, whose try/catch
+ * blocks were line-for-line copies.
+ */
+function readJsonFile(path: string, where: string): unknown {
+  let text: string
+  try {
+    text = readFileSync(path, 'utf8')
+  } catch (error) {
+    throw new Error(`${where}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  try {
+    return JSON.parse(text) as unknown
+  } catch (error) {
+    throw new Error(`${where}: not JSON (${error instanceof Error ? error.message : String(error)})`)
+  }
+}
+
+/**
  * Every record names a harvested keyword, and no keyword twice. Run where the
  * handoff is PARSED rather than where it is spent: the spend happens after the
  * pipeline, so a stale handoff's refusal used to leave the catalog artifacts,
@@ -115,7 +137,7 @@ function assertCompleteAxis(axis: readonly PublisherAxisReport[], where: string)
   assertAxisKeywords(axis, where)
   const missing = HARVEST_KEYWORDS.filter((keyword) => !axis.some((report) => report.keyword === keyword))
   if (missing.length > 0) {
-    throw new Error(`${where}: publisher axis has no record for ${missing.map((keyword) => `\`${keyword}\``).join(', ')}, and a red run reports every keyword`)
+    throw new Error(`${where}: publisher axis has no record for ${missing.map((keyword) => `\`${keyword}\``).join(', ')}, and every harvest keyword needs one`)
   }
 }
 
@@ -250,20 +272,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && argumentGiven(process.argv
     throw new Error('--axis-from applies a red run\'s publisher axis alone and cannot be combined with --harvest-from')
   }
   const where = `--axis-from ${axisFrom}`
-  let text: string
-  try {
-    text = readFileSync(axisFrom, 'utf8')
-  } catch (error) {
-    // A read failure is not a parse failure: naming the wrong defect sent a
-    // reader looking at the file's contents (PR #118 review).
-    throw new Error(`${where}: ${error instanceof Error ? error.message : String(error)}`)
-  }
-  let handoff: { publishers?: unknown; publisherAxis?: unknown } | null
-  try {
-    handoff = JSON.parse(text) as typeof handoff
-  } catch (error) {
-    throw new Error(`${where}: not JSON (${error instanceof Error ? error.message : String(error)})`)
-  }
+  const handoff = readJsonFile(axisFrom, where) as { publishers?: unknown; publisherAxis?: unknown } | null
   // Both fields required, where --harvest-from takes either as optional: an
   // older classifier wrote neither into its harvest, but every axis handoff
   // is written with both, and without them there is nothing to apply.
@@ -512,10 +521,10 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && !argumentGiven(process.arg
       // one path a maintainer uses to reproduce a red run locally (PR #118
       // review). Printed here without applying them — applying is what the
       // red run's own `--axis-from` step is for.
-      for (const s of shortfalls) {
-        npmParts.push(describeShortfall(s))
-        process.stderr.write(`npm: ${describeShortfall(s)}\n`)
-      }
+      // Stderr only: `npmParts` feeds the report this path never writes, and
+      // the success path below prints the same lines once, after the throw is
+      // impossible (PR #118 review).
+      for (const s of shortfalls) process.stderr.write(`npm: ${describeShortfall(s)}\n`)
       for (const report of axis) process.stderr.write(`npm: ${describePublisherAxis(report)}\n`)
       // The feed lines are measured before the search returns too, and a green
       // run prints them: a red local run dropped the third array (PR #118
@@ -541,19 +550,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && !argumentGiven(process.arg
     departureSummary = departureRun.summary
   } else {
     const harvestWhere = `--harvest-from ${harvestFrom}`
-    let harvestText: string
-    try {
-      harvestText = readFileSync(harvestFrom, 'utf8')
-    } catch (error) {
-      throw new Error(`${harvestWhere}: ${error instanceof Error ? error.message : String(error)}`)
-    }
-    let parsedJson: unknown
-    try {
-      parsedJson = JSON.parse(harvestText)
-    } catch (error) {
-      throw new Error(`${harvestWhere}: not JSON (${error instanceof Error ? error.message : String(error)})`)
-    }
-    const parsed = parsedJson as {
+    const parsed = readJsonFile(harvestFrom, harvestWhere) as {
       candidates?: unknown; rejections?: unknown; shortfalls?: unknown; publishers?: unknown
       publisherAxis?: unknown; feed?: unknown; departures?: unknown
     }
@@ -1004,9 +1001,12 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && !argumentGiven(process.arg
   const spent = spendPublisherAxis(priorPublishers, [...sawPublishers], axis, harvestFrom === undefined ? 'the direct build' : `--harvest-from ${harvestFrom}`)
   const nextPublishers = spent.state
   axisParts.push(...spent.parts)
-  for (const part of axisParts) process.stderr.write(`npm: ${part}\n`)
+  // Written FIRST, as `--axis-from` writes before it prints: a disk-full or
+  // read-only failure used to leave a log claiming a transition the file never
+  // took (PR #118 review).
   writeFileSync(publisherStatePath, serializePublisherState(nextPublishers))
   if (nextFeed !== undefined) writeFileSync(feedStatePath, serializeFeedState(nextFeed))
+  for (const part of axisParts) process.stderr.write(`npm: ${part}\n`)
   // The icon record, serialised before the pipeline ran (see above) and written
   // here with the other state files: after the pipeline, so that a build which
   // throws on its own artifacts leaves no record of icons it did not publish.

@@ -98,8 +98,9 @@
     - the no-axis line is included when `axis` is empty.
   - `function parsePublishersField(raw: unknown, where: string): string[]` and `function parsePublisherAxisField(raw: unknown, where: string): PublisherAxisReport[]`. Their bodies are today's `:218-221` and `:231-238`.
 - Guard blocks:
-  - the existing guard becomes `if (basename(process.argv[1] ?? '') === 'build.ts' && !process.argv.includes('--axis-from'))`;
-  - a sibling `if (basename(process.argv[1] ?? '') === 'build.ts' && process.argv.includes('--axis-from'))` runs the new mode.
+  - the existing guard becomes `if (basename(process.argv[1] ?? '') === 'build.ts' && !argumentGiven(process.argv, '--axis-from'))`;
+  - a sibling `if (basename(process.argv[1] ?? '') === 'build.ts' && argumentGiven(process.argv, '--axis-from'))` runs the new mode.
+  - `argumentGiven`/`argumentValue` accept both `--flag value` and `--flag=value`: a guard on the space spelling alone let `--axis-from=x` fall through BOTH guards and run the full live build.
 
   `strip-types.test.ts`'s `guardedName` still reads both, and its body is not re-indented.
 

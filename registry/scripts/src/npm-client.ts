@@ -1194,11 +1194,13 @@ export const PARTITION_KEYWORDS: readonly string[] = [
  * The two runs above were pushed from commits that both carried `cursor: 0`,
  * so both probed the same first 500 names and both computed the same next
  * cursor; only one snapshot commit resulted, because the second found no diff
- * to commit. So the rotation advances once per snapshot — reliably on the
+ * to commit. So the rotation advances once per SNAPSHOT — reliably on the
  * scheduled run, which checks out the tip — and a push-triggered build from
- * an older commit re-probes whatever slice its own tree names. Wasted
- * requests, never wrong data, and the reason to count cycles in days rather
- * than in builds.
+ * an older commit re-probes whatever slice its own tree names. A run that
+ * fails its coverage check advances it as well now, through its own axis
+ * commit (design `2026-10-22-publisher-axis-on-a-red-run`), so "once per
+ * snapshot" counts the commits, not the green runs. Wasted requests, never
+ * wrong data, and the reason to count cycles in days rather than in builds.
  *
  * **This bounds the probes. What bounds the PAGING is the redundancy filter
  * in `searchByKeywords`**, and the distinction is the whole reason that filter
