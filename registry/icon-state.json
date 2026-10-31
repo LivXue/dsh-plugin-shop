@@ -327,25 +327,25 @@
     "mediaType": "image/svg+xml",
     "bytes": 1030
   },
-  "github:379385796-sys/dsh-ai-exporter@d6629d01bc18b47f7d0618aaf004a80434beb71c:icon.svg": {
+  "github:379385796-sys/dsh-ai-exporter@5aa94cb55250d5b9cade4123702be2dee5f24dd5:icon.svg": {
     "outcome": "published",
     "sha256": "2f57b3076b910f482175fcb8e4ff157a2ba3fde2cb778ebcacd81f8b3c2e545f",
     "mediaType": "image/svg+xml",
     "bytes": 482
   },
-  "github:379385796-sys/dsh-chat-comfort@88f0ebf6f3dc60740705f9e0f3158950f8d93e9a:icon.svg": {
+  "github:379385796-sys/dsh-chat-comfort@12fb51ccccb1607556f8d4bfe081987f65c4e31b:icon.svg": {
     "outcome": "published",
     "sha256": "268372becef1492055274473d877c5cafdd2ac3fcab93ccb597ecfaa0376187e",
     "mediaType": "image/svg+xml",
     "bytes": 570
   },
-  "github:379385796-sys/dsh-environment-packer@26c51849bc8e333bdadb0a9d1a854b23ace322ab:icon.svg": {
+  "github:379385796-sys/dsh-environment-packer@3ef197124167757c7f1d5e4f23a5fba1e5fd7bfe:icon.svg": {
     "outcome": "published",
     "sha256": "9f80e424513d5d0b74d867659d794e9445e489b6bb385ecdd7fa2d7e2299cd0e",
     "mediaType": "image/svg+xml",
     "bytes": 446
   },
-  "github:379385796-sys/dsh-prompt-inject@f51a5c3ebd7feaaa965214ff670c5641ddf50be9:icon.svg": {
+  "github:379385796-sys/dsh-prompt-inject@ea9e49ce04fe9ce14ca52f877055529c95d3b827:icon.svg": {
     "outcome": "published",
     "sha256": "1ccbb0febdca94ecdebb898f7a1b2572ef4bf1c05b3380d557d99c474d68cfba",
     "mediaType": "image/svg+xml",
@@ -475,7 +475,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 648
   },
-  "github:96274zxc/vscode-pet@83c92256329876201e9c5d3124aa3808cc915fca:icon.svg": {
+  "github:96274zxc/vscode-pet@0ae59cf83e8012e421677869c075d5d62bfed95f:icon.svg": {
     "outcome": "published",
     "sha256": "71e01b093105590d5c7ccf095df8dbe2beb79b1ace6035c9c9d813e734e99191",
     "mediaType": "image/svg+xml",
@@ -486,6 +486,12 @@
     "sha256": "3159797b03f452dd4c2b992a02ed44431ddac2c31b78190445e424663a862e87",
     "mediaType": "image/svg+xml",
     "bytes": 592
+  },
+  "github:990718xyh/dsh-seed@edba724a41b554d5a69351d5fff71ff03fc17f1d:icon.svg": {
+    "outcome": "published",
+    "sha256": "5a88d5ff566683fc106f9b2de078d6916a7e65829c9d62b6ea37a09b02695bf4",
+    "mediaType": "image/svg+xml",
+    "bytes": 654
   },
   "github:A-Meng-E/dsh-llm-probe@b8c22911fbc5eaf9e7f8516d59ef0ff00fddbeb8:icon.svg": {
     "outcome": "published",
@@ -821,7 +827,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 498
   },
-  "github:Athosoo/dsh-git-graph-sidebar@4448dc9e2f495ba1e2e1f8f16be94ce9d17dcdc9:icon.svg": {
+  "github:Athosoo/dsh-git-graph-sidebar@c1b6e7af34f560f92a79dae8dc8a1340f497c049:icon.svg": {
     "outcome": "published",
     "sha256": "59b5832439f400a601ede7633c2af5d9330dfab92b73948775636efa83a4a5c7",
     "mediaType": "image/svg+xml",
@@ -845,7 +851,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 421
   },
-  "github:Awenforever/dsh-ustc-quota@c7efdfcbb0038390ad55b2bc4b2a91f808b971c5:icon.svg": {
+  "github:Awenforever/dsh-ustc-quota@1c5eadc072e28d0fefe37dc58ed10c461f812c04:icon.svg": {
     "outcome": "published",
     "sha256": "69b33fcb842efafa3cb1916a35c8afd3f1439fab1f4250bf1453c1a082e553bd",
     "mediaType": "image/svg+xml",
@@ -1009,7 +1015,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1449
   },
-  "github:Blueteemo/dsh-smart-namer@b670370224fed89fd5c53a58493ae66028b7c746:icon.svg": {
+  "github:Blueteemo/dsh-smart-namer@5e56fc7fba791f250bd9653a4a8a4c982ead3da8:icon.svg": {
     "outcome": "published",
     "sha256": "316919ba43079c016774a6d423745ce30cb39b0af67aa6651a79d25cb731799a",
     "mediaType": "image/svg+xml",
@@ -1033,7 +1039,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 397
   },
-  "github:CC-play/dsh-theme-cooldark@904551a3ad605a0ea0dad8ab9334048a34b8a001:icon.svg": {
+  "github:CC-play/dsh-theme-cooldark@04cfafb9f1790885b72199eb446250b291d5d41c:icon.svg": {
     "outcome": "published",
     "sha256": "9ebac232e7de2962968ec17b33fcf70417b16b280c1d9fd4197e2ead13701206",
     "mediaType": "image/svg+xml",
@@ -1517,7 +1523,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 532
   },
-  "github:DevZjQx/dsh-zdiary-kit@901e2580c0e42166e0744f25ac737c24c46c2e59:icon.svg": {
+  "github:DevZjQx/dsh-zdiary-kit@a2594f33c6b77923f619c2fbf2f3398f788f5f16:icon.svg": {
     "outcome": "published",
     "sha256": "cf655b43a414f638e4a0ddff14538c8fd54ce8bfb8b15fbdb1a2a0cc34e9ecf5",
     "mediaType": "image/svg+xml",
@@ -1595,7 +1601,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1209
   },
-  "github:EDDY597/dsh-opencode-gateway@6aa095166a4dc4ba57923097f20bb2a32f0a6900:icon.svg": {
+  "github:EDDY597/dsh-opencode-gateway@39662870bf73988f7a33e695cf968e8806ef8c6f:icon.svg": {
     "outcome": "published",
     "sha256": "b1ff9dceaa241e06c585d1ebeb4216abde8d026e9bcc59d17c7f86f2875da28e",
     "mediaType": "image/svg+xml",
@@ -1636,6 +1642,12 @@
     "sha256": "ec4ce2d7dd0716bbfb0cd388e5671425ab522095b59ae98806499feeed8d9d5c",
     "mediaType": "image/svg+xml",
     "bytes": 411
+  },
+  "github:ElioFanyu/dsh-connect-volcengine@7b4bc13316f4d45e1bb12ace2987fab95af052af:icon.svg": {
+    "outcome": "published",
+    "sha256": "bcd83508e3cf295acff0937397d4ed427439933780e102331191ed6111bf6b82",
+    "mediaType": "image/svg+xml",
+    "bytes": 601
   },
   "github:Elisoar111/dsh-anime@c82389d935453d382637eb0f55d0e3ed344d2e9b:icon.svg": {
     "outcome": "published",
@@ -1785,6 +1797,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 1203
   },
+  "github:Freewind72/dsh-close-to-quit@32fba31ef1f8b60c7e18345ceb98960b59635825:plugin/icon.svg": {
+    "outcome": "published",
+    "sha256": "83b399a74b5cdde3f8cc9dccf58635915456555a9b72efaefc3a4d10591a0ea2",
+    "mediaType": "image/svg+xml",
+    "bytes": 840
+  },
   "github:Frost-rA9/dsh-theme-everforest@d319b52cc99f4c0e6c77803386d656797c89e9e5:icon.svg": {
     "outcome": "published",
     "sha256": "23acf2f289990e8964cd18b4b30d273931fd9387a335af95b2aeadec885d6a7f",
@@ -1905,6 +1923,10 @@
     "mediaType": "image/svg+xml",
     "bytes": 313
   },
+  "github:Gusheng-GS/dsh-desktop-alerts@88455893ace735f72f583bbe193d94ca32a3eca3:lib/icon.png": {
+    "outcome": "refused",
+    "detail": "package.json \"icon\" \"lib/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
+  },
   "github:Guuu16/dsh-remote@a2cb8cd25a0592632670d05192b825f842dde5e6:public/remote.svg": {
     "outcome": "published",
     "sha256": "e7d67613d170bb11ffa1da6cc6e2c054e8d0733c314f7329a052f945e52ab96d",
@@ -1999,6 +2021,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 988
   },
+  "github:HelloWorldNock/dsh-image-reference@0a61f808ecccd9449d346829af37aafd2544e856:icon.svg": {
+    "outcome": "published",
+    "sha256": "8bae2187be93661a99cbaf2b195d074d2af967131e7076eb748115686a050d1b",
+    "mediaType": "image/svg+xml",
+    "bytes": 1056
+  },
   "github:Hermannmayer/dsh-worktree-bar@7cca697266e465580b67615663470bab6356bfc1:icon.svg": {
     "outcome": "published",
     "sha256": "4c9dae25930fd3cd1ff1616a6637b58e3582e8adc28370aca6f48b0b2f45a077",
@@ -2057,7 +2085,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 592
   },
-  "github:Ianzhyh/qoder-to-dsh@a6331ee8d942179af1316cf57c29b9d6273a9a11:icon.svg": {
+  "github:Ianzhyh/qoder-to-dsh@0acce12f5f01751c1aa8a892c8e325d2cbe3ed18:icon.svg": {
     "outcome": "published",
     "sha256": "aa103ea4025efce4b4dc363406775eeca26df5b386ceef619fe9ea0e60595fce",
     "mediaType": "image/svg+xml",
@@ -2075,7 +2103,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 319
   },
-  "github:In-clude/dsh-approval-reminder@18a488fbd2ff9a832c88dffff5d63d7854f98950:icon.svg": {
+  "github:In-clude/dsh-approval-reminder@ee5a0becaa2928638da5b9698a6eef5e1c9b2807:icon.svg": {
     "outcome": "published",
     "sha256": "814f6dd95c4ebc7eb2e95a45a62851efc756cb29e77eee3ef3a2bf6aaed7999b",
     "mediaType": "image/svg+xml",
@@ -2105,13 +2133,13 @@
     "mediaType": "image/svg+xml",
     "bytes": 804
   },
-  "github:JHboy203/dsh-plugin-catalog@3d5f8670da6fa6b8f95528f3fa91cb6c693be839:icon.svg": {
+  "github:JHboy203/dsh-plugin-catalog@b0dba3411e892a33b244087c94b584d5c10169a3:icon.svg": {
     "outcome": "published",
     "sha256": "c7a5cee19ef21ce125f87c6dc54d2e6c54a5fefea14d44fc8b532f6cdc4dccec",
     "mediaType": "image/svg+xml",
     "bytes": 1466
   },
-  "github:JHboy203/dsh-plugin-installer@d37a7af9a48441826cdab2ee0cd2397e5dce05a5:icon.svg": {
+  "github:JHboy203/dsh-plugin-installer@267e90ae52325dc3442026fdfc616745385cb74c:icon.svg": {
     "outcome": "published",
     "sha256": "179eec1ce921539eca4ee19c918f66c23d73c8b12ab03dd24d6394a9ca105d7e",
     "mediaType": "image/svg+xml",
@@ -2345,7 +2373,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 894
   },
-  "github:Jokii-Joy/novel-writer@2bdad5ed98bc4ca1e9467f66aa169dc5f67b1308:icon.svg": {
+  "github:Jokii-Joy/novel-writer@9fd74d4dd1a21e3e147940d9865f6928beefa50d:icon.svg": {
     "outcome": "published",
     "sha256": "ef68f91cdad64703ee2322578a083619b34e06c3ee49670653433c71a52893ce",
     "mediaType": "image/svg+xml",
@@ -2453,6 +2481,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 1293
   },
+  "github:Ke-wood/dsh-haloflux@ef03c3d95dde2c18aa152557bb495df530165287:icon.svg": {
+    "outcome": "published",
+    "sha256": "697395270a81462be526893c924207c6c665c8815be966f3bfc2eeeabef9f821",
+    "mediaType": "image/svg+xml",
+    "bytes": 1212
+  },
   "github:Kewnn/dsh-peer-chat@182159b3565faf96e27c0bc88b5a0fe2da756fe0:icon.svg": {
     "outcome": "published",
     "sha256": "3dd0bc34842b20b431543c557e680b2fb505a6e6ecfdef433593792578be7071",
@@ -2471,7 +2505,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 437
   },
-  "github:KingsleyAsher/Personal-Knowledge-Base@880971ad59c455498c1419aab58957044f55c6c9:src/client/capture-icon.svg": {
+  "github:KingsleyAsher/Personal-Knowledge-Base@6ae803b52867926e21838c14dcabdb51b7e7ecf4:src/client/capture-icon.svg": {
     "outcome": "published",
     "sha256": "50fc9dc2168822e69df9f0482b1c4fc9a5cfd356c913ee2027de9c8c03b003bf",
     "mediaType": "image/svg+xml",
@@ -2705,7 +2739,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 507
   },
-  "github:Light-EI/dsh-ebbing-context@be8e6c818484ba3adb99e6f6db81e92eaf7c3048:icon.svg": {
+  "github:Light-EI/dsh-ebbing-context@c13ed8889866a31764c4ea44126c7be5425b09f1:icon.svg": {
     "outcome": "published",
     "sha256": "361b516ffbe3976f5642a8d323ae37cd80fdaa42cc2737a5b9da6779effae6e5",
     "mediaType": "image/svg+xml",
@@ -2818,6 +2852,12 @@
     "sha256": "e59540376139b0eda86404bec4f1f30bdb2d2955895635bd5757dc71efd31bcb",
     "mediaType": "image/svg+xml",
     "bytes": 422
+  },
+  "github:LoveElysiaFH/dsh-subjkit@808416cc3521f94e525ffb516ba04471119059ef:icon.svg": {
+    "outcome": "published",
+    "sha256": "beabb6c9a0d49a5c04bec80bb7a58e4ebafcdc2b2691450aa7825ec5edbe2385",
+    "mediaType": "image/svg+xml",
+    "bytes": 476
   },
   "github:Lovepeace-art/dsh-android-phone@d4ff44bfb183c0ae3295a87d13060d3f52bcd6f4:assets/icon.png": {
     "outcome": "refused",
@@ -3025,19 +3065,13 @@
     "mediaType": "image/svg+xml",
     "bytes": 593
   },
-  "github:MentholTea/dsh-sakurafrp@5b3a18027a7f069121c80db63e6692746e0af8e7:icon.svg": {
-    "outcome": "published",
-    "sha256": "75994320aa5d4eb3004625172372c34a01cd012df0ffa6ce77336cbd93a7ddae",
-    "mediaType": "image/svg+xml",
-    "bytes": 666
-  },
   "github:MeshTok/dsh-plugin-yuantoutao@c608c27d845d96599ea921657dbdbcbfce3caee9:icon.svg": {
     "outcome": "published",
     "sha256": "1f70f9ab560333478aeeea58e97e0d81d2f5d7d51bd2ecb9ad615f8c52fddd27",
     "mediaType": "image/svg+xml",
     "bytes": 391
   },
-  "github:MeteorNOX/dsh-whale-bongo@247d32fb4b2ecf4818b65eb99db37cc0e1d26cc7:icon.png": {
+  "github:MeteorNOX/dsh-whale-bongo@97ad7544426495fca1583c62b2a5af5483188f20:icon.png": {
     "outcome": "refused",
     "detail": "the \"./icon\" export \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
@@ -3059,7 +3093,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1517
   },
-  "github:MichengAI/dsh-codex-ui@8557de13a77f767153d450e0dc695568feca894f:assets/icon.svg": {
+  "github:MichengAI/dsh-codex-ui@3fe8d32b38774f7853c9e7d2c9acd712ac2d084c:assets/icon.svg": {
     "outcome": "published",
     "sha256": "cc64036ba6c27d9956b368c01bdbc7c8ef2cd23bcb86561fb94c017a98343173",
     "mediaType": "image/svg+xml",
@@ -3317,7 +3351,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 365
   },
-  "github:Nesarf/Oishikunaare-Moe-Moe-Kyun@6a147e6499e385e4d689413c326b0b6a10529f25:icon.png": {
+  "github:Nesarf/Oishikunaare-Moe-Moe-Kyun@a47ea4704bb303d22c13066ba703d68d86ffd167:icon.png": {
     "outcome": "refused",
     "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
@@ -3473,49 +3507,49 @@
     "mediaType": "image/svg+xml",
     "bytes": 269
   },
-  "github:Palbudir/dsh-px@06ae882979fd20971eaa196e7161d8a44e13f34e:packages/dsh-px-annotations/icon.svg": {
+  "github:Palbudir/dsh-px@9f5f44c96941e900ea12d15befe8f2be9f90d98c:packages/dsh-px-annotations/icon.svg": {
     "outcome": "published",
     "sha256": "e710d885ca1520f8ffc5c421ad9c9a70b688e5b0921d27a91afeecf60b5197a3",
     "mediaType": "image/svg+xml",
     "bytes": 247
   },
-  "github:Palbudir/dsh-px@06ae882979fd20971eaa196e7161d8a44e13f34e:packages/dsh-px-artifacts/icon.svg": {
+  "github:Palbudir/dsh-px@9f5f44c96941e900ea12d15befe8f2be9f90d98c:packages/dsh-px-artifacts/icon.svg": {
     "outcome": "published",
     "sha256": "e710d885ca1520f8ffc5c421ad9c9a70b688e5b0921d27a91afeecf60b5197a3",
     "mediaType": "image/svg+xml",
     "bytes": 247
   },
-  "github:Palbudir/dsh-px@06ae882979fd20971eaa196e7161d8a44e13f34e:packages/dsh-px-computer/icon.svg": {
+  "github:Palbudir/dsh-px@9f5f44c96941e900ea12d15befe8f2be9f90d98c:packages/dsh-px-computer/icon.svg": {
     "outcome": "published",
     "sha256": "fe9f5dd0816ded5ec8337805dee6c20b3f9dd5c3b58af039b24ff4b9e78f3abe",
     "mediaType": "image/svg+xml",
     "bytes": 357
   },
-  "github:Palbudir/dsh-px@06ae882979fd20971eaa196e7161d8a44e13f34e:packages/dsh-px-memory/icon.svg": {
+  "github:Palbudir/dsh-px@9f5f44c96941e900ea12d15befe8f2be9f90d98c:packages/dsh-px-memory/icon.svg": {
     "outcome": "published",
     "sha256": "e710d885ca1520f8ffc5c421ad9c9a70b688e5b0921d27a91afeecf60b5197a3",
     "mediaType": "image/svg+xml",
     "bytes": 247
   },
-  "github:Palbudir/dsh-px@06ae882979fd20971eaa196e7161d8a44e13f34e:packages/dsh-px-qq/icon.svg": {
+  "github:Palbudir/dsh-px@9f5f44c96941e900ea12d15befe8f2be9f90d98c:packages/dsh-px-qq/icon.svg": {
     "outcome": "published",
     "sha256": "66dfb1f788b437e7da73a9d73a91ba1fabd91b7783d9d4a65bf1e512ed68a1a9",
     "mediaType": "image/svg+xml",
     "bytes": 331
   },
-  "github:Palbudir/dsh-px@06ae882979fd20971eaa196e7161d8a44e13f34e:packages/dsh-px-schedules/icon.svg": {
+  "github:Palbudir/dsh-px@9f5f44c96941e900ea12d15befe8f2be9f90d98c:packages/dsh-px-schedules/icon.svg": {
     "outcome": "published",
     "sha256": "e710d885ca1520f8ffc5c421ad9c9a70b688e5b0921d27a91afeecf60b5197a3",
     "mediaType": "image/svg+xml",
     "bytes": 247
   },
-  "github:Palbudir/dsh-px@06ae882979fd20971eaa196e7161d8a44e13f34e:packages/dsh-px-taskflow/icon.svg": {
+  "github:Palbudir/dsh-px@9f5f44c96941e900ea12d15befe8f2be9f90d98c:packages/dsh-px-taskflow/icon.svg": {
     "outcome": "published",
     "sha256": "e710d885ca1520f8ffc5c421ad9c9a70b688e5b0921d27a91afeecf60b5197a3",
     "mediaType": "image/svg+xml",
     "bytes": 247
   },
-  "github:Palbudir/dsh-px@06ae882979fd20971eaa196e7161d8a44e13f34e:packages/dsh-px-updater/icon.svg": {
+  "github:Palbudir/dsh-px@9f5f44c96941e900ea12d15befe8f2be9f90d98c:packages/dsh-px-updater/icon.svg": {
     "outcome": "published",
     "sha256": "e710d885ca1520f8ffc5c421ad9c9a70b688e5b0921d27a91afeecf60b5197a3",
     "mediaType": "image/svg+xml",
@@ -3545,7 +3579,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1292
   },
-  "github:Pegasus-Yang/DSH-Test-Plugin@c28295783df349935403b0e2b2641082fc7dfd32:icon.svg": {
+  "github:Pegasus-Yang/DSH-Test-Plugin@49d488f00c92d69789b86cc9ade5558ee68cac25:icon.svg": {
     "outcome": "published",
     "sha256": "0276f44b073544b7eb3b1feb4c9de9106c8a921b6a6a4e7590533424a077e673",
     "mediaType": "image/svg+xml",
@@ -3623,7 +3657,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 476
   },
-  "github:PolitaryMonicy/dsh-agent-clean@1eb5dbcf57b09485d8f8c93fdb089ca4d21095f3:assets/icon.svg": {
+  "github:PolitaryMonicy/dsh-agent-clean@d54eda8ad00600c763e867b5666eb1c61786f775:assets/icon.svg": {
     "outcome": "published",
     "sha256": "6d3b2376d981e04c24768fb972da630d77d3374e9c7b06c1c40cfdc6280f8e79",
     "mediaType": "image/svg+xml",
@@ -3721,7 +3755,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1003
   },
-  "github:QqiqiQ/dsh-calculator@9920c7bb83f976cbb3da4377783fe00ead9d24dd:icon.svg": {
+  "github:QqiqiQ/dsh-calculator@3d67a448d35c7d83160636ea12437ac6ebe560b9:icon.svg": {
     "outcome": "published",
     "sha256": "0230a94b96e0309e0e2e13ebf2fe82b9800c6d61d8a5aa0cd1eec66782aeec4a",
     "mediaType": "image/svg+xml",
@@ -3805,7 +3839,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 640
   },
-  "github:RicardoYan/dsh-notify-overlay@e912162d85e6639916c9121dc017aad1d4f295fb:icon.svg": {
+  "github:RicardoYan/dsh-notify-overlay@07f6ba24738bfc3e35afc1568b89c2861f10fb1f:icon.svg": {
     "outcome": "published",
     "sha256": "329f233886938cbe182f7f8c3aa750297f46c939ebf580b66a71073da588ff90",
     "mediaType": "image/svg+xml",
@@ -3877,11 +3911,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 446
   },
-  "github:SMPcosy/dsh-easy2restart@bb2e6e553e8e5db465caf28aa3bb08404273d9c6:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "github:SMPcosy/dsh-plugin-member-manager@c756adbf27a5547c25fdd7d99fb53892a00fb068:icon.png": {
+  "github:SMPcosy/dsh-member-manager@c756adbf27a5547c25fdd7d99fb53892a00fb068:icon.png": {
     "outcome": "refused",
     "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
@@ -4008,6 +4038,12 @@
     "sha256": "15d03e9a06166377a886759e7a63e1b1964bc8085e9568b31fe54bc1850b04f2",
     "mediaType": "image/svg+xml",
     "bytes": 681
+  },
+  "github:Serenity-2026/dsh-treecom@9c574546e3f80116565883877121e6ca49f583eb:icon.svg": {
+    "outcome": "published",
+    "sha256": "61a02f0f9bf65efa4f61701d60f86a4c01e324ba8107efe4d7efa9d12d1b832a",
+    "mediaType": "image/svg+xml",
+    "bytes": 596
   },
   "github:Shad0wwa1ker/dsh-per-request-cost@dbb9dfa982024124993b61ea040b2115002737e9:icon.svg": {
     "outcome": "published",
@@ -4211,6 +4247,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 949
   },
+  "github:Siselea/dsh-motrix-download@99d6ff10733f74a08c4757aba44ec8b0d7485b7b:icon.svg": {
+    "outcome": "published",
+    "sha256": "e84a7dbdf7df6b43fa940d7a1b9698abb94705cce6d8d5d5309da0d100e33b64",
+    "mediaType": "image/svg+xml",
+    "bytes": 798
+  },
   "github:SivanCola/dsh-subagent-reasonix@2ec2872d686914946be28ade1b0f9e1f6e3428e5:icon.svg": {
     "outcome": "published",
     "sha256": "91baf7d7555876a8ef07c628bc86bb6c9a7563a9d3bb0866e27ee2f2eb4b3a5e",
@@ -4379,7 +4421,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 462
   },
-  "github:SweetenedSuzuka/dsh-zh-number-format@9cee80cc91f667b587f6b5fe32eced5acd861527:icon.svg": {
+  "github:SweetenedSuzuka/dsh-zh-number-format@7b05738655bece54474ea76afdfd9e91f7254f23:icon.svg": {
     "outcome": "published",
     "sha256": "5711e2be5f8d7458476c619036d4468b1990ee2b0776b6be80571dce224a5304",
     "mediaType": "image/svg+xml",
@@ -4433,23 +4475,29 @@
     "mediaType": "image/svg+xml",
     "bytes": 1131
   },
-  "github:Tests4gptplay/deepseek-servant@a6f338e2028c10a10d53a8dd544d5294fabfa2f0:icon.png": {
+  "github:Tests4gptplay/deepseek-servant@0acd3ba39a2ae23d66759279b3c54c4637cd0ad5:icon.png": {
     "outcome": "refused",
     "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
-  "github:Tests4gptplay/dsh-compaction-selector@029efb39a52d840bb9b874425b98c3ec681136c1:icon.svg": {
+  "github:Tests4gptplay/dsh-codex-native@38afc4e1ebe53ec9966b5c8abce47aed5fe20ca2:assets/chatgpt-auth.png": {
+    "outcome": "published",
+    "sha256": "8a33312f6bb17c1edddf8f9d7fbac09ce1d1d697d6601f37227afa879e94c52e",
+    "mediaType": "image/png",
+    "bytes": 11297
+  },
+  "github:Tests4gptplay/dsh-compaction-selector@a427b7a18ca2d7a4fc8bac766cc7990e17764e32:icon.svg": {
     "outcome": "published",
     "sha256": "6265db738b79b12e94683586d373a468bfb42acd8be192d596c79864a831ed5e",
     "mediaType": "image/svg+xml",
     "bytes": 314
   },
-  "github:Tests4gptplay/dsh-dots@9d34e8db80b84595f67902c9c7fc9ce713a622da:assets/dots-ring.svg": {
+  "github:Tests4gptplay/dsh-dots@729bac96d14603da1bc6b6549647825bb2d15d93:assets/dots-ring.svg": {
     "outcome": "published",
     "sha256": "5a240072d9ddf1aaf734e4efdd5f47288fe205fc91c348e69197d0e214b39a9c",
     "mediaType": "image/svg+xml",
     "bytes": 296
   },
-  "github:Tests4gptplay/dsh-kujira-persona@c06286354486d6bc8d84591b388363c8863e23cf:icon.svg": {
+  "github:Tests4gptplay/dsh-kujira-persona@09561de8676b469b81e79fc663b4f3f53e9b7f4b:icon.svg": {
     "outcome": "published",
     "sha256": "5ae90104806ae730f4c745899f99e5fc7b0b57d0f24da0a6afcadd151ee016f8",
     "mediaType": "image/svg+xml",
@@ -4515,7 +4563,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 327
   },
-  "github:Traveritas/averita-dsh-theme-inspiration@d09b6a433b4f34abfb6c43d538cd4173d059802d:icon.svg": {
+  "github:Traveritas/averita-dsh-theme-inspiration@d4abb050c9b94bf2d087a516439f9fed3206e02b:icon.svg": {
     "outcome": "published",
     "sha256": "f32e91717c2749b3af0dc368630c0d5a02f89402517b2d6ce7bc0729a0eb1de9",
     "mediaType": "image/svg+xml",
@@ -4569,7 +4617,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 608
   },
-  "github:Vensus137/Coreness-DSH@2cd156f408c8634b1f2c12598cb6cddf26226c90:icon.svg": {
+  "github:Vensus137/Coreness-DSH@3623cbfd7ce20b54819dfbe97e74ee59e2e16d89:icon.svg": {
     "outcome": "published",
     "sha256": "f2c97145cfd31e599a757f8e99b5b7ad6e9d92756315697e85254c6bdc2e6ce6",
     "mediaType": "image/svg+xml",
@@ -4663,6 +4711,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 316
   },
+  "github:Wcof/DeepSeekBox@e4f275cf7f83d4621f5c2117dbc421d94aa91c80:icons/deepseekbox-plugin-center.svg": {
+    "outcome": "published",
+    "sha256": "5b8840b1cbe681f0b85418b7c603aff013a9d07dc876d69848c0704ee5d358f6",
+    "mediaType": "image/svg+xml",
+    "bytes": 1140
+  },
   "github:Weidows/dsh-performance-optimizer@d04d963f3f134477941b98c91d5838c4fd338730:icon.svg": {
     "outcome": "published",
     "sha256": "e8c811442736e2bf62194e445170f13d6be022d7908dd33ba5a5bec2220b1bb9",
@@ -4750,6 +4804,12 @@
     "sha256": "7d28e0323cb798f78c3535d914b082c3b5b5c58ce516246249c71626a5cc5f0d",
     "mediaType": "image/svg+xml",
     "bytes": 623
+  },
+  "github:WuWei-Peng/dsh-od-quota@c84153484a761037f3e9d4630cec6cc01fe3c920:icon.svg": {
+    "outcome": "published",
+    "sha256": "1caa9ca911c0672c067caf61549b3e504fcd7e778d6ca2807f333bd9bda6bd69",
+    "mediaType": "image/svg+xml",
+    "bytes": 768
   },
   "github:WuweiRE/dsh-composer-plus@41c50cfb7ecde1e5935c0b54ff202abf68f8f2c7:icon.svg": {
     "outcome": "published",
@@ -4985,6 +5045,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 459
   },
+  "github:YarXVI/dsh-npu@4ebfe8be2afeec905d6d31505c2ce11f1f437ba7:icon.svg": {
+    "outcome": "published",
+    "sha256": "6e32760f916d3d9ddf97a847e7dd339adbc7d70ecd0afadb0f1ea39e6983fb1d",
+    "mediaType": "image/svg+xml",
+    "bytes": 1771
+  },
   "github:Yara2090/dsh-update-center@57dd27e8f6ead869bb7bb417708811de969674dc:icon.svg": {
     "outcome": "published",
     "sha256": "18203d2b660b243fa8bb6307739c148ad0530d09e6ba57044bd8662276e23ead",
@@ -5007,7 +5073,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1670
   },
-  "github:Yhx888/dsh-quote-context@8f3768dc2043a56458e7ae2e352d7d4b7cfdd26e:icon.svg": {
+  "github:Yhx888/dsh-quote-context@a978903c013a00e73dc2d0c8eda203c51754655e:icon.svg": {
     "outcome": "published",
     "sha256": "01e87ac3f1dc0039207c64e6c016ad0b5bfa887e93f00d9921bde1366a3c043e",
     "mediaType": "image/svg+xml",
@@ -5151,7 +5217,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 391
   },
-  "github:ZYH1207/dsh-manage-api@90dc0d894dacd7d3a4cf8427701d74fa80721cbd:icon.svg": {
+  "github:ZYH1207/dsh-manage-api@54d2b60f12d053587ed4be0479df0d266df0ffd3:icon.svg": {
     "outcome": "published",
     "sha256": "837be9495ce3e1586f8650d7733e7f6b15a85662e69ec37e9e4da7138833e605",
     "mediaType": "image/svg+xml",
@@ -5163,13 +5229,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 391
   },
-  "github:Zarpyk/dsh-mcp-manager@591d5bd3cc28624795b10f5aa4444daa5438246e:assets/icon.svg": {
-    "outcome": "published",
-    "sha256": "6a969c7421635b826f622012dc154033c81dcd8f93aa73cfa2615670063fd88e",
-    "mediaType": "image/svg+xml",
-    "bytes": 549
-  },
-  "github:Zcc50/dsh-workspace-frontend@12906bdfc9bd84f310acb3759612dbefaeb2bb7c:icon.svg": {
+  "github:Zcc50/dsh-rebuild@65b11d74fd027b0d779aae9dfba5b7cdf557c70c:icon.svg": {
     "outcome": "published",
     "sha256": "6b61aa9f90e12e7577bc42e5f3e6d29fa1a7bf183a1120e577082e9f84871e31",
     "mediaType": "image/svg+xml",
@@ -5391,6 +5451,24 @@
     "mediaType": "image/svg+xml",
     "bytes": 831
   },
+  "github:accoutmissing/dsh-codex-workbench@303e600d95f6de5767a71d1a96f31fe8b3036021:icon.svg": {
+    "outcome": "published",
+    "sha256": "4be6996d0fa5ce87cbbefa92941cd83e8e6843cf5ea6f60dd6c8b691528d5acb",
+    "mediaType": "image/svg+xml",
+    "bytes": 346
+  },
+  "github:accoutmissing/dsh-restart-button@8762ca49f51a75d28faa12214ffd3e38147530da:icon.svg": {
+    "outcome": "published",
+    "sha256": "a352e5a5090fd64d91ea7ef860db2c158e27179f10bf17fb5336defdebb647bc",
+    "mediaType": "image/svg+xml",
+    "bytes": 392
+  },
+  "github:accoutmissing/dsh-session-artifacts@3c5bb84e6039547ef88c5d0183dccac86483a509:icon.svg": {
+    "outcome": "published",
+    "sha256": "c10769959ef25f63e5f31ed1d814c2ffc97e232b5500e88915bb2d2feb203acc",
+    "mediaType": "image/svg+xml",
+    "bytes": 328
+  },
   "github:acdsh4869/dsh-deepseek-web-relay@bebd12c9016bdb50fc9dd0ed139ae02222fe7aa7:icon.png": {
     "outcome": "refused",
     "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
@@ -5400,6 +5478,12 @@
     "sha256": "90ec423cf8c1e7a4d0e4212f29a691a4e81db29f7351723c7d1e34a327190ba6",
     "mediaType": "image/svg+xml",
     "bytes": 832
+  },
+  "github:adil-bit-hub/dsh-credential-vault@e8cd73e5f9a4203153681c4632edcc55c5b9d57c:icon.svg": {
+    "outcome": "published",
+    "sha256": "6fe3cc63960ea338ac0ff4cc275cc1f972a0f7e3193ce66a6bd57ae518420c5c",
+    "mediaType": "image/svg+xml",
+    "bytes": 787
   },
   "github:adrian-atlas/dsh-avatar-balance@54501521c184e4a3eaa65b8521702f914d352c10:icon.svg": {
     "outcome": "published",
@@ -5631,6 +5715,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 629
   },
+  "github:ariyflow/dsh-qqnt-chat-export@16f15364eec6670415cb6d46712f41f2788ae3e4:icon.svg": {
+    "outcome": "published",
+    "sha256": "b577721a62077b2b86f42854d257646ce0f32a280f5d2bf8b5ac956616fc7918",
+    "mediaType": "image/svg+xml",
+    "bytes": 624
+  },
   "github:arr0g/dsh-windows-acl-preflight@fa3e25fea580a773913c9f9956eb01ce9d88813f:icon.png": {
     "outcome": "published",
     "sha256": "0e119d0501562bf2b8a3bd7096c64cdaeb7a514ff56d0806c18ec3ade8a1df24",
@@ -5685,17 +5775,17 @@
     "mediaType": "image/svg+xml",
     "bytes": 1144
   },
-  "github:awychoi/dsh-agents-md@26537e17904f2a1a383d04505a1d187e57c9306c:icon.svg": {
+  "github:awychoi/dsh-agents-md@0ab6fe69ffccc705f699c838ccb9874a0baf6985:icon.svg": {
     "outcome": "published",
-    "sha256": "51cf7887643670ca34f4b80ab3300af01582a9383583193aabab30a0417a06af",
+    "sha256": "b032ba369af74fa1cdf511e169e1ad74cfaf5b3fb8fdcbe3da04ea24f409fb78",
     "mediaType": "image/svg+xml",
-    "bytes": 1198
+    "bytes": 1319
   },
-  "github:awychoi/dsh-spendwatch@f13da7ae1baea7e243ce4e980b042c49371f4dc3:icon.svg": {
+  "github:awychoi/dsh-spendwatch@4854e02d1fbbeb4a53cfdbbcaf96e2e984d0892f:icon.svg": {
     "outcome": "published",
-    "sha256": "9e18ed4627f57bf79676442168ffaf6ff55b240f0d027c5d813b73bd07c10be5",
+    "sha256": "d780020b8901c0407add2b8926b9705be6b9e7167b471e865bfee6c0b1fb24df",
     "mediaType": "image/svg+xml",
-    "bytes": 1019
+    "bytes": 721
   },
   "github:ayi-maker/dsh-prompt-forge@46db24f600f0099b374d9da6f3637c428678d06d:icon.svg": {
     "outcome": "published",
@@ -5873,7 +5963,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 393
   },
-  "github:bbfang2025-cyber/dsh-pet-voice-fishy@9fb26428796f7953d4795f4f6c628f1391ffbb99:assets/icon.png": {
+  "github:bbfang2025-cyber/dsh-pet-voice-fishy@409d792a7ca77272c6fadfd27cad2fe76981eb94:assets/icon.png": {
     "outcome": "published",
     "sha256": "a8890d452b98d988ff0591b49c464897ca87340ba148345f6fc09f3b4ea63afc",
     "mediaType": "image/png",
@@ -5927,6 +6017,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 816
   },
+  "github:bigfatdsh/dsh-cookie-guard@80513468c584d5b3d4019ce4176f9dc7484baaf1:icon.svg": {
+    "outcome": "published",
+    "sha256": "9a4ce974fb29abbf1795bc587ecc9b39829803528cac57f19cce53b1d9a3fc8b",
+    "mediaType": "image/svg+xml",
+    "bytes": 1266
+  },
   "github:bilbillm/dsh-steam-startup-animation@a0b9fa9a4840833f5286799ec28e756faf08ac0c:assets/icon.png": {
     "outcome": "refused",
     "detail": "package.json \"icon\" \"assets/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
@@ -5973,7 +6069,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 498
   },
-  "github:bradeGithub/DSH-Plugins-Marketplace@c7ae60af95ff7f1267066702d3e9f180b0a6485f:assets/icon.svg": {
+  "github:bradeGithub/DSH-Plugins-Marketplace@2f27649769b6c955f753ffba7ac3428c05c4c78f:assets/icon.svg": {
     "outcome": "published",
     "sha256": "396637302cdc248e28db07d51bfe2bc1fa165423733a8cfa381ed1c56835277c",
     "mediaType": "image/svg+xml",
@@ -6000,6 +6096,12 @@
     "sha256": "f269ad29b8b78c902ba447b9663bcff51659efba76623b61d8550cf84d1ee235",
     "mediaType": "image/svg+xml",
     "bytes": 409
+  },
+  "github:byf1999/dsh-plugin-workspace-split@204307cec2a6d5b4ec33aa5f2d02f6b31afccfb8:icon.svg": {
+    "outcome": "published",
+    "sha256": "8483197934fad0761ef3785a877b0c414d132763d8e740a6bba0d1d6de3f3f02",
+    "mediaType": "image/svg+xml",
+    "bytes": 570
   },
   "github:c64136071-crypto/dsh-team-radar@a3f8ea132c7d18cffc0c01cc99e546cddddca679:icon.svg": {
     "outcome": "published",
@@ -6156,6 +6258,18 @@
     "sha256": "615dfe7e279eeda6bdd2793583d53273bba64d7063205fdd07f3f0fc1df31591",
     "mediaType": "image/svg+xml",
     "bytes": 755
+  },
+  "github:chimfurn/dsh-vtx316-voice@3711de560d4742d065dab0af4dbdf6c8f1ab3093:icon.svg": {
+    "outcome": "published",
+    "sha256": "7c864cdaa0491d3282196178040a547924544cdc6009269986ade14b774aac5c",
+    "mediaType": "image/svg+xml",
+    "bytes": 880
+  },
+  "github:chunqing286/dsh-guard-degen@b5f85f82daad9be3ed7046bd4bd6aa83c2cf87b3:assets/icon-512.png": {
+    "outcome": "published",
+    "sha256": "1e36f68beff726a63a92b4ee09fbe8c24d65f3f8a08f3eca679d1f3c9c00658b",
+    "mediaType": "image/png",
+    "bytes": 6839
   },
   "github:chunrichi/dsh-usage-panel@ceda639f928c21b12964f27f7d44bed5fb61c40c:icon.svg": {
     "outcome": "published",
@@ -6481,6 +6595,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 330
   },
+  "github:devloom1024/dsh-agent-team-model-selection@5877cc3c6064e7f8757fe4df60b468d34de2f3cd:icon.svg": {
+    "outcome": "published",
+    "sha256": "e3983dbd7453826f2d3559b5a0d43427da8ac4bd1b676011effd3499f049364e",
+    "mediaType": "image/svg+xml",
+    "bytes": 666
+  },
   "github:dhdkfkfkf/dsh-qbuddy-prompt-enhance@e9cc0b4419ef508b60b6a3fd37dec9b3165c8be4:icon.svg": {
     "outcome": "published",
     "sha256": "394e921e585e9816883ad0c92bf8c33fc6a60193e2fa05b32c4d0b276d5644fd",
@@ -6525,7 +6645,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 376
   },
-  "github:dogeheng/dsh-omni@41a2965c832afdc7202b0c338232d6002fe4135a:packages/launcher/icon.svg": {
+  "github:dogeheng/dsh-omni@19f21f6bda4122222b6dd386a116d936b247a272:packages/launcher/icon.svg": {
     "outcome": "published",
     "sha256": "cb81b3a39507072f98d0bae9a823593f1d4c309d0381095da94b20a0bc2f8042",
     "mediaType": "image/svg+xml",
@@ -6603,13 +6723,13 @@
     "mediaType": "image/png",
     "bytes": 4535
   },
-  "github:ds-hu/dsh-collaborative-clarity@01c127cd77ce45f4f2f0afc09839e35d1da4038e:icon.svg": {
+  "github:ds-hu/dsh-collaborative-clarity@319319a594caf3cd2d28247e62f5dbdf97c40040:icon.svg": {
     "outcome": "published",
     "sha256": "2486edf31a54d2c7d9f53d579bc5528fe57011c616cc79d8e600c899d36d133c",
     "mediaType": "image/svg+xml",
     "bytes": 1170
   },
-  "github:ds-hu/dsh-plugin-pyrun@a96f300ea6453bcee46140a4e89f4c646d8926f2:icon.svg": {
+  "github:ds-hu/dsh-plugin-pyrun@db78420ef9ded68cbb3bb9086e6b04f33974ba6c:icon.svg": {
     "outcome": "published",
     "sha256": "a9a1943fbf20f6d1929d433bb35725fbc56ab05ce864742545bf562f0d7dbec9",
     "mediaType": "image/svg+xml",
@@ -6687,23 +6807,23 @@
     "mediaType": "image/svg+xml",
     "bytes": 707
   },
-  "github:eamars/AsunaCognitionCore@59543f579e394ac3eebb794929e30b5732a178b4:packages/channels/napcat-qq/icon.svg": {
+  "github:eamars/AsunaCognitionCore@a200bc93c183398d6387988921ba8065afbc9dde:packages/channels/napcat-qq/icon.svg": {
     "outcome": "published",
     "sha256": "aec177bb8b4ca974a47aaebf56dd3d150889b6f40f9cd7b99d6e9a06584dcffe",
     "mediaType": "image/svg+xml",
     "bytes": 368
   },
-  "github:eamars/AsunaCognitionCore@59543f579e394ac3eebb794929e30b5732a178b4:packages/cognition-core/icon.svg": {
+  "github:eamars/AsunaCognitionCore@a200bc93c183398d6387988921ba8065afbc9dde:packages/cognition-core/icon.svg": {
     "outcome": "published",
     "sha256": "5df3f825f08837b6fc5fc4914474807978846d5b9e20beec904be60a4d1fc7d1",
     "mediaType": "image/svg+xml",
     "bytes": 291
   },
-  "github:eamars/AsunaCognitionCore@59543f579e394ac3eebb794929e30b5732a178b4:packages/personas/ichinose-asuna/icon.png": {
+  "github:eamars/AsunaCognitionCore@a200bc93c183398d6387988921ba8065afbc9dde:packages/personas/ichinose-asuna/icon.png": {
     "outcome": "refused",
     "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
-  "github:eamars/AsunaCognitionCore@59543f579e394ac3eebb794929e30b5732a178b4:packages/personas/kyoyama-kazusa/icon.png": {
+  "github:eamars/AsunaCognitionCore@a200bc93c183398d6387988921ba8065afbc9dde:packages/personas/kyoyama-kazusa/icon.png": {
     "outcome": "refused",
     "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
@@ -6821,6 +6941,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 869
   },
+  "github:fanyingnie2163663/dsh-whale-care@1711bfff2e9404ce7f0285645daf3ddbdb0a27bc:assets/icon.svg": {
+    "outcome": "published",
+    "sha256": "a85acf074b7eba9badb08cadd139a249b1bf7dfdc1e532af42aeaf998363daf1",
+    "mediaType": "image/svg+xml",
+    "bytes": 717
+  },
   "github:fdghdfghdfghd/dsh-balance-pill@bc24d57a5fab27964411af4ade637f7a2e0efe42:icon.png": {
     "outcome": "published",
     "sha256": "dd6ba632b5fe33d36a4e5e6220ebbd1d3c36c26b12b803c955c9450d29222874",
@@ -6910,12 +7036,6 @@
     "sha256": "4394be7127b81e71b14f10ab20d9ac6dc4cf09965cb2266c85cea9b160b30d2e",
     "mediaType": "image/svg+xml",
     "bytes": 900
-  },
-  "github:fongap-labs/dsh-plugin@ae19a545db292e3b3d751e8e9718f70b20046379:packages/dsh-ui-delta/icon.svg": {
-    "outcome": "published",
-    "sha256": "c8265a8e65d0c7f2f27c8bfa03c004ad1d0ea7bf0d50c827e29685126ca6cf86",
-    "mediaType": "image/svg+xml",
-    "bytes": 483
   },
   "github:foreee/dsh-app-restart@bb52ac4c5cfcbbb1dd403a7468d4142d7e9281a5:icon.svg": {
     "outcome": "published",
@@ -7205,7 +7325,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 406
   },
-  "github:good-saltfish/dsh-auto-rerun@42e89450819a81731bea73ba40687cee17bb88fd:icon.svg": {
+  "github:good-saltfish/dsh-auto-rerun@dce9517650c2808a702eee5f616a8e7ba953cf69:icon.svg": {
     "outcome": "published",
     "sha256": "0a6d24529a478843d8870325294421b1eca54fd8e2050938b708d81e725a64dd",
     "mediaType": "image/svg+xml",
@@ -7271,7 +7391,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 978
   },
-  "github:gx18391303625-afk/dsh-douyin-ip-report@bfe3ef68f6d5b69b083bdeab6a3282fdb59816f0:icon.svg": {
+  "github:gx18391303625-afk/dsh-douyin-ip-report@a4b9d592b4151bb9b899dc18d25570a596b0ab4f:icon.svg": {
     "outcome": "published",
     "sha256": "705ce4f4938523f286ec15f7a381ca0b0e0cddcad76311fa28e445dd4e17b79f",
     "mediaType": "image/svg+xml",
@@ -7343,6 +7463,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 431
   },
+  "github:heibaoxia/dsh-openspec-pipeline@0049278acebe6986c68f0eb8fc64fd2d68920b67:icon.svg": {
+    "outcome": "published",
+    "sha256": "e0f6614d5252266a6822bd3d0314469187d763be4d65ccd98d1aea0f11896257",
+    "mediaType": "image/svg+xml",
+    "bytes": 574
+  },
   "github:heix0x/dsh-share-transcript@b8b220870448b826e0854e9a0b23b8cd881e7c2a:icon.svg": {
     "outcome": "published",
     "sha256": "17a5a7e1b66bcc733a0668fbe82915e77e268dc8c219716a4a49cda817dfd66e",
@@ -7373,7 +7499,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1224
   },
-  "github:heshuren371/dsh-music-player@6264343c56233d787650d00b87ffdf5a544cee43:assets/icon.svg": {
+  "github:heshuren371/dsh-music-player@d964d0d26ecfc30be7adf086efb713397f6184a0:assets/icon.svg": {
     "outcome": "published",
     "sha256": "f2b39fe5befdbf09cd263743d9c9dd91fbfac273a4f0b7c529fee6e8c03eba7a",
     "mediaType": "image/svg+xml",
@@ -7621,11 +7747,29 @@
     "mediaType": "image/svg+xml",
     "bytes": 460
   },
+  "github:ihodorchenko/dsh-dock-attention@6ca0ae45bf16d947f5731b414d75722277ddda93:icon.svg": {
+    "outcome": "published",
+    "sha256": "f02e2113405ad5a2f3ff30889704590141d9227e665a353093986d1e59ae05d8",
+    "mediaType": "image/svg+xml",
+    "bytes": 1065
+  },
   "github:ihodorchenko/dsh-macos-notifications@9af4d277dee87943eb0b7ce5c1130acf77081b09:icon.svg": {
     "outcome": "published",
     "sha256": "b87b1131953dc899ac6b237ada7c2ec646e0c298a340c8141f2fbb707c11a1a7",
     "mediaType": "image/svg+xml",
     "bytes": 393
+  },
+  "github:ihodorchenko/dsh-next-prompt@976c02931a92db560f4a9d28cb79d52711aa8a86:icon.svg": {
+    "outcome": "published",
+    "sha256": "d67b1db499ff5bf4f6298bdea23a6f4d3dd125ca33733ff9160a61653c3076c2",
+    "mediaType": "image/svg+xml",
+    "bytes": 653
+  },
+  "github:ihodorchenko/dsh-nightowl@68a035b36ca8d1030afbd0b83af16af8196ff1b4:icon.svg": {
+    "outcome": "published",
+    "sha256": "491997e9114811dabfb9b556cb567354fb4486aeb793fbc27203566646103a58",
+    "mediaType": "image/svg+xml",
+    "bytes": 296
   },
   "github:ii33/dsh-compaction-policy@2a63d7ca8a2577e19414cb31cd75e7f2b66a4e61:icon.svg": {
     "outcome": "published",
@@ -7751,7 +7895,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 898
   },
-  "github:jackey670/dsh-douyin-whale@9a469dc5824a8a561c7571f5c2a911329266dd06:icon.svg": {
+  "github:jackey670/dsh-douyin-whale@0f44e5f12d1eb958dc0fee92988723a95b5ecfd1:icon.svg": {
     "outcome": "published",
     "sha256": "7d81d4455908604eaae755748042e9f764934cd69330c75fcebc339e341c8124",
     "mediaType": "image/svg+xml",
@@ -7816,6 +7960,12 @@
     "sha256": "aa6934ce1005f423471c78217c0106e4bb5b7e0f2272029cd0eb649c8829a10e",
     "mediaType": "image/svg+xml",
     "bytes": 1627
+  },
+  "github:jeskoky-pixel/amadeus-life@4c985e44f725ab47616fed1b37521b06c44dc3d1:icon.svg": {
+    "outcome": "published",
+    "sha256": "8503ed3abac3299af5527e75011a18dd8eced06bde7c8d8e987de5f747aa1100",
+    "mediaType": "image/svg+xml",
+    "bytes": 408
   },
   "github:jett1011586853/qinghua-dsh-plugin@989eba164047a1acf53ad7d276b0bc98019ac4d8:icon.svg": {
     "outcome": "published",
@@ -8023,6 +8173,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 689
   },
+  "github:keduoli-lovely/dsh-plugin-voice-studio@ccbd6856016d5886eb6be7f454c044c5f2da9ee7:icon.svg": {
+    "outcome": "published",
+    "sha256": "ee86789588286a12ded606c6fadbb81ac82a81ece297ab1730fab4256e541173",
+    "mediaType": "image/svg+xml",
+    "bytes": 726
+  },
   "github:kee0012/dsh-sidebar-panel@17c73bc808d383fdeb817aa65ae5be9affe6e9bc:icon.svg": {
     "outcome": "published",
     "sha256": "71ea3f803a39f66baaa25b19da31aa378d3e55ca7658150c11ba3c60188929ea",
@@ -8213,11 +8369,17 @@
     "mediaType": "image/svg+xml",
     "bytes": 720
   },
-  "github:kmyy350234-dz/dsh-tool-drawer@6365ee5bc21a7548e80c87a9bfa3e448117220d6:icon.svg": {
+  "github:kmyy350234-dz/dsh-tool-drawer@fe2eb3ce718826e918d54b07a277a5e04c537ba3:icon.svg": {
     "outcome": "published",
     "sha256": "e691802e35ab58087896e3d19a3d9b5404f29c49f4cd02ec2e5eb5fc8a75da1b",
     "mediaType": "image/svg+xml",
     "bytes": 574
+  },
+  "github:koi128bit/dsh-session-git@26b0811c3a2ece4902ba978436636174ec12b593:icon.svg": {
+    "outcome": "published",
+    "sha256": "439c40a1806595d2decf1361641e93ddb37784eb8c322b2776f75b95471817ec",
+    "mediaType": "image/svg+xml",
+    "bytes": 699
   },
   "github:koking0/dsh-plugin-google@aea3ae6c8392b66c7721c50b13e13512b77194fe:icon.svg": {
     "outcome": "published",
@@ -8242,6 +8404,12 @@
     "sha256": "097bf568948b4bbc1e4aa79f288642e02743369f3e1dcb957de59951a76a059c",
     "mediaType": "image/svg+xml",
     "bytes": 1131
+  },
+  "github:komeiji-cobalt/dsh-isaac-widget@84d3f8347b1af590d4024bdcb97b4ad1b9fbbcea:icon.png": {
+    "outcome": "published",
+    "sha256": "61029c51787232ca8508614d92e1c4e296ad59689db9d08ee109a4798b9d837e",
+    "mediaType": "image/png",
+    "bytes": 1656
   },
   "github:kongbai-chao/dsh-plugin-whale-skin@8c0cd931d9a0e5b6ed50c74630032a593e766ccc:assets/icon.svg": {
     "outcome": "published",
@@ -8369,11 +8537,21 @@
     "mediaType": "image/svg+xml",
     "bytes": 407
   },
+  "github:lengrufeng2008/dsh-token-audit@41d244d7b2f1bc2785028188cc281ea0e80506b8:icon.svg": {
+    "outcome": "published",
+    "sha256": "7c32617268980b34871d27a55a7caff93f0783855ec567f7a4bd78af0c6e82cb",
+    "mediaType": "image/svg+xml",
+    "bytes": 997
+  },
   "github:letterk/dsh-adhd-mode@9f9013f5d178b443e06d2ccbcb4aa924d459ab5a:icon.svg": {
     "outcome": "published",
     "sha256": "b6f236092f66509a8271d5ec62c2b1c3a851b825425fe8cc2dc5df034b772821",
     "mediaType": "image/svg+xml",
     "bytes": 279
+  },
+  "github:levitate403/dsh-firefly-bg@2a07e0ae528a3b61f3f77d870b5437f5d9b70107:icon.png": {
+    "outcome": "refused",
+    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:lg6169219/dsh-fatfish-level@95005ddec079f5b4eef5fbdbb84bbea1b4d3496d:icon.png": {
     "outcome": "published",
@@ -8537,7 +8715,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 707
   },
-  "github:linxichen/dsh-rigorquant@6fa4d9ac2e79587f294fca140f3a2518542d6ffc:icon.svg": {
+  "github:linxichen/dsh-rigorquant@198b82cc8d6709ace3af107a4b1d527cf5992a2b:icon.svg": {
     "outcome": "published",
     "sha256": "51b58479608bf547fbeb62fb363181cb9f59c6703580e9504f751b019ce371cf",
     "mediaType": "image/svg+xml",
@@ -8579,7 +8757,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 371
   },
-  "github:liuhusk/dsh-status-card@483c17867463d03d69e9955dd24a772a15a29c31:icon.svg": {
+  "github:liuhusk/dsh-status-card@30c7943e6a8c82b7932b20cc19d752939274f316:icon.svg": {
     "outcome": "published",
     "sha256": "17d95c40b64c7242fc0e9951ff87c35f883d9201d100b4220facf2f80c3c26ab",
     "mediaType": "image/svg+xml",
@@ -8753,7 +8931,13 @@
     "mediaType": "image/svg+xml",
     "bytes": 694
   },
-  "github:longyi-0x0/dsh-plugin-template@0644d8013095efb95d5261ecf2e912ad62f7c4dd:icon.svg": {
+  "github:longyi-0x0/dsh-plugin-manager@3fb7c2b803818d346c9ac6b61aad7eea2066eeaa:icon.svg": {
+    "outcome": "published",
+    "sha256": "9a8c3ecba12291d8b6cefbd6070fa4b0bcfd3587fac19f763c083a41d85e977c",
+    "mediaType": "image/svg+xml",
+    "bytes": 769
+  },
+  "github:longyi-0x0/dsh-plugin-template@360769c68ffc476829857cfbaf19aa281d0dceb7:icon.svg": {
     "outcome": "published",
     "sha256": "5c0cb7f763fc9ef7162d9f99ada8483076628feed3da86b39fc7099ba18203e7",
     "mediaType": "image/svg+xml",
@@ -8930,6 +9114,12 @@
     "sha256": "c4b6dadf58aeaa277cdb823dcc412e1b1725c4623a8bc9a0b339a220b10a79d4",
     "mediaType": "image/svg+xml",
     "bytes": 505
+  },
+  "github:mamabuku/dsh-magpie-usage@85f48926a549ef3cd57f866a42247cb9154de7ba:icon.svg": {
+    "outcome": "published",
+    "sha256": "9ee0961cee52e405ef799badbdb94917c80f7a9b29ef197775c4a40db87a593b",
+    "mediaType": "image/svg+xml",
+    "bytes": 591
   },
   "github:manhkhiemhoang2-bit/dsh-costcast@b1b2804c3dce6ee91321b14dac7197da29289e2e:icon.svg": {
     "outcome": "published",
@@ -9349,6 +9539,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 236
   },
+  "github:msz-legend/dsh-mobile-bridge@ab5168253f078fc6b84c93f5415988426ea0266d:icon.svg": {
+    "outcome": "published",
+    "sha256": "73b7d81eae9cd52a9bf6a5646221b1bd66d8d2a1d05e2234eb4d95944a75f199",
+    "mediaType": "image/svg+xml",
+    "bytes": 746
+  },
   "github:muodin/dsh-web-think@a929c8ce06391ca6f973753aa7d7d4b87456507d:icon.svg": {
     "outcome": "published",
     "sha256": "25a1c1adcf1d3b524ee98598834d3d0951bcaeb7200b59a4d948f8722d68b353",
@@ -9551,7 +9747,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 676
   },
-  "github:oioiphainon/dsh-widget@59fc6968c338afabde98e4b036b6884af61d9e20:icon.png": {
+  "github:oioiphainon/dsh-widget@5a7295cb045b159a7fa51c3493a0e39d1bcdf43b:icon.png": {
     "outcome": "refused",
     "detail": "the \"./icon\" export \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
@@ -9649,7 +9845,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 995
   },
-  "github:penyy8540-bit/tiktok-ads-agent-kit@86f82a4e4ae40bd7e1906575af6a5eec391c6749:assets/icon.svg": {
+  "github:penyy8540-bit/tiktok-ads-agent-kit@e52cbf343ddfca3e74df41fcf558f090f56e4c56:assets/icon.svg": {
     "outcome": "published",
     "sha256": "f389ca7762d29ae714ea83bd996b383c802266c93f8847a4accf5053334adb0c",
     "mediaType": "image/svg+xml",
@@ -9667,7 +9863,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 926
   },
-  "github:phoenixlucky/dsh-theme@bad1eac991f87613e3178ab687acee557907ef30:public/assets/icons/wj-dreamlight.png": {
+  "github:phoenixlucky/dsh-theme@526e9106ceeef67132b8ef83ec94e6d580547b2d:public/assets/icons/wj-dreamlight.png": {
     "outcome": "refused",
     "detail": "the \"./icon\" export \"public/assets/icons/wj-dreamlight.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
@@ -9700,6 +9896,12 @@
     "sha256": "c36688bcdc304ed9a27c50576cca3acc7f6952cd6eb973160bfdb5655d12623e",
     "mediaType": "image/svg+xml",
     "bytes": 521
+  },
+  "github:platinum952/dsh-session-notify@344c6550abda50192dc35d1210cad46089e317ec:icon.svg": {
+    "outcome": "published",
+    "sha256": "2f4f407fd912ee95e0e85bac0e36b0a672958aebadb3f58a60f95c8301643dcb",
+    "mediaType": "image/svg+xml",
+    "bytes": 410
   },
   "github:pokerface-1224/deepseek-whale-girl-pet@c7a0a01b80c5826b1a8a7829d943db6adc7d5a4b:icon.png": {
     "outcome": "refused",
@@ -9755,7 +9957,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 361
   },
-  "github:puppetcat-fire/dsh-plugin-dreaming@b51ccb40d8ce83addda256cfd26d673fbcc9c51c:icon.svg": {
+  "github:puppetcat-fire/dsh-plugin-dreaming@c4e80e0e69060a3fbe58e93f368bf5ee1eef4ef1:icon.svg": {
     "outcome": "published",
     "sha256": "29749bb7a910919e41d7c869c1964033378b172a1e2dec82e1298c250fa4247c",
     "mediaType": "image/svg+xml",
@@ -9826,6 +10028,10 @@
     "sha256": "20cff2da9e3722c7e037937352859a376b4fd77907b4d444ee29ecbf1e890b6d",
     "mediaType": "image/svg+xml",
     "bytes": 528
+  },
+  "github:qingfenganshi/dsh-whale-desktop@cde654d40c1ce734ebdb7fe263b3a2ea616cb360:icon.png": {
+    "outcome": "refused",
+    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:qiqingyo/dsh-daily-tasks@0d3f4d38caff4cebf2ea7dcd79117b53fd5c4553:icon.svg": {
     "outcome": "published",
@@ -9923,7 +10129,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 501
   },
-  "github:raktim-mondol/academic-harness@113275a9e8a9c5428048803df3c8344797dbc0fb:assets/icon.svg": {
+  "github:raktim-mondol/academic-harness@c8720b3d0fe37d6a373d3a5ffbc9e78113161af3:assets/icon.svg": {
     "outcome": "published",
     "sha256": "d8fb6d731beb0a1779c1da06fe70e1d77b6125f64d4b23144898669ee725977b",
     "mediaType": "image/svg+xml",
@@ -10019,11 +10225,11 @@
     "mediaType": "image/svg+xml",
     "bytes": 521
   },
-  "github:romany-saad/dsh-plugins@b490b3dd9ecd23c220fd1c1d5b7cc536b4a94343:packages/dsh-automations/icon.svg": {
+  "github:ruihe774/dsh-agent-attribution@b9ed411e8284f43c1a05b387b9b88e396e770463:icon.svg": {
     "outcome": "published",
-    "sha256": "c079761cc0b99620239b932f1e5468d856279ee69a394fd77b2369395234df60",
+    "sha256": "bf1515a5bc3ff3b27a63c1177b4e12121faac328ab26def09b74a7577ba59982",
     "mediaType": "image/svg+xml",
-    "bytes": 5705
+    "bytes": 327
   },
   "github:running-grass/dsh-nix-dev-shell@330c4e0bdef6c2ce14a4c97bd614fd29d80df540:icon.svg": {
     "outcome": "published",
@@ -10071,7 +10277,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 637
   },
-  "github:satanfire/opencode2dsh@3ace5c0510c87425dff871f3aa15dce8e84105ad:icon.svg": {
+  "github:satanfire/opencode2dsh@873e914d5296b6acff50d8d4bb5d4ab6f2b1745f:icon.svg": {
     "outcome": "published",
     "sha256": "5f3ff889cee873d105ac7c30f2ca14b740751657ebdf6d012384af6c038e97c3",
     "mediaType": "image/svg+xml",
@@ -10119,49 +10325,49 @@
     "mediaType": "image/svg+xml",
     "bytes": 289
   },
-  "github:sergey-akhalkov/dsh-setup@a2e6070de01f62685c353469b7c850192c6a4771:packages/plugin-admin-indicator/icon.svg": {
+  "github:sergey-akhalkov/dsh-setup@3dc2667a63cb49a6f966fcae8f7e5f42e1c15582:packages/plugin-admin-indicator/icon.svg": {
     "outcome": "published",
     "sha256": "8559072e48793292974b7e743c0b20cbb72aedbb3304dfb8af16354e60e3dd42",
     "mediaType": "image/svg+xml",
     "bytes": 374
   },
-  "github:sergey-akhalkov/dsh-setup@a2e6070de01f62685c353469b7c850192c6a4771:packages/plugin-answer-page/icon.svg": {
+  "github:sergey-akhalkov/dsh-setup@3dc2667a63cb49a6f966fcae8f7e5f42e1c15582:packages/plugin-answer-page/icon.svg": {
     "outcome": "published",
     "sha256": "1a95351a3b02a911368fe22fa1d55b98c7010f7abecf34fd57c816752e848d14",
     "mediaType": "image/svg+xml",
     "bytes": 532
   },
-  "github:sergey-akhalkov/dsh-setup@a2e6070de01f62685c353469b7c850192c6a4771:packages/plugin-codex-subagent/icon.svg": {
+  "github:sergey-akhalkov/dsh-setup@3dc2667a63cb49a6f966fcae8f7e5f42e1c15582:packages/plugin-codex-subagent/icon.svg": {
     "outcome": "published",
     "sha256": "2e859afe02308d2ab22d5f8635eb77a5dd4804464d4ea5b6b3a3e72338a77ddd",
     "mediaType": "image/svg+xml",
     "bytes": 554
   },
-  "github:sergey-akhalkov/dsh-setup@a2e6070de01f62685c353469b7c850192c6a4771:packages/plugin-delegation-rules/icon.svg": {
+  "github:sergey-akhalkov/dsh-setup@3dc2667a63cb49a6f966fcae8f7e5f42e1c15582:packages/plugin-delegation-rules/icon.svg": {
     "outcome": "published",
     "sha256": "d638e5a32944bc6e7c90b1a8d326ad2dddb1650394b1c59967449fc4f0c349b4",
     "mediaType": "image/svg+xml",
     "bytes": 599
   },
-  "github:sergey-akhalkov/dsh-setup@a2e6070de01f62685c353469b7c850192c6a4771:packages/plugin-goal-continuity/icon.svg": {
+  "github:sergey-akhalkov/dsh-setup@3dc2667a63cb49a6f966fcae8f7e5f42e1c15582:packages/plugin-goal-continuity/icon.svg": {
     "outcome": "published",
     "sha256": "e6893e2037dcf87ce62c07d2b170b5ae0d6006d3854d3415fbd84b04c85d3589",
     "mediaType": "image/svg+xml",
     "bytes": 731
   },
-  "github:sergey-akhalkov/dsh-setup@a2e6070de01f62685c353469b7c850192c6a4771:packages/plugin-hindsight/icon.svg": {
+  "github:sergey-akhalkov/dsh-setup@3dc2667a63cb49a6f966fcae8f7e5f42e1c15582:packages/plugin-hindsight/icon.svg": {
     "outcome": "published",
     "sha256": "6f8c10cba89fdd96a969f258689f3fa8fb01ee8cedd6ff6ee338cae66562647b",
     "mediaType": "image/svg+xml",
     "bytes": 506
   },
-  "github:sergey-akhalkov/dsh-setup@a2e6070de01f62685c353469b7c850192c6a4771:packages/plugin-loop-guard/icon.svg": {
+  "github:sergey-akhalkov/dsh-setup@3dc2667a63cb49a6f966fcae8f7e5f42e1c15582:packages/plugin-loop-guard/icon.svg": {
     "outcome": "published",
     "sha256": "124a6f5f56fe19b97b7e5651bbe45a9533e125757e3045810b1ae54392f91871",
     "mediaType": "image/svg+xml",
     "bytes": 462
   },
-  "github:sergey-akhalkov/dsh-setup@a2e6070de01f62685c353469b7c850192c6a4771:packages/plugin-mcp-lazy/icon.svg": {
+  "github:sergey-akhalkov/dsh-setup@3dc2667a63cb49a6f966fcae8f7e5f42e1c15582:packages/plugin-mcp-lazy/icon.svg": {
     "outcome": "published",
     "sha256": "f9c5b950d45c25134f55fefa5fad80361b0593a75acafec688b71943a5122f5e",
     "mediaType": "image/svg+xml",
@@ -10191,7 +10397,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 675
   },
-  "github:shehuilaoliumang/dsh-plugin-updater@d6c970e3d6bb40cccf8fefc71608112664c061b3:icon.svg": {
+  "github:shehuilaoliumang/dsh-plugin-updater@5bdb59281650360c5946ec0712ca9ca714045ddf:icon.svg": {
     "outcome": "published",
     "sha256": "735bc2b2f9689135eba03eb25b064904a13d40383aecfe1f808c6f38dcf247b3",
     "mediaType": "image/svg+xml",
@@ -10359,7 +10565,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 489
   },
-  "github:sixzjd/dsh-workbuddy-connect@06ac763aef88bf1a252fcd8f80a03ff544c16274:assets/icon.svg": {
+  "github:sixzjd/dsh-workbuddy-connect@ec3c4e5f750697b18475964f0c547787b49b6f21:assets/icon.svg": {
     "outcome": "published",
     "sha256": "680a9b25a77d45cc082427db4db3c2b6626f50d2df7fbac3179f9180ef793b18",
     "mediaType": "image/svg+xml",
@@ -10509,7 +10715,13 @@
     "mediaType": "image/svg+xml",
     "bytes": 625
   },
-  "github:stitchmaps/dsh-marketboard@d2fdbc48ed4a5db2359bfdae08c025b86a47edd9:icon.svg": {
+  "github:stitchmaps/dsh-ikunchick-pet@6c010dc2d7847c9feb06735143b7487d57e37299:icon.svg": {
+    "outcome": "published",
+    "sha256": "583a05c2b7ca5e6019493e32957903d4a0bc81febe79ec3f44b16273f0caa6d7",
+    "mediaType": "image/svg+xml",
+    "bytes": 946
+  },
+  "github:stitchmaps/dsh-marketboard@372a847a5aa866d04c9e19c164f3799910123c3d:icon.svg": {
     "outcome": "published",
     "sha256": "e9e3a4aa266a4e21d72a85f72e44c9baae9d20a6d7a68227c3c6527b30b1f291",
     "mediaType": "image/svg+xml",
@@ -10785,7 +10997,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1070
   },
-  "github:tula-liuxin/dsh-conversation-companion@78abff292d6219e0854b2836ceadb9bd7afbfced:icon.svg": {
+  "github:tula-liuxin/dsh-conversation-companion@a17ece5e0d19aee1f8b69de682fc2ade3d0c8a9b:icon.svg": {
     "outcome": "published",
     "sha256": "d0ff4691a63c31a0162e6d3edabcf8c10fa465b559a36366c62b4fbe54c04365",
     "mediaType": "image/svg+xml",
@@ -10857,11 +11069,11 @@
     "mediaType": "image/svg+xml",
     "bytes": 633
   },
-  "github:unfar/dsh-chat-plugin@c9efa72eea32770cc9d65687c759f6e3dcf1aed6:icon.svg": {
+  "github:unfar/dsh-chat-plugin@02572903f2b800033a45b0dff0d58fd0c4d723b2:icon.svg": {
     "outcome": "published",
-    "sha256": "e003b79e25ae3ffabcda44d4769c4d3f9ff074e6d5b9392c893dd8914dd90f4c",
+    "sha256": "dad2be963315084c4ce66466be1b35a4c33b9a952ef7a6f5fbc67ed2661d2d69",
     "mediaType": "image/svg+xml",
-    "bytes": 703
+    "bytes": 713
   },
   "github:uniwell9797/dsh-voice-f9@9e9036518cd0aa790ab4053d9f006ca63f8b4823:icon.svg": {
     "outcome": "published",
@@ -11113,7 +11325,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1018
   },
-  "github:wakeupnotfound/dsh-rsi@295754bae12a6c806592be66cfed79223b1cd92a:icon.png": {
+  "github:wakeupnotfound/dsh-rsi@2242dbdfcd8d4169f195133bd07b184628e69b46:icon.png": {
     "outcome": "published",
     "sha256": "0f51f4f2a3e81acce87f7c03cab503560d41d79688bc9c2ca3ea21171e4415b4",
     "mediaType": "image/png",
@@ -11373,7 +11585,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 868
   },
-  "github:wumingzhiren-lab/dsh-identity-relay@51897153ddaa4e826974c793e1ab4a47e6abd045:icon.svg": {
+  "github:wumingzhiren-lab/dsh-identity-relay@160dfbd9d16affc2be67e70062151748ad7b65cc:icon.svg": {
     "outcome": "published",
     "sha256": "752a88461f03c47a08f526acbe935aafb7b80e4b5d5e7811b76a09173a7880d4",
     "mediaType": "image/svg+xml",
@@ -11478,6 +11690,12 @@
     "sha256": "c38af1d3002ab1c42d048226599241c0490c8c641d922021b7e9e90afbcbad5b",
     "mediaType": "image/svg+xml",
     "bytes": 728
+  },
+  "github:x01Jin/dsh-auto-i18n@91ad7fe0b093dbac795be76b452fd5d80748238a:icon.svg": {
+    "outcome": "published",
+    "sha256": "eee5b790ab6ee23c079562be3131778dc6f5b67139cbf8c902ce6c9acc04bff6",
+    "mediaType": "image/svg+xml",
+    "bytes": 525
   },
   "github:x01Jin/dsh-oc-go-usage@2f38f245abd5c9194f126617ea9467a056d6d166:icon.svg": {
     "outcome": "published",
@@ -11635,7 +11853,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 9646
   },
-  "github:xingyueDanYang/dsh-puppet-memory@c6db9b777d807b1b903631510c09559800a9b619:icon.png": {
+  "github:xingyueDanYang/dsh-puppet-memory@dc6fca1c07512ecc524bca9f61728d117726ef98:icon.png": {
     "outcome": "refused",
     "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
@@ -11687,7 +11905,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 934
   },
-  "github:xqpsec/dsh-jailbreak@0afaeb012850fc105c4c00b2a2b887d7f3db4902:icon.svg": {
+  "github:xqpsec/dsh-jailbreak@20dd3ce8dd3e0a243e8bfdcd3aa1ca2a0e1f0a5e:icon.svg": {
     "outcome": "published",
     "sha256": "676387b5c8a9025c1a5841ef64c840c611d5827e7536c98d044cd7ec2d85c237",
     "mediaType": "image/svg+xml",
@@ -11705,7 +11923,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 955
   },
-  "github:xtt-xt/dsh-custom-tool-studio@4bba3b861f8c8350bf132de569557995c382edd9:icon.svg": {
+  "github:xtt-xt/dsh-custom-tool-studio@9e838e30a40d28a85a5811e9edf224fa32fd6f59:icon.svg": {
     "outcome": "published",
     "sha256": "7c595b9be9079aa72825d48f8aa5ad77876aa4cc9d7ccfc2440edc78574e7312",
     "mediaType": "image/svg+xml",
@@ -11851,13 +12069,13 @@
     "outcome": "refused",
     "detail": "the \"./icon\" export \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
-  "github:yashua233/dsh-qq-mail-notify@095c47133a7cefef1b5a9040371d4f8ddf939347:icon.svg": {
+  "github:yashua233/dsh-qq-mail-notify@bc7aee4b3bd480cf9e86777b083b25c1ebbfed68:icon.svg": {
     "outcome": "published",
     "sha256": "92e941798149158cb42b378ee978411506baf907248ac7c36e1f9555df81a32f",
     "mediaType": "image/svg+xml",
     "bytes": 876
   },
-  "github:yashua233/dsh-restart@8fbba31a160cc8135ba0f72c89c3c28b7b6ce1ef:icon.svg": {
+  "github:yashua233/dsh-restart-yashua@b91d6f75f0d20f3f3cbc6ad0a0522412d2fa171d:icon.svg": {
     "outcome": "published",
     "sha256": "8eade5233f212a8b670c03d1d367b75f8e462a3b2f9c3fa9bebfc32e45051fa7",
     "mediaType": "image/svg+xml",
@@ -11898,12 +12116,6 @@
     "sha256": "2895ff7bbde7413e285d655df3af60187ea2a56249a2bbe24f6c46f74c38d5e3",
     "mediaType": "image/svg+xml",
     "bytes": 1099
-  },
-  "github:yimengsuper2432/dsh-virtual-person@b01fddfb917a55d0f68b2c4d96913ff48053c1f5:icon.svg": {
-    "outcome": "published",
-    "sha256": "fbd7856e7b04ce92db6ea8cbaeb9bc2190dc5625c40990f65817935e052c1a75",
-    "mediaType": "image/svg+xml",
-    "bytes": 936
   },
   "github:yin1895/dsh-rea@95414669528e04c5d961018530b6d03424165bee:icon.svg": {
     "outcome": "published",
@@ -12095,6 +12307,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 918
   },
+  "github:yuyu297/dsh-screenshot@f54ae72980c0ccbb1fe262b0bc0d43f4cd445ee7:icon.svg": {
+    "outcome": "published",
+    "sha256": "07e925150564b73ef49885569756ae0f44a09363637973e3dbb320fa05b97a13",
+    "mediaType": "image/svg+xml",
+    "bytes": 564
+  },
   "github:yuyu520fish/dsh-fishtank@f81261e04a7e1cc39bd7f90edb6354666c963cb6:icon.svg": {
     "outcome": "published",
     "sha256": "d7ffcc5f51e61f80310d4a3c24ecba9ee753363d47d890efd3b9244a2f5853b3",
@@ -12118,6 +12336,12 @@
     "sha256": "411434f81ce0c9f44e3c2294c02d3c6f2d26ac55ea425d52892b4d60a2c7678e",
     "mediaType": "image/svg+xml",
     "bytes": 1319
+  },
+  "github:yxie15022-debug/dsh-wife-memory@e8c7e66ce02c0898a5f3bc4b617db4ffdd35273e:icon.svg": {
+    "outcome": "published",
+    "sha256": "feca2e3a7450a15f2961ddd62a8469089a879c67bcffd5e16af6322cdb52937d",
+    "mediaType": "image/svg+xml",
+    "bytes": 699
   },
   "github:yxue301603/dsh-answer-library@f146e63cdf5505a924f0cd9fadd2fc30014f877c:icon.svg": {
     "outcome": "published",
@@ -12649,13 +12873,19 @@
     "mediaType": "image/svg+xml",
     "bytes": 491
   },
+  "npm:@addozhang/dsh-turn-toc@0.1.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "70655419f35c86cedcd45fe24ae97f80506b59a47b552928d7d653b190671cb7",
+    "mediaType": "image/svg+xml",
+    "bytes": 722
+  },
   "npm:@agent-stash/dsh-autosuggest@0.1.0:icon.svg": {
     "outcome": "published",
     "sha256": "5fe00231322debb2b8444a3019b02fe96533c1fe3d85ef892aa026eb3a884873",
     "mediaType": "image/svg+xml",
     "bytes": 1505
   },
-  "npm:@agent-stash/dsh-enhance@0.2.1:icon.svg": {
+  "npm:@agent-stash/dsh-enhance@0.3.0:icon.svg": {
     "outcome": "published",
     "sha256": "37d0d9e81e357f02ce01f89da55fa5d7a33607f184fccc288d0f5353f23d3414",
     "mediaType": "image/svg+xml",
@@ -12875,7 +13105,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 507
   },
-  "npm:@aryacode/dsh-arya-maildesk@1.0.3:icon.svg": {
+  "npm:@aryacode/dsh-arya-maildesk@1.1.0:icon.svg": {
     "outcome": "published",
     "sha256": "2df458dd54c06ebb2b8d6a2b68f88404939b7158cec9ad48153e7fb4a935180c",
     "mediaType": "image/svg+xml",
@@ -12925,7 +13155,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1068
   },
-  "npm:@bangbang-03/dsh-memory@0.6.7:icon.svg": {
+  "npm:@bangbang-03/dsh-memory@0.6.9:icon.svg": {
     "outcome": "published",
     "sha256": "6f1c216a01cb79bb6ca73e361f2ac9302645aa78f9826eb09a48e4caa7b3e726",
     "mediaType": "image/svg+xml",
@@ -13047,7 +13277,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1883
   },
-  "npm:@chaiyahang/dsh-scratchpad@0.2.5:icon.svg": {
+  "npm:@chaiyahang/dsh-scratchpad@0.2.7:icon.svg": {
     "outcome": "published",
     "sha256": "2dbbeeea0b4a7230918485580692afb4eb244639d57a89c0e6ef74431ad5611e",
     "mediaType": "image/svg+xml",
@@ -13111,11 +13341,9 @@
     "mediaType": "image/svg+xml",
     "bytes": 493
   },
-  "npm:@code_tin/dsh-sync@0.2.0:icon.svg": {
-    "outcome": "published",
-    "sha256": "bc3dd3a9cd26ffef2ca5e79a514487c3ca0cb8926f249ceafe8bc573e6cbe8af",
-    "mediaType": "image/svg+xml",
-    "bytes": 733
+  "npm:@code_tin/dsh-sync@0.2.3:icon.png": {
+    "outcome": "refused",
+    "detail": "the \"./icon\" export \"icon.png\" is 210.4 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@coder02lq/dsh-plugin-session-delete@1.0.2:icon.svg": {
     "outcome": "published",
@@ -13135,7 +13363,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 671
   },
-  "npm:@contexera/dsh-agent-team@0.2.5:assets/icon.svg": {
+  "npm:@contexera/dsh-agent-team@0.2.6:assets/icon.svg": {
     "outcome": "published",
     "sha256": "c0795691c3b4203a8cbecb022c1262032a248dbbabb215b0ad43de6c92037d9f",
     "mediaType": "image/svg+xml",
@@ -13259,7 +13487,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 772
   },
-  "npm:@dmh2002/dsh-connect-qoder@1.16.3:icons/dsh-connect-qoder-128.png": {
+  "npm:@dmh2002/dsh-connect-qoder@1.16.4:icons/dsh-connect-qoder-128.png": {
     "outcome": "published",
     "sha256": "0bca7f003f3f091ae0b08032cd300a8709e1e5d09c60b8e7b938cdca190e964e",
     "mediaType": "image/png",
@@ -13383,7 +13611,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 2807
   },
-  "npm:@eddyskywalker/dsh-chatgpt-subscription@0.48.3:icon.svg": {
+  "npm:@eddyskywalker/dsh-chatgpt-subscription@0.48.4:icon.svg": {
     "outcome": "published",
     "sha256": "ef17c5acaab050ee89e75c7bc362072ff746ca3b07265fcb6dba4c80bfb5e6d6",
     "mediaType": "image/svg+xml",
@@ -13395,7 +13623,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 2115
   },
-  "npm:@eslaykey/dsh-breeze-tts@1.0.3:icon.svg": {
+  "npm:@eslaykey/dsh-breeze-tts@1.0.5:icon.svg": {
     "outcome": "published",
     "sha256": "e6b4842132467cb85a0bb79d2a9139644ee62167694ca87e3179c3d0e31947c2",
     "mediaType": "image/svg+xml",
@@ -13454,6 +13682,12 @@
     "sha256": "f184e9041f7cf2ebeffaaf23225162f930fc13f51e9f60d3076baefc49f5c6b1",
     "mediaType": "image/svg+xml",
     "bytes": 232
+  },
+  "npm:@ferii87/dsh-wallpaper@1.0.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "4fbdf0d7565795cf076c5def2a21152ee805aa2fba46453b9920698655c2fcb3",
+    "mediaType": "image/svg+xml",
+    "bytes": 475
   },
   "npm:@fffangchenghao/dsh-autoupdater@0.6.6:icon.svg": {
     "outcome": "published",
@@ -13585,7 +13819,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1004
   },
-  "npm:@huai_xin/dsh-memory@0.1.4:icon.svg": {
+  "npm:@huai_xin/dsh-memory@0.2.0:icon.svg": {
     "outcome": "published",
     "sha256": "616df99e309a89a583930304818cae6e4b568a43ea27447ea62919ab6ce0b605",
     "mediaType": "image/svg+xml",
@@ -14467,7 +14701,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 705
   },
-  "npm:@morehao/dsh-github-trending@0.1.4:icon.svg": {
+  "npm:@morehao/dsh-github-trending@0.3.2:icon.svg": {
     "outcome": "published",
     "sha256": "0cba9575fe22fa28a12a9c972d6e622f7197549e4b13a58aedfa8f4d0243cc14",
     "mediaType": "image/svg+xml",
@@ -14683,19 +14917,19 @@
     "mediaType": "image/svg+xml",
     "bytes": 375
   },
-  "npm:@orderg-x/dsh-mobile@0.4.1:icon.svg": {
+  "npm:@orderg-x/dsh-mobile@0.4.2:icon.svg": {
     "outcome": "published",
     "sha256": "e7d0a0feed59318514197fec6e18b3371b1562bef5d79464a210c046c1320feb",
     "mediaType": "image/svg+xml",
     "bytes": 786
   },
-  "npm:@orderg-x/dsh-pages@0.2.0:icon.svg": {
+  "npm:@orderg-x/dsh-pages@0.2.1:icon.svg": {
     "outcome": "published",
     "sha256": "d4eff5af1e3d9d40e774b53d2b727fe0103b21ccaa42b0a502ac5d4c523a7b8d",
     "mediaType": "image/svg+xml",
     "bytes": 487
   },
-  "npm:@orderg-x/dsh-video-preview@0.5.1:icon.svg": {
+  "npm:@orderg-x/dsh-video-preview@0.5.2:icon.svg": {
     "outcome": "published",
     "sha256": "f0ea2dfe90dca49ecc3f42021a3852bd202cd0d411cc50d647fce09bb5f49800",
     "mediaType": "image/svg+xml",
@@ -14910,6 +15144,12 @@
     "sha256": "82c8c8a20c2afb825b00f796d4cc184f71e692989629167b31f8a58de86fc637",
     "mediaType": "image/svg+xml",
     "bytes": 1041
+  },
+  "npm:@rs-dsh/dsh-automations@0.1.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "c079761cc0b99620239b932f1e5468d856279ee69a394fd77b2369395234df60",
+    "mediaType": "image/svg+xml",
+    "bytes": 5705
   },
   "npm:@rs-dsh/dsh-cockpit@0.3.2:icon.svg": {
     "outcome": "published",
@@ -15207,6 +15447,24 @@
     "mediaType": "image/svg+xml",
     "bytes": 703
   },
+  "npm:@tmmk/media-qwen@0.1.2:icon.svg": {
+    "outcome": "published",
+    "sha256": "c4afe379f48b55595a6b13bc54a8084748fc4fe6fdf74dd8764c36abdabc7d21",
+    "mediaType": "image/svg+xml",
+    "bytes": 936
+  },
+  "npm:@tmmk/media-runninghub@0.1.3:icon.svg": {
+    "outcome": "published",
+    "sha256": "c4afe379f48b55595a6b13bc54a8084748fc4fe6fdf74dd8764c36abdabc7d21",
+    "mediaType": "image/svg+xml",
+    "bytes": 936
+  },
+  "npm:@tmmk/media-suite@0.1.4:icon.svg": {
+    "outcome": "published",
+    "sha256": "c4afe379f48b55595a6b13bc54a8084748fc4fe6fdf74dd8764c36abdabc7d21",
+    "mediaType": "image/svg+xml",
+    "bytes": 936
+  },
   "npm:@toddzheng024/dscode-desktop@0.7.54:icon.svg": {
     "outcome": "published",
     "sha256": "c34901c677ea36cd4443cd9d69c52d7fed2b86204fdc8de05203b13ca8e5d095",
@@ -15244,6 +15502,10 @@
   "npm:@tuweizhi/dsh-whale-widget@0.5.3:icon.png": {
     "outcome": "refused",
     "detail": "package.json \"icon\" \"icon.png\" is 80.8 KiB; the shop shows icons of at most 32 KiB."
+  },
+  "npm:@twinsearth/w2m-dsh-plugin@2.1.7:icon.png": {
+    "outcome": "refused",
+    "detail": "package.json \"icon\" \"icon.png\" is 40.7 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@uremysunshine/dsh-next-sentence@0.1.16:icon.svg": {
     "outcome": "published",
@@ -15431,7 +15693,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 835
   },
-  "npm:@wweir/dsh-advisor@0.5.2:icon.svg": {
+  "npm:@wweir/dsh-advisor@0.6.0:icon.svg": {
     "outcome": "published",
     "sha256": "14f88ed2f51ba29928f38d56f807f32f9e9c0b95b4aa699d28c6ed6ef12fdcf6",
     "mediaType": "image/svg+xml",
@@ -15473,7 +15735,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 820
   },
-  "npm:@xgy-lab/dsh-prompt-deck@0.1.0:icon.svg": {
+  "npm:@xgy-lab/dsh-prompt-deck@0.1.1:icon.svg": {
     "outcome": "published",
     "sha256": "f131b1b3dd77641f8ad828541aa4569544f232eaa45bd763174d96ba12b8670d",
     "mediaType": "image/svg+xml",
@@ -15649,6 +15911,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 691
   },
+  "npm:@zarpyk/dsh-mcp-manager@1.5.2:assets/icon.svg": {
+    "outcome": "published",
+    "sha256": "6a969c7421635b826f622012dc154033c81dcd8f93aa73cfa2615670063fd88e",
+    "mediaType": "image/svg+xml",
+    "bytes": 549
+  },
   "npm:@zdt3476/dsh-metrics@1.0.3:icon.svg": {
     "outcome": "published",
     "sha256": "c314ece67aa64bf09f94e3bb9b5368cc3006199440a6775c3f29451a2047af5d",
@@ -15679,7 +15947,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 519
   },
-  "npm:@zheshiyigehenchang/dsh-chat-typography@1.3.0:icon.svg": {
+  "npm:@zheshiyigehenchang/dsh-chat-typography@1.5.1:icon.svg": {
     "outcome": "published",
     "sha256": "7d2825f8d53e91a3bfdbff2c65a5fc9de251bd1fc64edd3016a8d89b2e6d4875",
     "mediaType": "image/svg+xml",
@@ -15807,7 +16075,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 439
   },
-  "npm:antigravity-executor@0.6.1:icon.svg": {
+  "npm:antigravity-executor@0.7.0:icon.svg": {
     "outcome": "published",
     "sha256": "21de9657e341ee8ec8ffc075dd23a0880fe3919455146b4d2b976836cfba2d5a",
     "mediaType": "image/svg+xml",
@@ -16083,7 +16351,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 393
   },
-  "npm:dsh-aiignore@0.37.0:icon.svg": {
+  "npm:dsh-aiignore@0.37.1:icon.svg": {
     "outcome": "published",
     "sha256": "44d8065490a92ae25a5f43bb5681c5bce967a22a6d5b38d9aaaee213ea1af793",
     "mediaType": "image/svg+xml",
@@ -16198,6 +16466,12 @@
     "sha256": "cd645e36a19d921b20bed1e5b00a35efce430571a7c69a8209af670c6fb3b2fd",
     "mediaType": "image/svg+xml",
     "bytes": 975
+  },
+  "npm:dsh-app-updater@1.2.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "456f8283eef2522af1bab530f7db4bc8f71975d8aa1bfc05e40da4f6f6e53778",
+    "mediaType": "image/svg+xml",
+    "bytes": 1776
   },
   "npm:dsh-apply-patch@0.2.0:icon.svg": {
     "outcome": "published",
@@ -16369,7 +16643,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 330
   },
-  "npm:dsh-auth-cookie-guard@1.0.3:icon.svg": {
+  "npm:dsh-auth-cookie-guard@1.0.4:icon.svg": {
     "outcome": "published",
     "sha256": "1f0857d019fea137c32d1955b85e26e8b87f99f23d691374df7fdfc495d8fdab",
     "mediaType": "image/svg+xml",
@@ -16392,6 +16666,12 @@
     "sha256": "f66cf53498c2ce66ac86564ae641ff2683cc75f8919ca5dd5b244f33d2aaaf21",
     "mediaType": "image/svg+xml",
     "bytes": 592
+  },
+  "npm:dsh-auto-permission-default@1.0.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "059fb32fd90e12cd13ac811fb0a3c33727d62a99aeecc95141bda35d0d313d83",
+    "mediaType": "image/svg+xml",
+    "bytes": 262
   },
   "npm:dsh-auto-rename@0.2.0:icon.svg": {
     "outcome": "published",
@@ -16481,7 +16761,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 883
   },
-  "npm:dsh-better-session-topbar@1.5.3:icon.svg": {
+  "npm:dsh-better-session-topbar@1.5.4:icon.svg": {
     "outcome": "published",
     "sha256": "2da28091d923d092b6c821430f28116b6b3f7771ab355e27455859e8c50a5a27",
     "mediaType": "image/svg+xml",
@@ -16589,7 +16869,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 2422
   },
-  "npm:dsh-blender-mc@0.5.2:icon.svg": {
+  "npm:dsh-blender-mc@0.5.3:icon.svg": {
     "outcome": "published",
     "sha256": "328e05379eddcadc0dbdaebddc648ae28d29aa12369f44511f774bf36187211f",
     "mediaType": "image/svg+xml",
@@ -16815,7 +17095,7 @@
     "outcome": "not-read",
     "detail": "the published package dsh-chatting-pet@0.3.3 is larger than the 32 MiB the catalog build downloads, so its icon was not read."
   },
-  "npm:dsh-chrome-bridge@1.15.0:icon.svg": {
+  "npm:dsh-chrome-bridge@1.15.1:icon.svg": {
     "outcome": "published",
     "sha256": "bdfaaa14ec13c2ffbe2eb9d67f17e876938548d53c79d37a69ddf08b0f2031b1",
     "mediaType": "image/svg+xml",
@@ -16851,6 +17131,30 @@
     "mediaType": "image/svg+xml",
     "bytes": 499
   },
+  "npm:dsh-claude-dashboard@2.4.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "093dcc7090e7c7244026e24cb1bc8fbef783c766c94114bec9d2d771d8e36127",
+    "mediaType": "image/svg+xml",
+    "bytes": 569
+  },
+  "npm:dsh-claude-design-system@2.4.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "34a54c87305548c9ffe29081840b79d4080ac133c40364d071933fb1e2efdbac",
+    "mediaType": "image/svg+xml",
+    "bytes": 650
+  },
+  "npm:dsh-claude-design@2.4.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "f96d1b969f2149fb1fa458f4a725e251b50ebf6f3c198110d8f4a27c1cd4b32a",
+    "mediaType": "image/svg+xml",
+    "bytes": 714
+  },
+  "npm:dsh-claude-slides@2.4.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "ab80dca6343519461fed7a875b6493190ae9bbb6b40b77e18cd237b4b5811353",
+    "mediaType": "image/svg+xml",
+    "bytes": 567
+  },
   "npm:dsh-claude-style-lidechi@0.11.1:lib/claude-mark.svg": {
     "outcome": "published",
     "sha256": "60504803adb417ff682895d1f1a33537889f31c38125cfd50083c6bf36c27541",
@@ -16862,6 +17166,12 @@
     "sha256": "60504803adb417ff682895d1f1a33537889f31c38125cfd50083c6bf36c27541",
     "mediaType": "image/svg+xml",
     "bytes": 1910
+  },
+  "npm:dsh-click-matrix@0.8.4:icon.svg": {
+    "outcome": "published",
+    "sha256": "b36fac4ab4f4ab7e2207522fb5347a6e9f1f220ba47ab78f28f91fbb9a3892a5",
+    "mediaType": "image/svg+xml",
+    "bytes": 1219
   },
   "npm:dsh-client-ui-history-nav@1.5.0:icon.svg": {
     "outcome": "published",
@@ -16875,7 +17185,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 848
   },
-  "npm:dsh-client-ui-quote@0.14.0:icon.svg": {
+  "npm:dsh-client-ui-quote@0.14.1:icon.svg": {
     "outcome": "published",
     "sha256": "756fcb7a62e3dc42a79fc617abdaba027b288440d383ae7ffa4c90eeba65660c",
     "mediaType": "image/svg+xml",
@@ -16898,6 +17208,12 @@
     "sha256": "b829d6a528ce534127c7680ad968524401b4e4e4737e284a887ee8e5e14a6fbc",
     "mediaType": "image/svg+xml",
     "bytes": 580
+  },
+  "npm:dsh-clock-desktop@1.0.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "5b33093aa31e1a93119da2cc34746c702c40994fc254adaf2f0414c32fd7c0c4",
+    "mediaType": "image/svg+xml",
+    "bytes": 439
   },
   "npm:dsh-cloudflare-codemode@1.0.0:icon.svg": {
     "outcome": "published",
@@ -16995,9 +17311,9 @@
     "mediaType": "image/svg+xml",
     "bytes": 469
   },
-  "npm:dsh-columbina-pet@1.1.11:assets/logo.png": {
+  "npm:dsh-columbina-pet@1.2.0:assets/logo.png": {
     "outcome": "not-read",
-    "detail": "the published package dsh-columbina-pet@1.1.11 is larger than the 32 MiB the catalog build downloads, so its icon was not read."
+    "detail": "the published package dsh-columbina-pet@1.2.0 is larger than the 32 MiB the catalog build downloads, so its icon was not read."
   },
   "npm:dsh-comfyui-image@0.1.1:icon.svg": {
     "outcome": "published",
@@ -17088,6 +17404,12 @@
     "sha256": "ccdd7f2568aaf138f3121fc14d1525569035969e07b221ee00f7d7483751e64e",
     "mediaType": "image/svg+xml",
     "bytes": 783
+  },
+  "npm:dsh-computer-ai-use@0.2.0:icon.png": {
+    "outcome": "published",
+    "sha256": "07b2f2e974a710ec642df1f6463ee09619ddf3a4c9948d0aa14ce36a3e41a725",
+    "mediaType": "image/png",
+    "bytes": 10521
   },
   "npm:dsh-computer-history@1.1.0:assets/brand/app-icon.svg": {
     "outcome": "published",
@@ -17327,7 +17649,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 615
   },
-  "npm:dsh-course-assistant@1.11.1:icon.svg": {
+  "npm:dsh-course-assistant@1.14.0:icon.svg": {
     "outcome": "published",
     "sha256": "f43caae699bda229abfcdabd8a18fc8aa9bb7b9d0757896b5f7e4ca807b519e1",
     "mediaType": "image/svg+xml",
@@ -17350,6 +17672,12 @@
     "sha256": "ff96ab57dfe029cbb850a8db01cddddb5ae569c86fc1a944f81b4a6b7229ec0a",
     "mediaType": "image/svg+xml",
     "bytes": 478
+  },
+  "npm:dsh-ctrl-zoom@1.0.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "1fbbe5af20045fb84426bd1a292822453c467c8338597615a495da204407d48e",
+    "mediaType": "image/svg+xml",
+    "bytes": 574
   },
   "npm:dsh-ctxopt-compaction@0.0.2:pic/icon.png": {
     "outcome": "refused",
@@ -17467,6 +17795,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 402
   },
+  "npm:dsh-deepseek-search@0.1.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "c28450119db5ac1a53aa511cf214d4638b3f7a2bbcf24b739735468e41a62d9a",
+    "mediaType": "image/svg+xml",
+    "bytes": 647
+  },
   "npm:dsh-deepseek-web-sync@3.1.0:icon.svg": {
     "outcome": "published",
     "sha256": "fc759df29ab3b69dabf5b45fcee344b8baa09c02a95b473f79081b4db4adab03",
@@ -17485,7 +17819,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 441
   },
-  "npm:dsh-design-studio@0.6.0:icon.svg": {
+  "npm:dsh-design-studio@0.6.1:icon.svg": {
     "outcome": "published",
     "sha256": "33d3694a80dcb8bc33dc7dafc7d397c3392765825570adae5150d3c3537a642a",
     "mediaType": "image/svg+xml",
@@ -17557,7 +17891,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1127
   },
-  "npm:dsh-dialog-fence@0.13.0:icon.svg": {
+  "npm:dsh-dialog-fence@0.14.0:icon.svg": {
     "outcome": "published",
     "sha256": "0176f9ea83ff14a5951ae4ad6cca31389273bcd49ce2c7b94e7be575d6fdecee",
     "mediaType": "image/svg+xml",
@@ -17593,7 +17927,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 437
   },
-  "npm:dsh-doctor-plugin@0.14.1:icon.svg": {
+  "npm:dsh-doctor-plugin@0.14.3:icon.svg": {
     "outcome": "published",
     "sha256": "cf72f659f41195f7dca2a193c52bcf076822ca13de65b3b39d8315dba1ef6524",
     "mediaType": "image/svg+xml",
@@ -17713,6 +18047,10 @@
     "mediaType": "image/svg+xml",
     "bytes": 771
   },
+  "npm:dsh-easy2restart@0.2.3:icon.png": {
+    "outcome": "refused",
+    "detail": "package.json \"icon\" \"icon.png\" is 37.0 KiB; the shop shows icons of at most 32 KiB."
+  },
   "npm:dsh-easyrestart@0.2.0:icon.svg": {
     "outcome": "published",
     "sha256": "e8e68aea791ef548250940c96caa48a7fc44fab8ec7e973ba401cbf921b29cc6",
@@ -17755,7 +18093,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 716
   },
-  "npm:dsh-engramory@1.0.0:icon.svg": {
+  "npm:dsh-engramory@1.0.3:icon.svg": {
     "outcome": "published",
     "sha256": "1263995e2e1e36ec625d042cf7898e280bf778ea0e3060211548ea63919ff8e7",
     "mediaType": "image/svg+xml",
@@ -17893,6 +18231,10 @@
     "mediaType": "image/png",
     "bytes": 11607
   },
+  "npm:dsh-feed-the-seek@0.2.15:public/assets/plugin-icon-v6.png": {
+    "outcome": "refused",
+    "detail": "package.json \"icon\" \"public/assets/plugin-icon-v6.png\" is 124.9 KiB; the shop shows icons of at most 32 KiB."
+  },
   "npm:dsh-feishu-plugin@0.5.6:icon.svg": {
     "outcome": "published",
     "sha256": "9423db601988a936a1d89705934b9a12d43420d27d48f5230f1c030974c6c95c",
@@ -18029,7 +18371,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 272
   },
-  "npm:dsh-folia@4.17.1:icon.png": {
+  "npm:dsh-folia@4.20.2:icon.png": {
     "outcome": "refused",
     "detail": "package.json \"icon\" \"icon.png\" is 93.4 KiB; the shop shows icons of at most 32 KiB."
   },
@@ -18247,7 +18589,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 736
   },
-  "npm:dsh-global-todo@0.21.0:docs/icon.svg": {
+  "npm:dsh-global-todo@0.22.0:docs/icon.svg": {
     "outcome": "published",
     "sha256": "018b39622371435e7de161deac7396b583efb10f8becad62e0abb99b1ac7e4df",
     "mediaType": "image/svg+xml",
@@ -18271,7 +18613,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 383
   },
-  "npm:dsh-google-chrome-use@0.2.0:icon.png": {
+  "npm:dsh-google-chrome-use@0.2.1:icon.png": {
     "outcome": "published",
     "sha256": "2b43fa9ead89c1140c48806f6763fdca0ddc3fd1e36f24300165413fb0675c4f",
     "mediaType": "image/png",
@@ -18353,7 +18695,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 664
   },
-  "npm:dsh-guizang-design@0.1.0:icon.png": {
+  "npm:dsh-guizang-design@0.1.3:icon.png": {
     "outcome": "refused",
     "detail": "package.json \"icon\" \"icon.png\" is 76.8 KiB; the shop shows icons of at most 32 KiB."
   },
@@ -18392,6 +18734,12 @@
     "sha256": "b4e65b0652de75cd810301903f1ea34c827eecb1389236db1fe8c834766d3bd3",
     "mediaType": "image/svg+xml",
     "bytes": 987
+  },
+  "npm:dsh-harness-autostart@1.0.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "a6c45795fd3544bea27b7f9c30192c36a0809f7458b7c4b6835bc652965ba6ca",
+    "mediaType": "image/svg+xml",
+    "bytes": 746
   },
   "npm:dsh-harness-push@1.0.2:icon.svg": {
     "outcome": "published",
@@ -18737,7 +19085,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1594
   },
-  "npm:dsh-invoice-ledger@0.1.2:icon.svg": {
+  "npm:dsh-invoice-ledger@0.1.4:icon.svg": {
     "outcome": "published",
     "sha256": "f3e38f949ff6f12181ee2c1e5fe68b99ceedc77d1092ea72936dba7819cb383b",
     "mediaType": "image/svg+xml",
@@ -18963,6 +19311,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 2020
   },
+  "npm:dsh-legal-workbench@1.0.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "42c1e31d63d30dc0fe31a2d4e55594a350b6529966e3dfd63d9419b860c63645",
+    "mediaType": "image/svg+xml",
+    "bytes": 576
+  },
   "npm:dsh-liao-peakclock@0.1.3:icon.svg": {
     "outcome": "published",
     "sha256": "4489351a51682374e148d196f8979d5642a5bf70591d89dc3ea36af2362bc128",
@@ -18981,11 +19335,17 @@
     "mediaType": "image/svg+xml",
     "bytes": 374
   },
-  "npm:dsh-lifeguard@0.6.8:icon.svg": {
+  "npm:dsh-lifeguard@0.7.0:icon.svg": {
     "outcome": "published",
     "sha256": "b65cc5f9043676e96e1ce0ec3fd2c8f47e53200ff806a21d3d1785fbeb4fe740",
     "mediaType": "image/svg+xml",
     "bytes": 349
+  },
+  "npm:dsh-line-bot@0.3.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "7454391821545bcdabef0f739165b0a6960d95209232da5ad905b23a122df800",
+    "mediaType": "image/svg+xml",
+    "bytes": 587
   },
   "npm:dsh-lingxi@0.3.1:icon.svg": {
     "outcome": "published",
@@ -19154,6 +19514,12 @@
     "sha256": "27894b1c7c0f848742a714b9cad5521e0a109656990f9043553640554967bbc0",
     "mediaType": "image/svg+xml",
     "bytes": 303
+  },
+  "npm:dsh-market-peek@0.2.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "ca75c170a57f34f5e6da726c4df23925c6d95aecf58509334f52bae3abf0151c",
+    "mediaType": "image/svg+xml",
+    "bytes": 731
   },
   "npm:dsh-markji-bridge@2.7.0:icon.svg": {
     "outcome": "published",
@@ -19363,7 +19729,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 616
   },
-  "npm:dsh-memu-memory@1.2.0:assets/icon.png": {
+  "npm:dsh-memu-memory@1.2.1:assets/icon.png": {
     "outcome": "published",
     "sha256": "2ca3a84980be0307d5ab44e2f8f535741d6646408ca9e341006e1eb9ba592b90",
     "mediaType": "image/png",
@@ -19393,7 +19759,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 770
   },
-  "npm:dsh-mesh-waker@0.5.6:icon.svg": {
+  "npm:dsh-mesh-waker@0.7.5:icon.svg": {
     "outcome": "published",
     "sha256": "e0a00925050f32d54f4b99969aa3c22daed1eb1d7cc1d75fc53dab4d14ac8485",
     "mediaType": "image/svg+xml",
@@ -19411,7 +19777,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 329
   },
-  "npm:dsh-metaphysics@0.50.1:icon.svg": {
+  "npm:dsh-metaphysics@0.55.0:icon.svg": {
     "outcome": "published",
     "sha256": "3510d1f7257614feb870c91040fee6b11345c2686c76538f90e4109f4bc45bb6",
     "mediaType": "image/svg+xml",
@@ -19453,11 +19819,11 @@
     "mediaType": "image/svg+xml",
     "bytes": 2441
   },
-  "npm:dsh-mobile-plugin@0.5.8:icon.png": {
+  "npm:dsh-mobile-plugin@0.5.9:icon.png": {
     "outcome": "refused",
     "detail": "package.json \"icon\" \"icon.png\" is 109.8 KiB; the shop shows icons of at most 32 KiB."
   },
-  "npm:dsh-mobile-use@1.4.5:icon.svg": {
+  "npm:dsh-mobile-use@1.4.6:icon.svg": {
     "outcome": "published",
     "sha256": "2f6ffcc93e2b17d2504f18c4683779269a6929e14823b7e5bf4a906292e153c5",
     "mediaType": "image/svg+xml",
@@ -19509,7 +19875,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 444
   },
-  "npm:dsh-model-think-level@2.3.0:icon.svg": {
+  "npm:dsh-model-think-level@2.3.1:icon.svg": {
     "outcome": "published",
     "sha256": "56dacb19a1416b2e90488a190e9af9c73f33e7cdd7227072170affd89e31ca3c",
     "mediaType": "image/svg+xml",
@@ -19697,7 +20063,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 934
   },
-  "npm:dsh-novel-generator@0.1.42:icon.svg": {
+  "npm:dsh-novel-generator@0.1.43:icon.svg": {
     "outcome": "published",
     "sha256": "11bbfe05955d4db6883bc23d4b25dae80fd59e16e361fc586442165328325d2b",
     "mediaType": "image/svg+xml",
@@ -19769,7 +20135,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 904
   },
-  "npm:dsh-one-click-polish@1.8.2:icon.svg": {
+  "npm:dsh-one-click-polish@1.9.4:icon.svg": {
     "outcome": "published",
     "sha256": "cdc929de101ec55c2285df82228a3a5b61694632c96382ee7fa6571f225ff2ad",
     "mediaType": "image/svg+xml",
@@ -19799,7 +20165,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 790
   },
-  "npm:dsh-open-market@0.2.5:icon.png": {
+  "npm:dsh-open-market@0.2.6:icon.png": {
     "outcome": "refused",
     "detail": "package.json \"icon\" \"icon.png\" is 128.6 KiB; the shop shows icons of at most 32 KiB."
   },
@@ -20147,6 +20513,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 716
   },
+  "npm:dsh-persona-select@0.4.1:icon.png": {
+    "outcome": "published",
+    "sha256": "149c26519dc03cf7f7fd64bd2e2da4dd68505ccfb26c3c9ba55ee863d13d5263",
+    "mediaType": "image/png",
+    "bytes": 25279
+  },
   "npm:dsh-persona-shell@0.4.7:icon.png": {
     "outcome": "refused",
     "detail": "the \"./icon\" export \"icon.png\" is 71.3 KiB; the shop shows icons of at most 32 KiB."
@@ -20270,6 +20642,12 @@
     "sha256": "ea33c37b45a141bc37b61eee9c41527743c6a7f3c5ca5ba4a13d2fe35f52fe3a",
     "mediaType": "image/svg+xml",
     "bytes": 785
+  },
+  "npm:dsh-plugin-agent-tree@0.1.3:docs/assets/icon.png": {
+    "outcome": "published",
+    "sha256": "13e258aa22595c1436a9c7f7db3a3368850609ab9d5236009a27c26b14633ae6",
+    "mediaType": "image/png",
+    "bytes": 19028
   },
   "npm:dsh-plugin-aiquestion@1.0.1:icon.svg": {
     "outcome": "published",
@@ -20403,7 +20781,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 5231
   },
-  "npm:dsh-plugin-deck-studio@0.2.12:assets/icon.svg": {
+  "npm:dsh-plugin-deck-studio@0.2.13:assets/icon.svg": {
     "outcome": "published",
     "sha256": "c7f512ca5e1b2810ef2796e640a5cbf7111a868ebdd3d04f4b7e4e2e462e3fa3",
     "mediaType": "image/svg+xml",
@@ -20427,7 +20805,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1135
   },
-  "npm:dsh-plugin-delete@0.2.2:icon.svg": {
+  "npm:dsh-plugin-delete@0.2.3:icon.svg": {
     "outcome": "published",
     "sha256": "e5a8510a62f44fe8306ae209882811dd7999c54ba9470f2a0c9e509104e75118",
     "mediaType": "image/svg+xml",
@@ -20451,17 +20829,17 @@
     "mediaType": "image/svg+xml",
     "bytes": 555
   },
+  "npm:dsh-plugin-dock@0.1.2:icon.svg": {
+    "outcome": "published",
+    "sha256": "aaed45cd143e8defe48bb1c213a90f99d7bbcb53fa6ce60f7b43503a530e963c",
+    "mediaType": "image/svg+xml",
+    "bytes": 535
+  },
   "npm:dsh-plugin-dsh-sync@0.10.25:icon.svg": {
     "outcome": "published",
     "sha256": "33a20dfe4ed6ebd0c16b0aef81185d0b60d78cc33af00b446e9e07c2691d3bcf",
     "mediaType": "image/svg+xml",
     "bytes": 1263
-  },
-  "npm:dsh-plugin-easy2restart@0.1.5:icon.png": {
-    "outcome": "published",
-    "sha256": "f99dc4dc883511282c12fb2744fd6a75ec6d55547fb783dcf4fddde68d88ac8b",
-    "mediaType": "image/png",
-    "bytes": 32055
   },
   "npm:dsh-plugin-eco-scan@0.1.0:icon.svg": {
     "outcome": "published",
@@ -20889,7 +21267,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 577
   },
-  "npm:dsh-plugin-subagent-bridge@0.9.1:icon.svg": {
+  "npm:dsh-plugin-subagent-bridge@0.10.0:icon.svg": {
     "outcome": "published",
     "sha256": "0c14f968c7fb69105a8f1cd05c1e9b41b10ba357fb9588251b5f59d3383d4a6b",
     "mediaType": "image/svg+xml",
@@ -20947,7 +21325,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 453
   },
-  "npm:dsh-plugin-usage@0.4.0:icon.svg": {
+  "npm:dsh-plugin-usage@0.5.0:icon.svg": {
     "outcome": "published",
     "sha256": "398b6291814b8aad17352c50baa90e55138bda66891ea943f50659c92e2ea248",
     "mediaType": "image/svg+xml",
@@ -20967,7 +21345,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 257
   },
-  "npm:dsh-plugin-weixin@0.9.14:assets/icon-128.png": {
+  "npm:dsh-plugin-weixin@0.9.17:assets/icon-128.png": {
     "outcome": "published",
     "sha256": "47a5676363ab3d00f30e52b602a73f36b4e577e54b87136e342b6cd78535100f",
     "mediaType": "image/png",
@@ -21137,7 +21515,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 533
   },
-  "npm:dsh-profile-stats@1.0.0:icon.svg": {
+  "npm:dsh-profile-stats@1.3.2:icon.svg": {
     "outcome": "published",
     "sha256": "a44b0ec5b433389e609e6d9a88c4d01f9b45783a1148f901529092667545f8f6",
     "mediaType": "image/svg+xml",
@@ -21185,7 +21563,13 @@
     "mediaType": "image/svg+xml",
     "bytes": 429
   },
-  "npm:dsh-prompt-zh@1.3.5:icon.svg": {
+  "npm:dsh-prompt-translation@0.1.4:icon.svg": {
+    "outcome": "published",
+    "sha256": "3ba3a2e27df7d0e82cc6f0ee90abc74e304ed71c0130ecebbc80c2eceac61e27",
+    "mediaType": "image/svg+xml",
+    "bytes": 802
+  },
+  "npm:dsh-prompt-zh@1.3.6:icon.svg": {
     "outcome": "published",
     "sha256": "7747f792362bc3dda4cb97a714135b59aba2de9f76021b48dbd2af32d1a5e842",
     "mediaType": "image/svg+xml",
@@ -21465,6 +21849,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 623
   },
+  "npm:dsh-reading-workbench@0.2.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "0fbf9bf5a439bd9fb7c8b56617d901058ac491bb4b4b312867ea499040991e2e",
+    "mediaType": "image/svg+xml",
+    "bytes": 309
+  },
   "npm:dsh-reading@0.8.2:icon.svg": {
     "outcome": "published",
     "sha256": "f811cd168b1fc9658112989f37b10b7cc15eae772bcc0571d4a25e0aec9aafbe",
@@ -21583,7 +21973,7 @@
     "mediaType": "image/jpeg",
     "bytes": 24638
   },
-  "npm:dsh-remote-pure@0.12.1:icon.svg": {
+  "npm:dsh-remote-pure@0.13.0:icon.svg": {
     "outcome": "published",
     "sha256": "c177c690fb40bbf567c0bf60599a89b46062100fb1da7554a44f338adf0a7cf9",
     "mediaType": "image/svg+xml",
@@ -21595,9 +21985,9 @@
     "mediaType": "image/svg+xml",
     "bytes": 413
   },
-  "npm:dsh-remote-vs@0.12.0:icon.svg": {
+  "npm:dsh-remote-vs@0.13.0:icon.svg": {
     "outcome": "not-read",
-    "detail": "the published package dsh-remote-vs@0.12.0 is larger than the 32 MiB the catalog build downloads, so its icon was not read."
+    "detail": "the published package dsh-remote-vs@0.13.0 is larger than the 32 MiB the catalog build downloads, so its icon was not read."
   },
   "npm:dsh-remotion@0.10.3:assets/plugin-icon.webp": {
     "outcome": "published",
@@ -21737,7 +22127,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 955
   },
-  "npm:dsh-ronge-adaptive-skill-archive@5.3.5:icon.svg": {
+  "npm:dsh-ronge-adaptive-skill-archive@5.4.2:icon.svg": {
     "outcome": "published",
     "sha256": "09eb2504de9db2c080d3572db8aa663463ce3bc0f2905ba9516ddfc8878d1bcf",
     "mediaType": "image/svg+xml",
@@ -21795,6 +22185,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 438
   },
+  "npm:dsh-sakurafrp@2.2.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "75994320aa5d4eb3004625172372c34a01cd012df0ffa6ce77336cbd93a7ddae",
+    "mediaType": "image/svg+xml",
+    "bytes": 666
+  },
   "npm:dsh-salary-flap@1.0.0:icon.svg": {
     "outcome": "published",
     "sha256": "f163984af8f87d032994400d22e9dced0b7bcf2f10eeb2dd82474798c1ef44a4",
@@ -21840,6 +22236,12 @@
     "sha256": "9678340c062501159d6365d64fd002937d1422fd4927937111d57c4ce5e008f1",
     "mediaType": "image/svg+xml",
     "bytes": 873
+  },
+  "npm:dsh-scrollbar-edge-hit@1.0.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "97cadb022b8aea33172868fd44ee2fbd62139ee5157e0b904fbba1b8abca7e78",
+    "mediaType": "image/svg+xml",
+    "bytes": 475
   },
   "npm:dsh-search-audit@0.1.0:icon.svg": {
     "outcome": "published",
@@ -21925,7 +22327,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 368
   },
-  "npm:dsh-service-portal@1.0.8:icons/dsh-service-portal-128.png": {
+  "npm:dsh-service-portal@1.0.9:icons/dsh-service-portal-128.png": {
     "outcome": "published",
     "sha256": "0bca7f003f3f091ae0b08032cd300a8709e1e5d09c60b8e7b938cdca190e964e",
     "mediaType": "image/png",
@@ -21955,7 +22357,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 379
   },
-  "npm:dsh-session-copy@1.2.0:icon.svg": {
+  "npm:dsh-session-copy@1.6.0:icon.svg": {
     "outcome": "published",
     "sha256": "1bf068bd36fe29c824cc8924f9c2e4944685ac3eb032aeded7b22ee994164a00",
     "mediaType": "image/svg+xml",
@@ -22111,7 +22513,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 955
   },
-  "npm:dsh-session-title-stamp@0.4.1:icon.svg": {
+  "npm:dsh-session-title-stamp@0.4.3:icon.svg": {
     "outcome": "published",
     "sha256": "4971b596f007a2fbbe18b9b1ae712440bb4576b6efe88770c1ead901e9665541",
     "mediaType": "image/svg+xml",
@@ -22122,6 +22524,12 @@
     "sha256": "5cb8ee6e74d7d84ec4f41d367b0becb2c7a49f9c7d1f3065fa5733876549433b",
     "mediaType": "image/svg+xml",
     "bytes": 592
+  },
+  "npm:dsh-session-workspace-label@1.0.1:icon.svg": {
+    "outcome": "published",
+    "sha256": "08ada3b546b6ca6e417ef881444436e6932dc88956147a3d7d79786cd7dc50e6",
+    "mediaType": "image/svg+xml",
+    "bytes": 337
   },
   "npm:dsh-settings-params@0.1.1:icon.svg": {
     "outcome": "published",
@@ -22144,6 +22552,10 @@
   "npm:dsh-shiori@0.1.0:icon.png": {
     "outcome": "refused",
     "detail": "package.json \"icon\" \"icon.png\" is 47.1 KiB; the shop shows icons of at most 32 KiB."
+  },
+  "npm:dsh-shorekeeper@1.1.1:icon.png": {
+    "outcome": "refused",
+    "detail": "package.json \"icon\" \"icon.png\" is 546.7 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-showcase@0.1.8:plugin/icon.svg": {
     "outcome": "published",
@@ -22192,6 +22604,12 @@
     "sha256": "dc9e24095cb9405354e69989dd00a728e768763ebeba89d9a598c468607757b2",
     "mediaType": "image/svg+xml",
     "bytes": 711
+  },
+  "npm:dsh-sidebar-scroll-flow@1.0.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "a0864984b9c2b70d1d52d4b8ce1aeef5fe7cf241c4ec7223f9ee8ef00b93587b",
+    "mediaType": "image/svg+xml",
+    "bytes": 471
   },
   "npm:dsh-sidebar-sections@0.2.8:icon.svg": {
     "outcome": "published",
@@ -22603,7 +23021,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1195
   },
-  "npm:dsh-sudo-approve@1.0.2:icon.svg": {
+  "npm:dsh-sudo-approve@1.0.3:icon.svg": {
     "outcome": "published",
     "sha256": "af45b7e108ca4b881fc06e0920391c351646bf989d5b2bae162d7b139830028c",
     "mediaType": "image/svg+xml",
@@ -22721,7 +23139,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 392
   },
-  "npm:dsh-team-control-ui@0.1.2:icon.svg": {
+  "npm:dsh-team-control-ui@0.1.3:icon.svg": {
     "outcome": "published",
     "sha256": "f8b4d1e46a420a4611e76ca538b98945687634036823d12b251058a31808ad0d",
     "mediaType": "image/svg+xml",
@@ -23071,6 +23489,18 @@
     "mediaType": "image/svg+xml",
     "bytes": 539
   },
+  "npm:dsh-ue-asset@0.1.6:icon.svg": {
+    "outcome": "published",
+    "sha256": "6415f9dc6acaaae8461bce2171213c431d3a729ac75df4b681308189e8e391ca",
+    "mediaType": "image/svg+xml",
+    "bytes": 9295
+  },
+  "npm:dsh-ugreen-nas@0.3.4:icon.svg": {
+    "outcome": "published",
+    "sha256": "fc80058d4fd9ac7cd835e08c5fa1c46a18b7169995fe933cc8884c0757e65915",
+    "mediaType": "image/svg+xml",
+    "bytes": 1230
+  },
   "npm:dsh-ui-flow-mapper@0.1.0:icon.svg": {
     "outcome": "published",
     "sha256": "0ad9ed42b8e400bae6264c9d8e312693c2d28b25af07f3fdea6ae25553855e2e",
@@ -23111,7 +23541,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 1852
   },
-  "npm:dsh-unlag@1.14.15:icon.svg": {
+  "npm:dsh-unlag@1.14.16:icon.svg": {
     "outcome": "published",
     "sha256": "5b5165de8d42e3a7aadfbe7a1eb81fc74c60a97dce1f3934a77c93f564d940f7",
     "mediaType": "image/svg+xml",
@@ -23147,7 +23577,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 331
   },
-  "npm:dsh-vantage@0.1.15:icon.svg": {
+  "npm:dsh-vantage@0.1.21:icon.svg": {
     "outcome": "published",
     "sha256": "f9d0262548dd91ad9a8d5c4d696dca3a6257d52588d4effec6b736e89920f5b0",
     "mediaType": "image/svg+xml",
@@ -23285,9 +23715,9 @@
     "outcome": "refused",
     "detail": "package.json \"icon\" \"assets/vscode.png\" is 112.3 KiB; the shop shows icons of at most 32 KiB."
   },
-  "npm:dsh-vscode-mode@0.23.0:assets/icon.svg": {
+  "npm:dsh-vscode-mode@0.23.3:assets/icon.svg": {
     "outcome": "not-read",
-    "detail": "the published package dsh-vscode-mode@0.23.0 unpacks to more than the 64 MiB the catalog build reads, so its icon was not read."
+    "detail": "the published package dsh-vscode-mode@0.23.3 unpacks to more than the 64 MiB the catalog build reads, so its icon was not read."
   },
   "npm:dsh-vscode-themes2@1.1.0:icon.svg": {
     "outcome": "published",
@@ -23506,6 +23936,12 @@
     "sha256": "5b14860a735a19b8c1d6fbcc6c95d7f8e7909a4631b72e0a13533f1e9a39010f",
     "mediaType": "image/svg+xml",
     "bytes": 870
+  },
+  "npm:dsh-whale-song@0.1.0:icon.svg": {
+    "outcome": "published",
+    "sha256": "c4559a631609c2141467cc9a18bb5d869ff56cff71704fd54acaf0445c901282",
+    "mediaType": "image/svg+xml",
+    "bytes": 486
   },
   "npm:dsh-whale-soul@0.2.3:assets/icon.png": {
     "outcome": "refused",
@@ -23745,6 +24181,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 439
   },
+  "npm:dsh-workspace-control@0.3.1:icon.svg": {
+    "outcome": "published",
+    "sha256": "fb67f5f9f06c76a3e62eeba08a63b23d2fb34a49ebf253434de2cdb0b697a58c",
+    "mediaType": "image/svg+xml",
+    "bytes": 826
+  },
   "npm:dsh-workspace-desktop@0.3.10:icon.svg": {
     "outcome": "published",
     "sha256": "9bbd79bcd8ae54c77bcaad6b03f8d088989bbb9018036bbd1eb7cb9c875d8bff",
@@ -23841,7 +24283,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 534
   },
-  "npm:dsh-wsl-folder@1.0.0:icon.svg": {
+  "npm:dsh-wsl-folder@1.1.0:icon.svg": {
     "outcome": "published",
     "sha256": "406a2cc4f3496d36e71498284c55d5f9f48ac9283f058bee35df9b3c3daf6ea2",
     "mediaType": "image/svg+xml",
@@ -23975,7 +24417,7 @@
     "mediaType": "image/svg+xml",
     "bytes": 241
   },
-  "npm:dshmarket@1.73.5:assets/logo.svg": {
+  "npm:dshmarket@1.73.6:assets/logo.svg": {
     "outcome": "published",
     "sha256": "650b86e11acf1d9e30ade7e68af36d6625d8a2394c69bb146da0c30202af2a88",
     "mediaType": "image/svg+xml",
@@ -23991,7 +24433,7 @@
     "outcome": "refused",
     "detail": "package.json \"icon\" \"icon.png\" is 85.8 KiB; the shop shows icons of at most 32 KiB."
   },
-  "npm:envoy-dsh@0.1.36:icon.png": {
+  "npm:envoy-dsh@0.1.38:icon.png": {
     "outcome": "refused",
     "detail": "the \"./icon\" export \"icon.png\" is 55.6 KiB; the shop shows icons of at most 32 KiB."
   },
@@ -24159,6 +24601,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 997
   },
+  "npm:solopup-memory@0.21.0-beta.1:icon.svg": {
+    "outcome": "published",
+    "sha256": "daadfd7b70b78685897b89bfc6e8cf2b375fd680e3355a55b3f5330181762c32",
+    "mediaType": "image/svg+xml",
+    "bytes": 589
+  },
   "npm:sparksight-dsh@0.5.4:icon.svg": {
     "outcome": "not-read",
     "detail": "the published package sparksight-dsh@0.5.4 is larger than the 32 MiB the catalog build downloads, so its icon was not read."
@@ -24215,6 +24663,12 @@
     "mediaType": "image/svg+xml",
     "bytes": 669
   },
+  "release:084fbb8fa92a5e25f44f1ce0aacedd88dcc15f3630afeaf76893c548ff03d2e8:assets/icon-red-transparent.png": {
+    "outcome": "published",
+    "sha256": "3e66fb27b77cae1074578f39c83dd259e56790d1b27f2fdf24b99a5b9cc3abfd",
+    "mediaType": "image/png",
+    "bytes": 12970
+  },
   "release:091b5b040659391ed1271025a407158a82092343a77f01aef6cef7ab60545133:icon.svg": {
     "outcome": "published",
     "sha256": "e7fbbdcd915a5f373386b0bc82ed6fa03152e878f5e28278fbb44c213313ebd5",
@@ -24261,6 +24715,12 @@
     "mediaType": "image/png",
     "bytes": 3463
   },
+  "release:1afd4652f06705bd42c01f753bf56e19a75010bf9afdb278336c84e255defb00:assets/icon.svg": {
+    "outcome": "published",
+    "sha256": "04ab3c9b2cf1ff0bf4b4d3dd7e0958384473e1830db04aa6caceadfd55745ef1",
+    "mediaType": "image/svg+xml",
+    "bytes": 495
+  },
   "release:1c1fa4ef3e6f5dea13bc9c4c3d18711cab84ed4544e1aa7525925a71d02edbf1:icon.svg": {
     "outcome": "published",
     "sha256": "9044babfddc9d2303df686ec59141ace88c34faffc1de8602b7ceb6868666d42",
@@ -24273,11 +24733,11 @@
     "mediaType": "image/svg+xml",
     "bytes": 511
   },
-  "release:294e5aea3b301e4ab9a55165b95a00a64544b8f3bba784f9de54780696391586:assets/favicon.svg": {
+  "release:2a31041db196a3dc2f1a0e516b153e4f07200379103204778b962b8586c4ae68:icon.svg": {
     "outcome": "published",
-    "sha256": "a1b626ee51f51ef4e3dc339efd35452f0930ea421c66ff7b6df821856ca19ba6",
+    "sha256": "29fc66db9cd517bb810cd584f1fde7b2346d112654c64bb73003311132ef5591",
     "mediaType": "image/svg+xml",
-    "bytes": 685
+    "bytes": 1355
   },
   "release:2a7869a42f250549652d4c90e483532607dd3dedd122538bafd9b14036c93370:icon.svg": {
     "outcome": "published",
@@ -24290,12 +24750,6 @@
     "sha256": "4cf9c9ba65754d7a28253ab1841dbbf5c42a82015bca53ead03d6ecc49fec0c5",
     "mediaType": "image/svg+xml",
     "bytes": 247
-  },
-  "release:2c2af81e0d407cddd6efe6e7a1bbdb5e88cdb0b5ea7ec71da4774205021d6e36:icon.svg": {
-    "outcome": "published",
-    "sha256": "a720a381b0ed7d8d7c47b892a793a8ab7d616967e37e778a0726629dfa81ddf0",
-    "mediaType": "image/svg+xml",
-    "bytes": 1407
   },
   "release:2e82c26c2e9201892589260f9f9050e81d8e00888f6cf15bb5c3fd55cb644a01:icon.svg": {
     "outcome": "published",
@@ -24469,15 +24923,21 @@
     "mediaType": "image/svg+xml",
     "bytes": 275
   },
+  "release:947d46b844599f82e07622251f09c991e93f2aa1a5f5850632d054bacb66ed83:icon.svg": {
+    "outcome": "published",
+    "sha256": "7f936493adfe7a00bd1c1e3f92fc2fc5e59509a02411533da2d542a922a6f28e",
+    "mediaType": "image/svg+xml",
+    "bytes": 458
+  },
   "release:95341856a72a1280984f9c1a4d026fe2b9f5647908ad41736b27c4f8e09939db:assets/icon.png": {
     "outcome": "refused",
     "detail": "package.json \"icon\" \"assets/icon.png\" is 1031.9 KiB; the shop shows icons of at most 32 KiB."
   },
-  "release:9686ed16fac9b92a33ba365695a064169b58bfa000769cfafaee631942ffc6e3:assets/chatgpt-auth.png": {
+  "release:96b4604b522d82d237bf6e71c3ab70a15b471546084427fe71152b3f398d70e2:assets/favicon.svg": {
     "outcome": "published",
-    "sha256": "8a33312f6bb17c1edddf8f9d7fbac09ce1d1d697d6601f37227afa879e94c52e",
-    "mediaType": "image/png",
-    "bytes": 11297
+    "sha256": "a1b626ee51f51ef4e3dc339efd35452f0930ea421c66ff7b6df821856ca19ba6",
+    "mediaType": "image/svg+xml",
+    "bytes": 685
   },
   "release:9b0d6828f435ed252e344cfa6efd5e486b30139198a74e8adfee9e3211809ddd:icon.png": {
     "outcome": "refused",
@@ -24488,6 +24948,12 @@
     "sha256": "cffac285882c13f2305e6ef05b76fa4e8ba249623655ed5145375ec51bab9ecf",
     "mediaType": "image/svg+xml",
     "bytes": 326
+  },
+  "release:a5aea3a0e37fac1a0a572dcc7ebd1fdbe1fbbfd3060f0259ad64dded06314ef4:icon.svg": {
+    "outcome": "published",
+    "sha256": "a720a381b0ed7d8d7c47b892a793a8ab7d616967e37e778a0726629dfa81ddf0",
+    "mediaType": "image/svg+xml",
+    "bytes": 1407
   },
   "release:a859eb4c1a305978b594c79c9f7bd35467de1a085c2b534d90085d08ca5a4b80:icon.svg": {
     "outcome": "published",
@@ -24582,6 +25048,12 @@
     "sha256": "0c30d818cd0340650902731dc5b33c9ca890b49acfc13495a5754fad05e18b3a",
     "mediaType": "image/svg+xml",
     "bytes": 535
+  },
+  "release:f75009a58a80e6a6015342779f25aa3eed358f517b46e2e5246d824a151e9e82:icon.svg": {
+    "outcome": "published",
+    "sha256": "d95b499caee0ef76d759aed17039e876b4aae9dd597d37d439c18a5c4ec40914",
+    "mediaType": "image/svg+xml",
+    "bytes": 440
   },
   "release:f96cc89726692b40d99d98c41b878c91a23599c7c71bfd0f3afad98bff39d74f:icon.svg": {
     "outcome": "published",
