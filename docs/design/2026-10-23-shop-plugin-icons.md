@@ -1,7 +1,7 @@
 # Plugin icons on the shop page — design
 
-Status: **specified (2026-10-23); the catalog half is built (2026-10-24), the
-shop half is not.** LivXue asked for it on 2026-10-22 and took each decision in
+Status: **specified (2026-10-23); the catalog half is built (2026-10-24) and
+the shop half is built (2026-10-31).** LivXue asked for it on 2026-10-22 and took each decision in
 §2 on 2026-10-23, the look from mockups shot on a real dsh (§2.4). It touches
 four places: the catalog build (§4, §5), the catalog format (§6), the shop's
 host (§7) and the shop page (§8). The first two, with the review file (§9) and
