@@ -55,6 +55,16 @@ The build report lists each rejection as a **Reason** and a **Detail** — read 
 
 Unknown fields are rejected rather than ignored, so a typo fails the build with a message naming the field instead of silently dropping your data. That message is itself capped at 200 characters and ends with `… (truncated)` when it was cut; the field name comes first, so the part you need to act on always survives. **A `dsh.catalog` section that fails validation is rejected outright** — it never falls back to a derived listing, because an author who declared the section and got it wrong deserves the build report to say so, not a silent substitute.
 
+## Your plugin's icon
+
+The shop draws an icon on your plugin's card when `package.json` declares one, read exactly as dsh 0.2.1 reads it:
+
+- **Where to declare it.** `package.json` `"icon"` (or `"logo"`), a path relative to the manifest, inside the package, and — when the package lists `files` — one of them. A package with an `exports` map must also expose `"./package.json": "./package.json"`, or dsh cannot see the field at all. From 0.2.1 you may export `"./icon"` instead; the shop reads it the same way.
+- **What it may be.** SVG, PNG, JPEG or WebP, chosen by the file extension, and the bytes must really be that format. The shop shows icons of at most **32 KiB** (dsh's own Plugins page takes up to 256 KiB); a larger one is refused, and your card draws dsh's default artwork.
+- **When it appears.** The daily build reads icons, so a new or changed one shows on the next day's shelf, not immediately.
+- **Reading on both themes.** An SVG painted with `currentColor` turns black in the dark theme, because the image is its own document. Use fixed colours, or a `@media (prefers-color-scheme: dark)` rule inside the SVG.
+- **A missing or unusable icon costs you nothing else.** Your plugin is listed either way; the build report says why the icon was not used — not in `files`, past the size bound, not in the published package, and so on.
+
 ## Listed without a `dsh.catalog`
 
 Omit the section entirely and your package is still listed, from your npm `package.json`'s own `description` field:
