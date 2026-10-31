@@ -607,6 +607,23 @@ describe('build.ts --axis-from', () => {
     }
   })
 
+  it('refuses a --harvest-from handoff that is JSON null, naming the file', () => {
+    // `null` is valid JSON and not a handoff: `.candidates` off it threw a
+    // bare TypeError with no file in the message (PR #118 review).
+    const cwd = newWorkspace()
+    try {
+      mkdirSync(join(cwd, 'dist'), { recursive: true })
+      writeFileSync(join(cwd, 'dist', 'harvest.json'), 'null\n')
+      const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+      expect(run.status).not.toBe(0)
+      expect(run.stderr).toContain('--harvest-from dist/harvest.json')
+      expect(run.stderr).toContain('got null')
+      expect(run.stderr).not.toContain('TypeError')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
   it('refuses a --harvest-from handoff whose axis omits a keyword, before building', () => {
     // The completeness rule is the same on both entry points: a handoff
     // holding one keyword applied that cursor alone (PR #118 review).

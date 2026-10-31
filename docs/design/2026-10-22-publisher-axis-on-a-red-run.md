@@ -246,7 +246,10 @@ deciding whether to re-run will see it (final review).
   pinned as the push steps' guard behind
   `failure() && steps.classify.outcome == 'failure'`, and so is its
   `build.ts` step's. Its `push_with_rebase` is byte-identical to the other
-  two, and it passes the sandbox cases the other two pass.
+  two, and the sandbox cases run ONCE for that one text rather than once per
+  copy: a second and third run of the same bytes proves nothing new, and the
+  `findIndex` that selects it would run every copy again if the texts ever
+  diverged.
 - **The new commit step stages `registry/publisher-state.json` alone**, and
   runs after the step that writes it.
 - **The write credential is held by the three `Commit` steps and by nothing
