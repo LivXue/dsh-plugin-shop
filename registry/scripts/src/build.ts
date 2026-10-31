@@ -550,7 +550,14 @@ if (basename(process.argv[1] ?? '') === 'build.ts' && !argumentGiven(process.arg
     departureSummary = departureRun.summary
   } else {
     const harvestWhere = `--harvest-from ${harvestFrom}`
-    const parsed = readJsonFile(harvestFrom, harvestWhere) as {
+    const parsedJson = readJsonFile(harvestFrom, harvestWhere)
+    // `null` is valid JSON and not a handoff: reading `.candidates` off it
+    // threw a bare TypeError with no file in the message (PR #118 review,
+    // pre-existing on this path).
+    if (parsedJson === null || typeof parsedJson !== 'object' || Array.isArray(parsedJson)) {
+      throw new Error(`${harvestWhere}: expected a JSON object with { candidates, rejections } arrays, got ${parsedJson === null ? 'null' : Array.isArray(parsedJson) ? 'an array' : typeof parsedJson}`)
+    }
+    const parsed = parsedJson as {
       candidates?: unknown; rejections?: unknown; shortfalls?: unknown; publishers?: unknown
       publisherAxis?: unknown; feed?: unknown; departures?: unknown
     }
