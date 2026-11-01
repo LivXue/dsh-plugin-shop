@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-shop",
-  "version": "0.9.0",
+  "version": "0.10.0-beta.0",
   "description": "Browse, install, enable, and update plugins for DeepSeek Harness.",
   "icon": "./assets/icon.png",
   "keywords": [
