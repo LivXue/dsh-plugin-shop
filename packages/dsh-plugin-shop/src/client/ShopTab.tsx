@@ -840,6 +840,9 @@ function RollbackControl({ identity, version, t, start, status, onSettled }: {
       } catch {
         continue
       }
+      // The tab may have gone while that answer was out; every branch below
+      // writes state, so re-check after the await and not only before it.
+      if (!alive.current) return
       if (!answer.found) { setState('failed'); setDetail(answer.detail ?? ''); return }
       if (answer.state === 'failed') { setState('failed'); setDetail(answer.detail ?? ''); return }
       if (answer.state === 'done') { setState('idle'); onSettled(); return }
