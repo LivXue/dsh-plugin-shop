@@ -28,6 +28,12 @@ export interface InstallStatus {
   activation?: Activation
   restartReason?: HotRestartReason
   detail?: string
+  /** The command this record ran, in the form a reader can paste into a
+   * terminal to retry it (design 2026-11-02-market-borrowings §5). Present on
+   * a failure only: a success needs no repair. The operand is quoted because
+   * a `github:` spec carries `&` and `#`, which a shell would otherwise read
+   * as its own syntax. */
+  command?: string
 }
 
 const MAX_LOG_LINES = 200
@@ -717,6 +723,14 @@ function spawnPluginCli(options: {
   // Argv smuggling and shell punctuation, refused before anything spawns or
   // queues (see `gateOperand`).
   const target = gateOperand(argv[1])
+  // The line a reader can retry by hand, built from the value BEFORE the
+  // Windows quoting below (that one exists for `spawn`, not for a shell a
+  // person types into) and from the gated verb. Double-quoted because a
+  // `github:owner/slug#sha&path:dir` operand contains `&` and `#`: unquoted,
+  // a shell would split the command or start a comment. Neither the verb nor
+  // the profile can carry a `"` (the verb is one of two literals, the profile
+  // is dsh's own name), so the quoting cannot be broken out of.
+  const command = `dsh plugin --profile ${profile} ${argv[0]} "${target}"`
   // Only now, once the operand has passed the gate above, is it quoted for
   // the shell dsh puts it through on Windows. See `shellSafeTarget`.
   const spawnArgv = [...argv]
@@ -740,6 +754,10 @@ function spawnPluginCli(options: {
     log: log.lines(),
     ...(state === 'done' ? { activation: activationOnDone, ...(restartReason !== undefined ? { restartReason } : {}) } : {}),
     ...(detail !== undefined ? { detail } : {}),
+    // A failure carries the line that failed, so the page can offer it for a
+    // manual retry (design 2026-11-02-market-borrowings §5). Never on a
+    // success or while running: it would read as an instruction.
+    ...(state === 'failed' ? { command } : {}),
   })
 
   // lineSink holds a trailing partial until the next chunk completes it, then

@@ -946,6 +946,66 @@
   margin-top: auto;
 }
 
+/* The star (design 2026-11-02-market-borrowings §7): a glyph button at the
+ * head of the action row, sized to the row's own rhythm. `aria-pressed` plus
+ * a fixed pair of labels is the pattern the incompatible switch records — the
+ * glyph carries the state, the label names the action. */
+.favoriteButton {
+  flex: 0 0 auto;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.favoriteButton:hover {
+  border-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The starred state: the brand colour, which every palette defines, and the
+ * same colour the "what changed" link rides. */
+.favoriteButtonOn {
+  color: var(--dsw-alias-brand-primary);
+}
+
+/* The rollback offer (same design, §6): one button and, on failure, the
+ * host's sentence beside it. It sits inside the installed branch, after the
+ * label and the badge, so it never displaces the card's primary action. */
+.rollbackGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rollbackButton {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.rollbackButton:hover {
+  border-color: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-brand-primary);
+}
+
+.rollbackNote {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+}
+
 .cardActions > .gate,
 .cardActions > .installPanel,
 .cardActions > .installedActions,
@@ -1321,6 +1381,16 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+/* An install past 50 MB on disk (design 2026-11-02-market-borrowings §2),
+ * beside the figure it already prints. The mix, not the raw warn token, is
+ * what the contrast suite measures: a colour is only allowed here after it
+ * clears the same threshold as every other label on this surface
+ * (`css-tokens.client.spec.ts` fails on a raw token). The tooltip carries the
+ * same fact for a reader who cannot see the tint. */
+.sizeLarge {
+  color: var(--shop-warn);
+}
+
 /* The publishing account, at the outer end of `.cardMeta` on the action row —
  * NOT beside the npm link in the expanded detail, which is where it used to
  * live and what this comment described until the accurate half was deleted
@@ -1650,6 +1720,47 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* A failed install's retry line (design 2026-11-02-market-borrowings §5): the
+ * command the executor ran, monospaced and selectable, with a copy button.
+ * `min-width: 0` on the code is what lets a long spec wrap inside the card
+ * instead of widening it — the card is a grid item and would otherwise take
+ * the line's width. */
+.commandLine {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+}
+
+.commandText {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-secondary);
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.copyButton {
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.copyButton:hover {
+  border-color: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-brand-primary);
+}
+
 .rejectedCode {
   margin: 0;
   font-size: 12px;
@@ -1728,6 +1839,21 @@
   gap: 8px;
   font-size: 12px;
   color: var(--dsw-alias-label-secondary);
+}
+
+/* The update row's "what changed" link (design 2026-11-02-market-borrowings
+ * §4). It inherits the versions line's size and rides the same gap, so it
+ * reads as the third fact on that line; the underline is its only affordance
+ * because the surrounding text is not a link. */
+.whatChanged {
+  color: var(--dsw-alias-brand-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+
+.whatChanged:hover {
+  text-decoration-thickness: 2px;
 }
 
 /* The §C10 shadowed section. Reuses the outdated list's visual language; only

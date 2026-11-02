@@ -65,6 +65,11 @@ export const zh = {
   install: '安装',
   cancel: '取消',
   dismiss: '知道了',
+  /** The copy button beside a failed install's command line (design
+   * 2026-11-02-market-borrowings §5). `copied` replaces it only after the
+   * clipboard write resolved, so it is never claimed early. */
+  copyCommand: '复制命令',
+  copied: '已复制',
   /** The fold toggle under a card's collapsed red block. `aria-expanded` plus:
    * open shows the whole block; closed shows two lines of it. This toggle is
    * independent of the card's own header-expand. */
@@ -123,6 +128,10 @@ export const zh = {
   /** The incompatible filter's label. FIXED — the switch beside it carries the
    * state, so the words name what the switch does and never flip with it. */
   hideIncompatible: '隐藏不兼容 {count}',
+  /** The favorites switch (design 2026-11-02-market-borrowings §7), fixed for
+   * the same reason `hideIncompatible` is: the switch carries the state. */
+  favoritesFilter: '只看收藏',
+  favoritesFilterTitle: '只显示已收藏的插件',
   /** What the filter takes away is every card whose badge reads 不兼容 —
    * missing components OR an author's declaration this dsh does not meet —
    * so these three name the badge, not one of its reasons. */
@@ -131,6 +140,18 @@ export const zh = {
   emptyIncompatibleFiltered: '匹配的插件都标为不兼容。关闭“隐藏不兼容”即可查看。',
   license: '许可证',
   customLicense: '自定义许可证',
+  /** The prepurchase facts' detail rows (design 2026-11-02-market-borrowings
+   * §1–§2). `requiresDsh` names the field as dsh's own refusal names it — a
+   * manifest path, not a package — and the row prints the range the author
+   * wrote, verbatim. */
+  requiresDsh: '需要 dsh',
+  dependencies: '依赖',
+  commands: '提供的命令',
+  /** The size label's tooltip for an install that lands more than 50 MB on
+   * disk. The figure is already large on screen; this phrase says why it is
+   * tinted, without inventing a threshold nobody measured — 50 MB is the
+   * figure the competitor's own users proposed. */
+  sizeLabelLarge: '磁盘占用较大：{size}',
   reviewedVersionLine: '已审核版本：{reviewed} · 当前版本 {current} 尚未审核',
   reviewedPinLine: '已审核：{pin} · 当前版本 {current} 尚未审核',
   deniedCode: '不允许安装',
@@ -165,6 +186,21 @@ export const zh = {
    * carries the `v` an npm version takes and no other kind does. */
   installedVersion: '已安装 {version}',
   latestVersion: '最新版本 {version}',
+  /** The rollback offer on an installed card (design
+   * 2026-11-02-market-borrowings §6). `{version}` is the version the record
+   * names, formatted by `versionLabel` before it gets here. */
+  /** The star's accessible name and tooltip (design 2026-11-02-market-borrowings
+   * §7). A fixed pair: the visible glyph is the same in both states, so the
+   * label names the action, and `aria-pressed` carries the state. */
+  favorite: '收藏',
+  unfavorite: '取消收藏',
+  rollbackTo: '回到 {version}',
+  rollingBack: '正在回滚…',
+  rollbackFailed: '回滚失败，请重试。',
+  /** The update row's link to what the new version changed (design
+   * 2026-11-02-market-borrowings §4): the npm page of the target version, the
+   * GitHub compare view, or the repository's releases. */
+  whatChanged: '查看变更',
   update: '更新',
   installed: '已安装',
   uninstall: '卸载',
@@ -268,6 +304,8 @@ export const en = {
   install: 'Install',
   cancel: 'Cancel',
   dismiss: 'Got it',
+  copyCommand: 'Copy command',
+  copied: 'Copied',
   moreRedLines: 'Show more',
   lessRedLines: 'Show less',
   installing: 'Installing…',
@@ -301,11 +339,17 @@ export const en = {
   authorLine: 'Author: {author}',
   sizeLabel: '{size} on disk',
   hideIncompatible: 'Hide incompatible {count}',
+  favoritesFilter: 'Favorites only',
+  favoritesFilterTitle: 'Show only plugins you starred',
   incompatibleFilterTitle: 'Hide plugins marked as incompatible',
   showIncompatibleTitle: 'Show plugins marked as incompatible',
   emptyIncompatibleFiltered: 'All matching plugins are marked as incompatible. Turn off "Hide incompatible" to see them.',
   license: 'License',
   customLicense: 'Custom license',
+  requiresDsh: 'Requires dsh',
+  dependencies: 'Dependencies',
+  commands: 'Commands',
+  sizeLabelLarge: '{size} on disk — large',
   reviewedVersionLine: 'Reviewed: {reviewed} · Current version {current} has not been reviewed',
   reviewedPinLine: 'Reviewed: {pin} · Current version {current} has not been reviewed',
   deniedCode: 'Installation blocked',
@@ -328,6 +372,12 @@ export const en = {
   updatableSection: 'Updates available',
   installedVersion: 'Installed {version}',
   latestVersion: 'Latest version {version}',
+  favorite: 'Favorite',
+  unfavorite: 'Remove from favorites',
+  rollbackTo: 'Roll back to {version}',
+  rollingBack: 'Rolling back…',
+  rollbackFailed: 'The rollback failed. Please try again.',
+  whatChanged: 'What changed',
   update: 'Update',
   installed: 'Installed',
   uninstall: 'Uninstall',

@@ -8,7 +8,7 @@ import {
   installPhaseKey, reduceInstall, type InstallView,
   reviewHashPin, shelfOrderLocaleKey, shelfTime, SHELF_ORDERS, sortByStars, starsOf, tierKey, utcDay, orderShelf,
   RESTART_STABLE_MS, RESTART_WAIT_MS, restartMonitorVerdict, answeredByAnotherProcess, settledByRestart, updateAwaitsRestart,
-  versionLabel, versionLabelKey,
+  versionLabel, versionLabelKey, whatChangedUrl,
 } from '../../src/client/present.ts'
 import { en, zh } from '../../src/client/locales.ts'
 import type { CatalogEntry, HarnessVerdict, RestartBlockedReason, ShopVersionResult } from '../../src/host/index.ts'
@@ -491,6 +491,48 @@ describe('reviewHashPin', () => {
 
   it('returns an empty string when no hash pin exists', () => {
     expect(reviewHashPin(review)).toBe('')
+  })
+})
+
+describe('whatChangedUrl', () => {
+  // Where an update's changes can be read (design 2026-11-02-market-borrowings
+  // §4). Built from the installed row, never from `entry.repository`: that
+  // text is the author's and is not what installed.
+
+  it('links an npm entry to the target version\'s own page', () => {
+    expect(whatChangedUrl({ source: 'npm', name: 'dsh-hello-plugin', installed: '1.0.0', latest: '2.0.0' }))
+      .toBe('https://www.npmjs.com/package/dsh-hello-plugin/v/2.0.0')
+    expect(whatChangedUrl({ source: 'npm', name: '@scope/dsh-hello', installed: '1.0.0', latest: '1.2.3-beta.1' }))
+      .toBe('https://www.npmjs.com/package/@scope/dsh-hello/v/1.2.3-beta.1')
+  })
+
+  it('links a commit-to-commit github update to the compare view', () => {
+    const from = 'a'.repeat(40)
+    const to = 'b'.repeat(40)
+    expect(whatChangedUrl({ source: 'github', name: 'r', repo: 'owner/r', installed: from, latest: to }))
+      .toBe(`https://github.com/owner/r/compare/${from}...${to}`)
+  })
+
+  it('links a github update that is not two commits to the releases page', () => {
+    // A release-rescued entry's version is a tag, and a tag is not a commit a
+    // compare view can rely on. `/releases` always exists.
+    expect(whatChangedUrl({ source: 'github', name: 'r', repo: 'owner/r', installed: 'v1.0.0', latest: 'v2.0.0' }))
+      .toBe('https://github.com/owner/r/releases')
+    expect(whatChangedUrl({ source: 'github', name: 'r', repo: 'owner/r', installed: 'a'.repeat(40), latest: 'v2.0.0' }))
+      .toBe('https://github.com/owner/r/releases')
+  })
+
+  it('answers null rather than building a URL out of hostile input', () => {
+    for (const name of ['../../evil', 'dsh-x?x=1', '']) {
+      expect(whatChangedUrl({ source: 'npm', name, installed: '1.0.0', latest: '2.0.0' }), name).toBeNull()
+    }
+    for (const latest of ['2.0.0/../../evil', 'v 2', '']) {
+      expect(whatChangedUrl({ source: 'npm', name: 'dsh-a', installed: '1.0.0', latest }), latest).toBeNull()
+    }
+    for (const repo of ['../..', 'owner', 'owner/r/extra', '']) {
+      expect(whatChangedUrl({ source: 'github', name: 'r', repo, installed: 'a'.repeat(40), latest: 'b'.repeat(40) }), repo).toBeNull()
+    }
+    expect(whatChangedUrl({ source: 'github', name: 'r', installed: 'a'.repeat(40), latest: 'b'.repeat(40) })).toBeNull()
   })
 })
 

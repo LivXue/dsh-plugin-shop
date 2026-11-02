@@ -5943,3 +5943,148 @@ describe('the card and the rows draw the entry icon (design 2026-10-23 §8)', ()
     expect(nodeAt(container, '[data-shop-shadowed-entry="dsh-shadowed-plugin"] img').getAttribute('src')).toBe(DEFAULT_ICON_DATA_URL)
   })
 })
+
+describe('the prepurchase facts, favorites and recovery (design 2026-11-02-market-borrowings)', () => {
+  /** The host face for these features, on top of the shared bench: a state
+   * file with the given contents, a favorite writer and a rollback start. */
+  function withFeatures(
+    injected: ShopTabInjected,
+    state: { favorites?: string[]; rollback?: Record<string, string> } = {},
+  ) {
+    const readState = vi.fn<NonNullable<ShopTabInjected['state']>>()
+      .mockResolvedValue({ favorites: state.favorites ?? [], rollback: state.rollback ?? {} })
+    const setFavorite = vi.fn<NonNullable<ShopTabInjected['setFavorite']>>().mockResolvedValue({ ok: true })
+    const rollback = vi.fn<NonNullable<ShopTabInjected['rollback']>>().mockResolvedValue({ ok: true, installId: 'r1', state: 'running' })
+    return { readState, setFavorite, rollback, injected: { ...injected, state: readState, setFavorite, rollback } }
+  }
+
+  const CARD = '[data-shop-entry="dsh-hello-plugin"]'
+
+  it('stars and unstars the entry, and flips the pressed state', async () => {
+    const { injected, setFavorite } = withFeatures(bench(snapshot()).injected)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const star = nodeAt(container, `${CARD} [data-shop-favorite]`)
+    expect(star.getAttribute('aria-pressed')).toBe('false')
+    await act(async () => { fireEvent.click(star) })
+    expect(setFavorite).toHaveBeenCalledWith({ key: 'npm:dsh-hello-plugin', favorite: true })
+    await waitFor(() => expect(nodeAt(container, `${CARD} [data-shop-favorite]`).getAttribute('aria-pressed')).toBe('true'))
+  })
+
+  it('puts a star that the save refused back where it was', async () => {
+    const { injected, setFavorite } = withFeatures(bench(snapshot()).injected)
+    setFavorite.mockResolvedValue({ ok: false, detail: 'disk full' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    await act(async () => { fireEvent.click(nodeAt(container, `${CARD} [data-shop-favorite]`)) })
+    await waitFor(() => expect(nodeAt(container, `${CARD} [data-shop-favorite]`).getAttribute('aria-pressed')).toBe('false'))
+  })
+
+  it('shows only the starred entries when the favorites switch is on', async () => {
+    const { injected } = withFeatures(bench(snapshot()).injected)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const filter = nodeAt(container, '[data-shop-favorites-filter]')
+    expect(filter.getAttribute('aria-checked')).toBe('false')
+    await act(async () => { fireEvent.click(filter) })
+    await waitFor(() => expect(nodeAt(container, '[data-shop-favorites-filter]').getAttribute('aria-checked')).toBe('true'))
+    // Starred nothing, so the shelf holds nothing — and the empty shelf is the
+    // existing one, not a new state.
+    expect(container.querySelector(CARD)).toBeNull()
+  })
+
+  it('keeps a starred entry on the shelf under the switch', async () => {
+    const { injected } = withFeatures(bench(snapshot()).injected, { favorites: ['npm:dsh-hello-plugin'] })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    await act(async () => { fireEvent.click(nodeAt(container, '[data-shop-favorites-filter]')) })
+    expect(nodeAt(container, CARD)).toBeTruthy()
+  })
+
+  it('draws no star at all against a host that cannot remember one', async () => {
+    const { injected } = bench(snapshot())
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-favorite]')).toBeNull()
+    expect(container.querySelector('[data-shop-favorites-filter]')).toBeNull()
+  })
+
+  it('draws the declared dsh range, the dependency count and the commands in the detail', async () => {
+    const { injected } = bench(snapshot({ engines: '>=0.2.1-rc.2', dependencies: 4, bin: ['dsh-hello', 'hello-cli'] }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    await act(async () => { fireEvent.click(nodeAt(container, `${CARD} button[aria-expanded]`)) })
+    expect(nodeAt(container, '[data-shop-engines]').textContent).toContain('>=0.2.1-rc.2')
+    expect(nodeAt(container, '[data-shop-dependencies]').textContent).toContain('4')
+    expect(nodeAt(container, '[data-shop-bin]').textContent).toContain('dsh-hello, hello-cli')
+  })
+
+  it('renders no row for a fact the manifest does not declare', async () => {
+    const { injected } = bench(snapshot())
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    await act(async () => { fireEvent.click(nodeAt(container, `${CARD} button[aria-expanded]`)) })
+    expect(container.querySelector('[data-shop-engines]')).toBeNull()
+    expect(container.querySelector('[data-shop-dependencies]')).toBeNull()
+    expect(container.querySelector('[data-shop-bin]')).toBeNull()
+  })
+
+  it('marks an install past 50 MB and leaves a small one unmarked', async () => {
+    const big = bench(snapshot({ installSize: 60 * 1024 * 1024 }))
+    const first = renderTab(big.injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(nodeAt(first.container, '[data-shop-size]').hasAttribute('data-shop-size-large')).toBe(true)
+    cleanup()
+    const small = bench(snapshot({ installSize: 1024 }))
+    const second = renderTab(small.injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(nodeAt(second.container, '[data-shop-size]').hasAttribute('data-shop-size-large')).toBe(false)
+  })
+
+  it('offers the failed install\'s command, quoted, with a copy button', async () => {
+    const { injected, installStatus } = bench(snapshot())
+    installStatus.mockResolvedValue({
+      found: true, state: 'failed', log: [], detail: 'pnpm failed',
+      command: 'dsh plugin --profile web add "dsh-hello-plugin@1.2.0"',
+    })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    await act(async () => { fireEvent.click(nodeAt(container, `${CARD} [data-shop-install]`)) })
+    await waitFor(() => expect(container.querySelector('[data-shop-command]')).toBeTruthy())
+    expect(nodeAt(container, '[data-shop-command]').textContent).toContain('add "dsh-hello-plugin@1.2.0"')
+    expect(nodeAt(container, '[data-shop-copy-command]')).toBeTruthy()
+  })
+
+  it('offers a rollback to the recorded version and starts it by identity', async () => {
+    const { injected, rollback } = withFeatures(
+      bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }]).injected,
+      { rollback: { 'npm:dsh-hello-plugin': '1.0.0' } },
+    )
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const button = nodeAt(container, `${CARD} [data-shop-rollback]`)
+    expect(button.textContent).toContain('v1.0.0')
+    // The click starts the RPC; the control then polls the record it got back.
+    await act(async () => { fireEvent.click(button) })
+    expect(rollback).toHaveBeenCalledWith({ key: 'npm:dsh-hello-plugin' })
+  })
+
+  it('offers no rollback when the record names what is already installed', async () => {
+    const { injected } = withFeatures(
+      bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }]).injected,
+      { rollback: { 'npm:dsh-hello-plugin': '1.2.0' } },
+    )
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-rollback]')).toBeNull()
+  })
+
+  it('links an outdated row to what the new version changed', async () => {
+    const { injected } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')).toBeTruthy())
+    const link = nodeAt(container, '[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-what-changed]')
+    expect(link.getAttribute('href')).toBe('https://www.npmjs.com/package/dsh-hello-plugin/v/1.2.0')
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+  })
+})

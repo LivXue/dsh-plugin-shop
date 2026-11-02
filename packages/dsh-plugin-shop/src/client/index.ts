@@ -340,6 +340,12 @@ export async function apply(ctx: ClientContext): Promise<void> {
   const installStatus: ShopTabInjected['installStatus'] = async args => unwrap(await ns.installStatus(args))
   const uninstall: ShopTabInjected['uninstall'] = async args => { warmCatalog = null; return unwrap(await ns.uninstallStart(args)) }
   const updateStart: ShopTabInjected['updateStart'] = async args => { warmCatalog = null; return unwrap(await ns.updateStart(args)) }
+  // Favorites and rollback (design 2026-11-02-market-borrowings §6–§7). A
+  // rollback is a mutation of the profile like any other, so it drops the
+  // catalog stash for the same reason an install does.
+  const state: ShopTabInjected['state'] = async () => unwrap(await ns.state())
+  const setFavorite: ShopTabInjected['setFavorite'] = async args => unwrap(await ns.setFavorite(args))
+  const rollback: ShopTabInjected['rollback'] = async args => { warmCatalog = null; return unwrap(await ns.rollbackStart(args)) }
   const noteUninstalled = (name: string): void => { pageRemoved.add(name) }
 
   // The page's store (page-store.ts): the reader's place on the shelf and
@@ -376,6 +382,9 @@ export async function apply(ctx: ClientContext): Promise<void> {
       return () => { restartListeners.delete(listener) }
     },
     updateStart,
+    state,
+    setFavorite,
+    rollback,
     page,
   })
 

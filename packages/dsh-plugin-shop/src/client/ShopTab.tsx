@@ -6,8 +6,8 @@
 
 import { Component, Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type InstallView, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, iconOf, identityKey, installPhaseKey, isCustomLicense, listedOnShelf, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, updateAwaitsRestart, utcDay, versionLabel, versionLabelKey } from './present.ts'
+import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopStateResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type InstallView, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, iconOf, identityKey, installPhaseKey, isCustomLicense, listedOnShelf, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, updateAwaitsRestart, utcDay, versionLabel, versionLabelKey, whatChangedUrl } from './present.ts'
 import { createPageStore, switchKey, type OwedNotice, type ShopPageStore, type SwitchSurface } from './page-store.ts'
 import { readRestartMonitor, requestRestart, subscribeRestartMonitor, type RestartMonitorState } from './restart-monitor.ts'
 import { useRegistryFlows, type InstallFlow, type UninstallFlow, type UseUninstallFlows } from './useFlows.ts'
@@ -20,6 +20,18 @@ import css from './ShopTab.module.css'
 
 /** The project's home on GitHub, linked from the toolbar. */
 const SHOP_REPO_URL = 'https://github.com/LivXue/dsh-plugin-shop'
+
+/**
+ * An install whose on-disk figure reaches this many bytes is tinted on the
+ * card and says so in its tooltip (design 2026-11-02-market-borrowings §2).
+ *
+ * 50 MB is not measured here: it is the line the competitor's own users
+ * proposed after a 21-plugin audit, where the four heaviest entries ran from
+ * 18 MB to 216 MB and a reader found out mid-install
+ * (dsh-market/dsh-market#1008). The figure is a hint, never a refusal — a
+ * large plugin installs exactly as a small one does.
+ */
+const LARGE_INSTALL_BYTES = 50 * 1024 * 1024
 
 /** The class of every root the tab renders, the crash fallback's included:
  * the panel, plus `notranslate`, which with `translate="no"` keeps a browser's
@@ -70,6 +82,12 @@ export interface ShopTabInjected {
    * Optional: a stub may not offer it. */
   onRestarted?: (listener: (fresh: ShopVersionResult) => void) => () => void
   updateStart: (args: { version: string }) => Promise<ShopUpdateResult>
+  /** Favorites and rollback records (design 2026-11-02-market-borrowings
+   * §6–§7). Optional like `reload`: a stub written before these existed keeps
+   * working, and the tab then draws no stars and offers no rollback. */
+  state?: () => Promise<ShopStateResult>
+  setFavorite?: (args: { key: string; favorite: boolean }) => Promise<{ ok: boolean; detail?: string }>
+  rollback?: (args: { key: string }) => Promise<ShopInstallResult>
   /** The §4 reload trigger, defaulted once at the tab root to a real page
    * reload. Injected so a test can observe it without touching jsdom's
    * non-writable `location.reload`. */
@@ -151,7 +169,7 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay, installed, missing, harness, nameTakenBy, t, flow, uninstallFlow, restart, restartBlocked, reload, setEnabled, inInstalledView, page }: {
+const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay, installed, missing, harness, nameTakenBy, t, flow, uninstallFlow, restart, restartBlocked, reload, setEnabled, inInstalledView, page, favorite, onFavorite, rollback }: {
   entry: CatalogEntry
   /** The entry's icon as a data URL, or undefined to draw the default. */
   icon: string | undefined
@@ -189,6 +207,19 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
   /** The page's store: whether this card is expanded, and what the installed
    * row's switch owes. */
   page: ShopPageStore
+  /** Whether this entry is starred, and the toggle. Absent when the host
+   * predates `shop/state` (design 2026-11-02-market-borrowings §7), in which
+   * case no star is drawn at all. */
+  favorite?: boolean
+  onFavorite?: () => void
+  /** The rollback offer for this entry when one is recorded and differs from
+   * what is installed (same design, §6). */
+  rollback?: {
+    version: string
+    start: (args: { key: string }) => Promise<ShopInstallResult>
+    status: (args: { installId: string }) => Promise<ShopInstallStatusResult>
+    onSettled: () => void
+  }
 }): ReactNode {
   const key = entryKey(entry)
   // Whether the card is expanded: the page store's, so it outlives the card
@@ -213,6 +244,9 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
   // bug — see `CatalogEntry.unpackedSize`. Undefined only where the registry
   // could not measure honestly, and the label is not rendered then.
   const size = formatSize(entry.installSize)
+  // The tint's condition, derived from the same figure the label prints —
+  // never from a separately published flag, which could disagree with it.
+  const largeSize = entry.installSize !== undefined && entry.installSize >= LARGE_INSTALL_BYTES
   const version = versionLabel(entry.source, entry.version)
   const versionName = t(versionLabelKey(version.kind), { version: version.value })
   const category = entry.catalog?.category ?? 'other'
@@ -372,6 +406,39 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
                   <dd>{isCustomLicense(entry.license) ? t('customLicense') : entry.license}</dd>
                 </div>
               )}
+              {/* The prepurchase facts (design 2026-11-02-market-borrowings
+                * §1–§2), in the detail rows because they answer "should I
+                * install this" rather than "what is it": the range this dsh is
+                * judged against, how much it drags in, and the commands it
+                * puts on PATH. Every value is the manifest's, printed
+                * verbatim — no row here forms a verdict, and the compatibility
+                * one above is dsh's own. Absent keys render no row: an entry
+                * whose manifest declares none must not show an empty line. */}
+              {entry.engines !== undefined && (
+                <div className={css.detailRow} data-shop-engines>
+                  <dt>{t('requiresDsh')}</dt>
+                  {/* A blank range is a declaration dsh reads as
+                    * unsatisfiable, so it is quoted rather than rendered as
+                    * nothing (the same rule `refusedPeersText` follows). */}
+                  <dd>{entry.engines.trim() === '' ? JSON.stringify(entry.engines) : entry.engines}</dd>
+                </div>
+              )}
+              {entry.dependencies !== undefined && (
+                <div className={css.detailRow} data-shop-dependencies>
+                  <dt>{t('dependencies')}</dt>
+                  <dd>{entry.dependencies}</dd>
+                </div>
+              )}
+              {entry.bin !== undefined && entry.bin.length > 0 && (
+                <div className={css.detailRow} data-shop-bin>
+                  <dt>{t('commands')}</dt>
+                  {/* Names only, comma-joined: the catalog never publishes a
+                    * path (`bin`'s reader keeps the key, not the target), so
+                    * there is nothing here that could look like a runnable
+                    * command line. */}
+                  <dd>{entry.bin.join(', ')}</dd>
+                </div>
+              )}
             </dl>
             {entry.tier === 'verified-stale' && entry.review !== undefined && (
               <p className={css.reviewedLine}>
@@ -388,6 +455,25 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
        * active install/uninstall flow (gate, log, notices) takes the full
        * width below them, where it has room. */}
       <div className={css.cardActions} data-shop-actions>
+        {/* The star (design 2026-11-02-market-borrowings §7). In the action
+          * row rather than the header, because the header is itself a
+          * <button> and an interactive element inside one is invalid HTML —
+          * the same reason the npm link lives in the expanded detail. Absent
+          * entirely when the host has no `shop/state`, never drawn disabled:
+          * a star that cannot be saved is worse than no star. */}
+        {onFavorite !== undefined && (
+          <button
+            type="button"
+            className={favorite === true ? `${css.favoriteButton} ${css.favoriteButtonOn}` : css.favoriteButton}
+            data-shop-favorite={favorite === true ? 'on' : 'off'}
+            aria-pressed={favorite === true}
+            aria-label={t(favorite === true ? 'unfavorite' : 'favorite')}
+            title={t(favorite === true ? 'unfavorite' : 'favorite')}
+            onClick={onFavorite}
+          >
+            ★
+          </button>
+        )}
         {/* Keyed, in both branches: the card changes branch when the installed
           * list catches up with an install or an uninstall, and the two branches
           * hold the panels in different orders. By position, React would draw
@@ -448,6 +534,16 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
               <Fragment key="installed">
                 <p className={css.installedLabel} data-shop-installed>{t('installed')}</p>
                 <BlockerBadge blockers={blockers} t={t} />
+                {rollback !== undefined && (
+                  <RollbackControl
+                    identity={key}
+                    version={versionLabel(entry.source, rollback.version).text}
+                    t={t}
+                    start={rollback.start}
+                    status={rollback.status}
+                    onSettled={rollback.onSettled}
+                  />
+                )}
               </Fragment>
             )}
             {/* The hot enable/disable switch (§8) sits on every installed
@@ -503,7 +599,14 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
               // `Entry.installSize` in registry/scripts/src/types.ts; it is
               // deliberately not restated here, because this repo has twice
               // had copies of one figure drift apart.
-              <span className={css.size} data-shop-size role="img" aria-label={t('sizeLabel', { size })} title={t('sizeLabel', { size })}>
+              <span
+                className={largeSize ? `${css.size} ${css.sizeLarge}` : css.size}
+                data-shop-size
+                {...(largeSize ? { 'data-shop-size-large': '' } : {})}
+                role="img"
+                aria-label={t(largeSize ? 'sizeLabelLarge' : 'sizeLabel', { size })}
+                title={t(largeSize ? 'sizeLabelLarge' : 'sizeLabel', { size })}
+              >
                 {size}
               </span>
             )}
@@ -646,6 +749,122 @@ function BlockerBadge({ blockers, t }: {
  * keeps a second press from becoming a second RPC. The page states the
  * dialog's facts nowhere since 2026-10-15 (the shop design's §7 amendment of
  * that date). */
+/**
+ * The command a failed install ran, with a copy button (design
+ * 2026-11-02-market-borrowings §5).
+ *
+ * The line is shown whether or not the clipboard works: on an insecure origin
+ * `navigator.clipboard` is absent, and in a jsdom test it is too, so the
+ * button degrades to a no-op while the code stays selectable. Nothing is ever
+ * claimed as copied when it was not — the label flips only after the write
+ * resolved.
+ */
+function CommandLine({ command, t }: { command: string; t: ShopTabProps['t'] }): ReactNode {
+  const [copied, setCopied] = useState(false)
+  return (
+    <div className={css.commandLine} data-shop-command>
+      <code className={css.commandText}>{command}</code>
+      <button
+        type="button"
+        className={css.copyButton}
+        data-shop-copy-command
+        onClick={() => {
+          void (async () => {
+            try {
+              await navigator.clipboard.writeText(command)
+              setCopied(true)
+            } catch {
+              // Swallows a missing or refused clipboard: the code line is the
+              // affordance itself, so the failure costs the convenience and
+              // nothing else. Nothing else can reach this catch.
+            }
+          })()
+        }}
+      >
+        {t(copied ? 'copied' : 'copyCommand')}
+      </button>
+    </div>
+  )
+}
+
+/**
+ * The rollback offer on an installed card (design 2026-11-02-market-borrowings
+ * §6): re-install the version this plugin was updated from.
+ *
+ * Deliberately NOT driven through the install flow registry. That registry's
+ * Retry re-sends the panel's own target — the catalog's latest version — so a
+ * failed rollback followed by Retry would install the very version the reader
+ * is trying to leave. A rollback has one action, one outcome and no retry
+ * button it cannot honour, so it polls its own record instead and asks the tab
+ * to re-read the installed list once the host says done.
+ */
+function RollbackControl({ identity, version, t, start, status, onSettled }: {
+  identity: string
+  /** The version the record names, already formatted for display. */
+  version: string
+  t: ShopTabProps['t']
+  start: (args: { key: string }) => Promise<ShopInstallResult>
+  status: (args: { installId: string }) => Promise<ShopInstallStatusResult>
+  /** Called once a rollback settles done, so the installed list and the
+   * records are read again. */
+  onSettled: () => void
+}): ReactNode {
+  const [state, setState] = useState<'idle' | 'running' | 'failed'>('idle')
+  const [detail, setDetail] = useState('')
+  const alive = useRef(true)
+  useEffect(() => () => { alive.current = false }, [])
+  const run = async (): Promise<void> => {
+    setState('running')
+    setDetail('')
+    let installId: string
+    try {
+      const result = await start({ key: identity })
+      if (!result.ok) {
+        if (alive.current) { setState('failed'); setDetail(result.detail) }
+        return
+      }
+      installId = result.installId
+    } catch {
+      // A transport failure: the RPC never answered. The generic line is the
+      // readable face of it, exactly as the install panel treats one.
+      if (alive.current) { setState('failed'); setDetail('') }
+      return
+    }
+    // The same cadence the flow registry polls at; terminal states only.
+    for (;;) {
+      await new Promise(resolve => setTimeout(resolve, 500))
+      if (!alive.current) return
+      let answer: ShopInstallStatusResult
+      try {
+        answer = await status({ installId })
+      } catch {
+        continue
+      }
+      if (!answer.found) { setState('failed'); setDetail(answer.detail ?? ''); return }
+      if (answer.state === 'failed') { setState('failed'); setDetail(answer.detail ?? ''); return }
+      if (answer.state === 'done') { setState('idle'); onSettled(); return }
+    }
+  }
+  if (state === 'running') return <span className={css.rollbackNote} data-shop-rollback-running>{t('rollingBack')}</span>
+  return (
+    <span className={css.rollbackGroup} data-shop-rollback-group>
+      <button
+        type="button"
+        className={css.rollbackButton}
+        data-shop-rollback
+        onClick={() => { void run() }}
+      >
+        {t('rollbackTo', { version })}
+      </button>
+      {state === 'failed' && (
+        // The host's own sentence when it wrote one; the localized line when
+        // the wire carried none (a transport failure).
+        <span className={css.rollbackNote} data-shop-rollback-failed>{detail === '' ? t('rollbackFailed') : detail}</span>
+      )}
+    </span>
+  )
+}
+
 function InstallPanel({ target, tier, blockers, blockersStated = false, variant = 'install', locked = false, flow, t, restart, restartBlocked, reload }: {
   /** The install request this panel drives, identity included. */
   target: InstallArgs
@@ -771,6 +990,7 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
             is its readable face. A non-empty detail is the host's published copy
             (§7.2 stderr plus the recovery hint) and renders verbatim. */}
         <p className={css.failedDetail}>{view.detail === '' ? t('installTransportFailed') : view.detail}</p>
+        {view.command !== undefined && <CommandLine command={view.command} t={t} />}
         {/* `failed` renders no Install button, and the page store keeps this
             view for the page's life (design 2026-10-16-shop-sidebar-page
             §5.2): the remount that once cleared it is gone, so without this
@@ -1350,6 +1570,10 @@ function OutdatedRow({ row, icon, tier, missing, harness, t, setEnabled, flowFor
   reload: () => void
   page: ShopPageStore
 }): ReactNode {
+  // What the target version changed (design 2026-11-02-market-borrowings §4).
+  // Built from the row, never from the catalog entry's `repository`: that text
+  // is the author's and is not what installed.
+  const changed = whatChangedUrl(row)
   return (
     <div className={css.outdatedRow} data-shop-outdated-entry={row.name}>
       <div className={css.outdatedInfo}>
@@ -1359,6 +1583,12 @@ function OutdatedRow({ row, icon, tier, missing, harness, t, setEnabled, flowFor
           <span className={css.outdatedVersions}>
           <span>{t('installedVersion', { version: versionLabel(row.source, row.installed).text })}</span>
             <span>{t('latestVersion', { version: versionLabel(row.source, row.latest).text })}</span>
+            {changed !== null && (
+              // The same new-tab + noopener idiom every catalog link uses.
+              <a className={css.whatChanged} data-shop-what-changed href={changed} target="_blank" rel="noopener noreferrer">
+                {t('whatChanged')}
+              </a>
+            )}
           </span>
         </span>
       </div>
@@ -1573,7 +1803,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
 /** The shop tab body: browse, search, refresh, and render one card per
  * entry. Data attributes on the e2e-relevant nodes follow the Task 3 list. */
 function ShopTabBody(props: ShopTabProps): ReactNode {
-  const { t, catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, noteUninstalled, restart, version, onRestarted, updateStart, reload: injectedReload, page: injectedPage, onShelfReady } = props
+  const { t, catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, noteUninstalled, restart, version, onRestarted, updateStart, state: readState, setFavorite: writeFavorite, rollback: startRollback, reload: injectedReload, page: injectedPage, onShelfReady } = props
   const [catalogState, setCatalogState] = useState<CatalogState>({ kind: 'loading' })
   const [installedState, setInstalledState] = useState<InstalledState>({ kind: 'loading' })
   /** The install gate's own input, or undefined while it is unknown — loading,
@@ -1581,6 +1811,13 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
    * Undefined is never read as "nothing is installed": a card makes no claim
    * about a conflict it could not check. */
   const [specs, setSpecs] = useState<Record<string, string> | undefined>(undefined)
+  /** The reader's stars, by install identity (design
+   * 2026-11-02-market-borrowings §7). A set because both the card and the
+   * filter ask membership once per entry per render. */
+  const [favorites, setFavorites] = useState<ReadonlySet<string>>(() => new Set())
+  /** Install identity → the version an update replaced (§6), for the rollback
+   * offer's label. The spec that installs it is built host-side. */
+  const [rollbackVersions, setRollbackVersions] = useState<Record<string, string>>({})
   // The shop's own version row: null while the check is loading or failed
   // (the check is advisory — a failed one leaves the row empty, the tab's
   // own error states carry the bigger story).
@@ -1620,7 +1857,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   // The boundary's Retry mounts the tab afresh, and that mount builds one.
   if (page === null) throw new Error('dsh-plugin-shop: the shop face stopped handing over the page store the tab mounted with')
   const pageState = useSyncExternalStore(page.subscribe, page.getSnapshot)
-  const { query, category, order, hideIncompatible, visibleCount } = pageState.view
+  const { query, category, order, hideIncompatible, favoritesOnly, visibleCount } = pageState.view
   const selfUpdate = useRegistrySelf(page.self)
   const restartMonitor = useRestartMonitor()
   // A self-update that landed and waits for its restart. This tab's own flow
@@ -1901,6 +2138,29 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
     return () => { cancelled = true }
   }, [installed, installedSpecs, versionReload, settled, page])
 
+  // The reader's stars and the rollback records (design 2026-11-02-market-borrowings
+  // §6–§7), read on the same key as the installed list. Advisory, like the
+  // version check: a host that cannot answer leaves the shelf without stars
+  // rather than failing the page, and a rollback that just settled bumps the
+  // same counter this keys on, so the record it wrote is read back at once.
+  useEffect(() => {
+    if (readState === undefined) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const result = await readState()
+        if (cancelled) return
+        setFavorites(new Set(result.favorites))
+        setRollbackVersions(result.rollback)
+      } catch {
+        // Swallows a failed read: stars and rollback offers are conveniences,
+        // and the tab's own error states carry anything worse. Nothing else
+        // can reach this catch.
+      }
+    })()
+    return () => { cancelled = true }
+  }, [readState, versionReload])
+
   // Each shelf card looks its installed state up by install identity; the
   // Installed filter below selects on the same map.
   const installedByKey = useMemo(() => {
@@ -2044,6 +2304,48 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
     [missingByKey, harnessVerdicts, nameTakenByKey],
   )
 
+  // The reader's stars and the rollback offers (design 2026-11-02-market-borrowings
+  // §6–§7). The star flips at once and flips back if the host refuses the save:
+  // a star that only appears after a round trip reads as a dropped click.
+  const toggleFavorite = useCallback(async (key: string) => {
+    if (writeFavorite === undefined) return
+    const next = !favorites.has(key)
+    setFavorites(previous => {
+      const copy = new Set(previous)
+      if (next) copy.add(key)
+      else copy.delete(key)
+      return copy
+    })
+    try {
+      const result = await writeFavorite({ key, favorite: next })
+      if (!result.ok) throw new Error(result.detail ?? '')
+    } catch {
+      // Swallows a refused or failed save: put the star back, which is the
+      // truth the next mount would read anyway.
+      setFavorites(previous => {
+        const copy = new Set(previous)
+        if (next) copy.delete(key)
+        else copy.add(key)
+        return copy
+      })
+    }
+  }, [favorites, writeFavorite])
+
+  // The version a rollback would restore for this identity, or undefined when
+  // there is nothing to offer: no record, or a record naming what is already
+  // installed (a failed update leaves exactly that).
+  const rollbackOffer = useCallback((key: string): string | undefined => {
+    const previous = rollbackVersions[key]
+    if (previous === undefined) return undefined
+    const row = installedByKey.get(key)
+    if (row === undefined || row.installed === previous) return undefined
+    return previous
+  }, [rollbackVersions, installedByKey])
+
+  // Re-read the installed list and the records after a rollback settles. The
+  // same counter the refresh button bumps, so there is one re-read path.
+  const refreshAfterMutation = useCallback(() => { setVersionReload(count => count + 1) }, [])
+
   // What the category and the search box select, BEFORE the incompatible
   // modifier subtracts from it. Kept separate for two reasons: the empty shelf
   // below has to say which control emptied it, and this is the only honest way
@@ -2081,6 +2383,12 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
       } else if (category !== null && categoryKey(entry) !== categoryLocaleKey(category)) {
         return false
       }
+      // The favorites modifier (design 2026-11-02-market-borrowings §7),
+      // applied to whatever the category and the query selected — the
+      // incompatible filter's shape, and for its reason: it subtracts, it does
+      // not choose. The Installed view is excluded because the switch that
+      // sets it is not drawn there (that view is management, not shelf).
+      if (favoritesOnly && category !== 'installed' && !favorites.has(entryKey(entry))) return false
       if (q === '') return true
       const summaryEn = entry.catalog?.summary.en ?? ''
       const summaryZh = entry.catalog?.summary.zh ?? ''
@@ -2109,7 +2417,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
     // pass over ~9,300 entries once a second while any uninstall ran, in
     // every view, and allocated a flow object plus two closures per entry
     // while doing it. See `pending`'s own comment in useFlows.ts.
-  }, [sortedCatalog, browsable, expansionMemo, category, installedByKey, uninstallFlows.pending])
+  }, [sortedCatalog, browsable, expansionMemo, category, installedByKey, uninstallFlows.pending, favoritesOnly, favorites])
 
   // Never in the Installed view. That view is management, not shelf: an
   // installed plugin that is up to date appears in exactly one place — its
@@ -2496,6 +2804,29 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
           {category !== 'installed' && (
             <>
               <h2 className={css.railHeading}>{t('filterHeading')}</h2>
+              {/* The favorites modifier (design 2026-11-02-market-borrowings
+                * §7), the incompatible switch's twin and for its reasons: a
+                * boolean modifier that SUBTRACTS from whatever the categories
+                * selected, so it is a switch and not a ninth pill. Drawn only
+                * when the host can remember a star — without `shop/state`
+                * there is nothing to filter to, and a control that always
+                * empties the shelf would be a claim the host cannot honour. */}
+              {readState !== undefined && (
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={favoritesOnly}
+                  className={favoritesOnly ? `${css.incompatibleFilter} ${css.incompatibleFilterOn}` : css.incompatibleFilter}
+                  title={t('favoritesFilterTitle')}
+                  data-shop-favorites-filter
+                  onClick={() => { page.updateView(view => ({ favoritesOnly: !view.favoritesOnly, visibleCount: SHOP_VISIBLE_BATCH })) }}
+                >
+                  <span className={favoritesOnly ? `${css.switch} ${css.switchOn}` : css.switch} aria-hidden="true">
+                    <span className={css.switchKnob} />
+                  </span>
+                  {t('favoritesFilter')}
+                </button>
+              )}
               <button
                 type="button"
                 role="switch"
@@ -2595,7 +2926,37 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
                   const key = entryKey(entry)
                   return (
                     <li key={key} data-shop-identity={key}>
-                      <EntryCard entry={entry} icon={iconOf(entry, icons)} stars={starsOf(entry, stars)} order={order} shelfDay={shelfDayOf(entry)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} harness={harnessVerdictOf(harnessVerdicts, key)} nameTakenBy={nameTakenByKey.get(key)} t={t} flow={flows.flowFor(key)} uninstallFlow={uninstallFlows.flowFor(key)} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} page={page} />
+                      <EntryCard
+                        entry={entry}
+                        icon={iconOf(entry, icons)}
+                        stars={starsOf(entry, stars)}
+                        order={order}
+                        shelfDay={shelfDayOf(entry)}
+                        installed={installedByKey.get(key)}
+                        missing={missingByKey.get(key) ?? []}
+                        harness={harnessVerdictOf(harnessVerdicts, key)}
+                        nameTakenBy={nameTakenByKey.get(key)}
+                        t={t}
+                        flow={flows.flowFor(key)}
+                        uninstallFlow={uninstallFlows.flowFor(key)}
+                        restart={restart}
+                        restartBlocked={restartBlocked}
+                        reload={reload}
+                        setEnabled={setEnabled}
+                        inInstalledView={category === 'installed'}
+                        page={page}
+                        {...(writeFavorite !== undefined ? { favorite: favorites.has(key), onFavorite: () => { void toggleFavorite(key) } } : {})}
+                        {...(rollbackOffer(key) !== undefined
+                          ? {
+                              rollback: {
+                                version: rollbackOffer(key) as string,
+                                start: startRollback as (args: { key: string }) => Promise<ShopInstallResult>,
+                                status: installStatus,
+                                onSettled: refreshAfterMutation,
+                              },
+                            }
+                          : {})}
+                      />
                     </li>
                   )
                 })}
