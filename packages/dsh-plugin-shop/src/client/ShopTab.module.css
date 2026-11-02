@@ -186,71 +186,6 @@
   gap: 14px;
 }
 
-/* The rail. Two 430px tracks and their 12px gap need 872; the rail and its
- * 24px gap add 256; 12px of margin makes the threshold 1140. Below 872 the
- * grid's own `auto-fill` leaves one column. */
-@container (min-width: 1140px) {
-  .shelfBody {
-    display: grid;
-    grid-template-columns: 232px minmax(0, 1fr);
-    column-gap: 24px;
-    row-gap: 14px;
-  }
-
-  /* The rail sticks under dsh's frame top rather than scrolling away with
-   * the results. `.panel`'s `overflow: clip` is not a scroll container, so
-   * the page stays the scrollport; the e2e proves it (design
-   * 2026-11-02-shop-widescreen-layout §4). */
-  .controls {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
-    position: sticky;
-    top: calc(16px + var(--dsh-frame-top-clearance, 0px));
-    align-self: start;
-    max-height: calc(100vh - 32px);
-    overflow: auto;
-  }
-
-  .railHeading {
-    display: block;
-  }
-
-  .categoryBar {
-    flex: none;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 4px;
-    /* The 6px belongs to the wrapping row; in the rail the controls' 8px gap
-     * is the whole rhythm above the first button. */
-    margin-top: 0;
-  }
-
-  /* Label left, count right: the two spans the buttons carry. */
-  .categoryButton {
-    display: flex;
-    justify-content: space-between;
-  }
-
-  /* The rail is a column with `align-items: stretch`, where an auto left
-   * margin would shrink the switch to its content and push it right. */
-  .incompatibleFilter {
-    margin-left: 0;
-  }
-
-  /* The rail is a scroll container (`overflow: auto`) and its controls are
-   * flush with its padding box, so a ring drawn OUTSIDE them loses both
-   * vertical segments to the clip — measured: red on the top edge and
-   * corners, nothing on the sides. The inset ring, the idiom
-   * `.entryHeader:focus-visible` already uses, keeps all four sides. */
-  .categoryButton:focus-visible {
-    outline-offset: -2px;
-  }
-
-  .incompatibleFilter:focus-visible {
-    outline-offset: -2px;
-  }
-}
 
 /* The two buttons on dsh's Plugins page (design 2026-10-16-shop-sidebar-page
  * §7), drawn as that page draws its own small outline buttons beside them —
@@ -1892,4 +1827,82 @@
    * for `.installedActions` and not here until this line. */
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* THE WIDE RULES MUST STAY LAST. Nesting in @container adds no
+ * specificity, so between a container rule and a top-level rule of the same
+ * selector the source order decides. Placed above `.categoryBar`,
+ * `.categoryButton` and the two focus rules, every one of these lost: the
+ * rail kept the pills' row, the switch's auto margin and the outside ring,
+ * and the geometry-only e2e passed (measured 2026-11-02).
+ * `css-tokens.client.spec.ts` fails if this block moves back up. */
+/* The rail. Two 430px tracks and their 12px gap need 872; the rail and its
+ * 24px gap add 256; 12px of margin makes the threshold 1140. Below 872 the
+ * grid's own `auto-fill` leaves one column. */
+@container (min-width: 1140px) {
+  .shelfBody {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    column-gap: 24px;
+    row-gap: 14px;
+  }
+
+  /* The rail sticks under dsh's frame top rather than scrolling away with
+   * the results. `.panel`'s `overflow: clip` is not a scroll container, so
+   * the page stays the scrollport; the e2e proves it (design
+   * 2026-11-02-shop-widescreen-layout §4). */
+  .controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    position: sticky;
+    top: calc(16px + var(--dsh-frame-top-clearance, 0px));
+    align-self: start;
+    /* The cap subtracts the same clearance the offset adds. Without it a
+     * rail whose content fits the cap hangs clearance - 16px below the
+     * viewport while stuck (measured: 32px at the desktop frame's 48px), and
+     * its last control only comes into view at the very bottom of the page.
+     * The 32px is the 16px above the rail plus 16px below it. */
+    max-height: calc(100vh - 32px - var(--dsh-frame-top-clearance, 0px));
+    overflow: auto;
+  }
+
+  .railHeading {
+    display: block;
+  }
+
+  .categoryBar {
+    flex: none;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    /* The 6px belongs to the wrapping row; in the rail the controls' 8px gap
+     * is the whole rhythm above the first button. */
+    margin-top: 0;
+  }
+
+  /* Label left, count right: the two spans the buttons carry. */
+  .categoryButton {
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* The rail is a column with `align-items: stretch`, where an auto left
+   * margin would shrink the switch to its content and push it right. */
+  .incompatibleFilter {
+    margin-left: 0;
+  }
+
+  /* The rail is a scroll container (`overflow: auto`) and its controls are
+   * flush with its padding box, so a ring drawn OUTSIDE them loses both
+   * vertical segments to the clip — measured: red on the top edge and
+   * corners, nothing on the sides. The inset ring, the idiom
+   * `.entryHeader:focus-visible` already uses, keeps all four sides. */
+  .categoryButton:focus-visible {
+    outline-offset: -2px;
+  }
+
+  .incompatibleFilter:focus-visible {
+    outline-offset: -2px;
+  }
 }

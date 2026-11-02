@@ -132,7 +132,10 @@ Markup, in this order (the order a screen reader reads and the eye follows):
   `.controls` in the first column and `.results` in the second. `.controls`
   becomes a vertical rail:
   - `position: sticky; top: calc(16px + var(--dsh-frame-top-clearance, 0px));
-    align-self: start; max-height: calc(100vh - 32px); overflow: auto;`
+    align-self: start; max-height: calc(100vh - 32px - var(--dsh-frame-top-
+    clearance, 0px)); overflow: auto;` — the cap subtracts the same clearance
+    the offset adds, or a rail that fits the cap hangs below the viewport
+    while stuck.
   - Category buttons become full-width rows, label left, count right, same
     classes and `aria-pressed`; the switch becomes a row under the "筛选"
     heading.
@@ -246,11 +249,17 @@ moves to a second line, under the name, and the chevron keeps the right edge:
     grid-specific behaviour jsdom cannot see, because jsdom evaluates no
     container queries and `ShopPage.client.spec.tsx`'s `layOut` fake
     hard-codes one card per row.
-- **PR screenshots**: three window widths (1680, 1440, 1024) in both themes,
-  taken from a local build and posted on the pull request as evidence. They
-  are not the README set: that stays the six steps the shoot script produces
-  (shelf light/dark in en and zh, the gate in en and zh), reshot in the
-  promotion commit against the published build.
+- **PR screenshots, amended 2026-11-02 after review**: the three-width set
+  was not produced. `shoot-readme-screenshots` captures the PUBLISHED build,
+  and a local-build capture needs a harness of its own; the first build
+  therefore shipped without the artifact, and the review found the rail's
+  inside broken while every geometry-only check passed. The gap is answered
+  in code rather than prose: `checkShelfLayout` now measures the rail's
+  inside (button width, the label/count split, the switch's row), which is
+  what a screenshot would have shown, and the visual pass belongs to the
+  beta hand-check on a real profile. The README set is still the six steps
+  the shoot script produces (shelf light/dark in en and zh, the gate in en
+  and zh), reshot in the promotion commit against the published build.
 
 ## 8. Left to the builder
 
@@ -263,11 +272,21 @@ column.
 The page, the rail, the card composition and the grid are implemented as
 specified, with these builder calls:
 
-- The sticky offset is `16px + var(--dsh-frame-top-clearance, 0px)`. The
-  controls row is `flex-wrap: nowrap` at both widths: a wrapping COLUMN with
-  a `max-height` would split a tall rail into a second column instead of
-  scrolling it, and a wrapping ROW sends the switch to a line of its own on
-  every narrow panel (measured 84 px tall against 52 px for the old bar).
+- The sticky offset is `16px + var(--dsh-frame-top-clearance, 0px)`, and the
+  cap subtracts that clearance too. The controls row is `flex-wrap: nowrap`
+  at both widths: a wrapping COLUMN with a `max-height` would split a tall
+  rail into a second column instead of scrolling it, and a wrapping ROW sends
+  the switch to a line of its own on every narrow panel (measured 84 px tall
+  against 52 px for the old bar).
+- **The whole `@container` block must stay last in the stylesheet.** Nesting
+  adds no specificity: between a container rule and a top-level rule of the
+  same selector, source order decides. The first build wrote the block above
+  `.categoryBar`, `.categoryButton` and the two focus rules, so the rail kept
+  the pills' row (a 53 px button in a 232 px rail), the switch's auto margin
+  and the outside focus ring, while the geometry-only e2e stayed green. The
+  block now sits at the end of the file, `css-tokens.client.spec.ts` fails if
+  it moves back up, and the e2e measures the rail's INSIDE — button width,
+  the label/count split and the switch's row — not only its box.
 - The badge row's indentation is structural, not a margin: the header is
   icon | column(name, badges) | chevron, so the row starts where the name
   does by construction. The chevron left the badge cluster to keep the right
