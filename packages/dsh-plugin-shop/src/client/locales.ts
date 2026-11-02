@@ -35,6 +35,10 @@ export const zh = {
   /** The shelf's order control, and the date each card carries under the two
    * date orders (design 2026-10-12-shelf-orders §4). */
   sortLabel: '排序',
+  /** The wide layout's rail headings (design 2026-11-02-shop-widescreen-layout
+   * §4): the category group above, the hide-incompatible modifier below. */
+  categoriesHeading: '分类',
+  filterHeading: '筛选',
   sortStars: '星标最多',
   sortAdded: '最新上架',
   sortUpdated: '最近更新',
@@ -234,6 +238,10 @@ export const en = {
   /** The shelf's order control, and the date each card carries under the two
    * date orders (design 2026-10-12-shelf-orders §4). */
   sortLabel: 'Sort',
+  /** The wide layout's rail headings (design 2026-11-02-shop-widescreen-layout
+   * §4): the category group above, the hide-incompatible modifier below. */
+  categoriesHeading: 'Categories',
+  filterHeading: 'Filter',
   sortStars: 'Most stars',
   sortAdded: 'Newest',
   sortUpdated: 'Recently updated',

@@ -238,59 +238,61 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
         onClick={() => { page.toggleExpanded(key); rerender() }}
       >
         <EntryIcon icon={icon} />
-        <span className={css.name}>{entry.name}</span>
-        <span className={css.badges}>
-          <span className={css.categoryBadge}>{t(categoryKey(entry))}</span>
-          {entry.source === 'npm' && (
-            // Where the thing installs from. npm comes first because that is
-            // the answer to "what am I getting"; the octocat below answers
-            // "where can I read it". Both are marks, not links: this whole
-            // header is a <button>, and an <a> inside one is invalid HTML —
-            // the npm page link lives in the expanded detail.
-            <span className={css.sourceBadge} data-shop-source-npm role="img" aria-label={t('npmSource')}>
-              <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="currentColor">
-                <path fillRule="evenodd" d="M0 0v16h16V0H0zm13 13h-2V6H8v7H3V3h10v10z" />
-              </svg>
-            </span>
-          )}
-          {hasGithubHome(entry) && (
-            // The octocat marks a GitHub home the reader can go and inspect —
-            // a github-source entry, or an npm one whose repository is there
-            // (4892 of the live catalog's 4915). Its ABSENCE is the signal:
-            // a listed package with no public source to read.
-            <span className={css.sourceBadge} data-shop-source-github role="img" aria-label={t('githubSource')}>
-              <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="currentColor">
-                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
-              </svg>
-            </span>
-          )}
-          {/* The printed version cannot say whether it is an npm version, a
-            * commit or a release tag, so the accessible name and the tooltip
-            * do (market borrowings §11), in the size label's idiom. */}
-          <span className={css.cardVersion} data-card-version role="img" aria-label={versionName} title={versionName}>{version.text}</span>
-          {/* Only a tier that says something is badged. Every one of the live
-            * catalog's 4915 entries is `community`, so that label was on
-            * every card and carried no information. `verified` and
-            * `verified-stale` mean a human read the code at a pinned version
-            * — the most load-bearing signal here — and still show. */}
-          {entry.tier !== 'community' && (
-            <span className={css.tierBadge} data-tier={entry.tier}>{t(tierKey(entry.tier))}</span>
-          )}
-          {entry.archived === true && (
-            // The repository GitHub reports as archived (design 2026-10-08
-            // §1.3). A mark, never a refusal: install, update, and enable are
-            // all unchanged — the owner froze the project, the pinned commit
-            // still serves.
-            <span className={css.tierBadge} data-tier="archived">{t('archivedBadge')}</span>
-          )}
-          {stars !== undefined && (
-            // role="img" names the badge for assistive tech (ARIA refuses to
-            // name a generic element); the name carries the RAW count — the
-            // locale's "1234 stars" — while the visual text stays compact.
-            <span className={css.starsBadge} role="img" aria-label={t('stars', { count: stars })}>★ {formatStars(stars)}</span>
-          )}
-          <ChevronIcon open={open} />
+        <span className={css.entryHeading}>
+          <span className={css.name}>{entry.name}</span>
+          <span className={css.badges}>
+            <span className={css.categoryBadge}>{t(categoryKey(entry))}</span>
+            {entry.source === 'npm' && (
+              // Where the thing installs from. npm comes first because that is
+              // the answer to "what am I getting"; the octocat below answers
+              // "where can I read it". Both are marks, not links: this whole
+              // header is a <button>, and an <a> inside one is invalid HTML —
+              // the npm page link lives in the expanded detail.
+              <span className={css.sourceBadge} data-shop-source-npm role="img" aria-label={t('npmSource')}>
+                <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="currentColor">
+                  <path fillRule="evenodd" d="M0 0v16h16V0H0zm13 13h-2V6H8v7H3V3h10v10z" />
+                </svg>
+              </span>
+            )}
+            {hasGithubHome(entry) && (
+              // The octocat marks a GitHub home the reader can go and inspect —
+              // a github-source entry, or an npm one whose repository is there
+              // (4892 of the live catalog's 4915). Its ABSENCE is the signal:
+              // a listed package with no public source to read.
+              <span className={css.sourceBadge} data-shop-source-github role="img" aria-label={t('githubSource')}>
+                <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="currentColor">
+                  <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+                </svg>
+              </span>
+            )}
+            {/* The printed version cannot say whether it is an npm version, a
+              * commit or a release tag, so the accessible name and the tooltip
+              * do (market borrowings §11), in the size label's idiom. */}
+            <span className={css.cardVersion} data-card-version role="img" aria-label={versionName} title={versionName}>{version.text}</span>
+            {/* Only a tier that says something is badged. Every one of the live
+              * catalog's 4915 entries is `community`, so that label was on
+              * every card and carried no information. `verified` and
+              * `verified-stale` mean a human read the code at a pinned version
+              * — the most load-bearing signal here — and still show. */}
+            {entry.tier !== 'community' && (
+              <span className={css.tierBadge} data-tier={entry.tier}>{t(tierKey(entry.tier))}</span>
+            )}
+            {entry.archived === true && (
+              // The repository GitHub reports as archived (design 2026-10-08
+              // §1.3). A mark, never a refusal: install, update, and enable are
+              // all unchanged — the owner froze the project, the pinned commit
+              // still serves.
+              <span className={css.tierBadge} data-tier="archived">{t('archivedBadge')}</span>
+            )}
+            {stars !== undefined && (
+              // role="img" names the badge for assistive tech (ARIA refuses to
+              // name a generic element); the name carries the RAW count — the
+              // locale's "1234 stars" — while the visual text stays compact.
+              <span className={css.starsBadge} role="img" aria-label={t('stars', { count: stars })}>★ {formatStars(stars)}</span>
+            )}
+          </span>
         </span>
+        <ChevronIcon open={open} />
       </button>
       <div className={css.body}>
         {summary !== undefined && (
@@ -2398,233 +2400,249 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
           </button>
         </div>
       )}
-      <div className={css.categoryBar} role="group" aria-label={t('catalog')}>
-        <button
-          type="button"
-          className={category === null ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
-          aria-pressed={category === null}
-          onClick={() => { page.setView({ category: null, visibleCount: SHOP_VISIBLE_BATCH }) }}
-          data-shop-category-all
-        >
-          {/* browsable.length, not the sum of the per-category counts: an
-            * entry whose category is outside CATEGORY_ORDER lands in no
-            * bucket and the sum would quietly lose it. */}
-          {t('all')} {browsable.length}
-        </button>
-        {CATEGORY_ORDER.map(key => (
-          <button
-            key={key}
-            type="button"
-            className={category === key ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
-            aria-pressed={category === key}
-            /* The hue the pressed state paints with, read from the same table
-             * the cards' spines and badges read (`ShopTab.module.css`). It
-             * rides the DOM rather than an inline style so the two surfaces
-             * cannot drift: there is one table, and a tab is the colour of the
-             * cards it filters to.
-             *
-             * It is a STYLING attribute and never a test hook: every card
-             * carries `data-category` too, so `[data-category="tool"]` names a
-             * tab and a card at once. That collision already made a spec count
-             * seven tabs as seven cards; `data-shop-category-tab` is the hook,
-             * matching the `data-shop-category-all` / `-installed` idiom on
-             * either side of this loop. */
-            data-category={key}
-            data-shop-category-tab={key}
-            onClick={() => { page.setView({ category: key, visibleCount: SHOP_VISIBLE_BATCH }) }}
-          >
-            {t(categoryLocaleKey(key))} {categoryCounts.get(key) ?? 0}
-          </button>
-        ))}
-        {/* No `data-category`: Installed selects by installed state, not by
-          * `catalog.category`, so it has no hue of its own and keeps the brand
-          * token `.categoryButton` sets as the fallback. Same for All. */}
-        <button
-          type="button"
-          className={category === 'installed' ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
-          aria-pressed={category === 'installed'}
-          data-shop-category-installed
-          onClick={() => { page.setView({ category: 'installed', visibleCount: SHOP_VISIBLE_BATCH }) }}
-        >
-          {t('installed')} {installedCount}
-        </button>
-        {/* The incompatible filter, at the far edge of the bar (the stylesheet
-          * pushes it there). A MODIFIER, not a ninth category: the categories
-          * choose what to show and this subtracts from whatever they chose, so
-          * it does not participate in `category` state and its own state
-          * survives a category switch. The count is over `browsable` like the
-          * category counts, so it says how many entries the shelf holds badged
-          * "Incompatible" — not how many the current filter shows.
-          *
-          * So it is a SWITCH and not a pill. It wore `.categoryButton` and sat
-          * in the same row at the same size, which made a boolean modifier
-          * read as a ninth tab that happened to be red — the tabs are a
-          * choose-one group and this one is on or off, and nothing in the
-          * shape said so. The track is the shop's existing switch, the one
-          * every installed card carries, so there is one switch idiom here
-          * rather than two.
-          *
-          * Absent in the Installed view, where the modifier does not apply:
-          * that view is the only place a broken install can be disabled or
-          * removed, so nothing is subtracted from it, and offering a control
-          * that changes nothing would be a claim the view cannot honour. The
-          * state itself survives — switching back brings it and its switch
-          * back.
-          *
-          * `role="switch"` with `aria-checked` is what a fixed label buys.
-          * The label used to flip between "Hide" and "Show", which ruled out
-          * any state attribute — pairing a flipping label with a pressed state
-          * announces "Show incompatible 1, pressed" while they are hidden,
-          * the inverse of the truth — and cost a length: two labels are two
-          * widths, so the control resized under the pointer that had just
-          * clicked it, in a bar that wraps. The switch carries the state, the
-          * words name what it does, and the box never changes size. The action
-          * that a click performs now lives in the `title` alone, which is the
-          * one place a changing string costs no layout. */}
-        {category !== 'installed' && (
-          <button
-            type="button"
-            role="switch"
-            aria-checked={hideIncompatible}
-            className={hideIncompatible ? `${css.incompatibleFilter} ${css.incompatibleFilterOn}` : css.incompatibleFilter}
-            title={t(hideIncompatible ? 'showIncompatibleTitle' : 'incompatibleFilterTitle')}
-            data-shop-hide-incompatible
-            onClick={() => { page.updateView(view => ({ hideIncompatible: !view.hideIncompatible, visibleCount: SHOP_VISIBLE_BATCH })) }}
-          >
-            {/* Decoration, not content: the button already carries the name
-              * and `aria-checked` already carries the state, so an exposed
-              * track would announce a second, nameless switch inside it. */}
-            <span className={hideIncompatible ? `${css.switch} ${css.switchOn}` : css.switch} aria-hidden="true">
-              <span className={css.switchKnob} />
-            </span>
-            {t('hideIncompatible', { count: incompatibleCount })}
-          </button>
-        )}
-      </div>
-      <div className={css.catalogStatsRow}>
-        <p className={css.catalogStats} data-shop-catalog-stats>{t('catalogStats', { count: String(browsable.length), date: result.builtAt.slice(0, 10) })}</p>
-        <button
-          type="button"
-          className={css.catalogRefreshButton}
-          data-shop-catalog-refresh
-          disabled={reloading}
-          onClick={() => { setReloading(true); setReloadFailed(false); setRequest({ kind: 'refresh', reverdicts: pendingReverdict() }); setVersionReload(current => current + 1) }}
-        >
-          {reloading ? t('refreshing') : t('refresh')}
-        </button>
-        {reloadFailed && <span className={css.catalogRefreshFailed} data-shop-catalog-refresh-failed>{t('refreshFailed')}</span>}
-        <span className={css.sortGroup} role="group" aria-labelledby={sortLabelId} data-shop-sort>
-          {/* A visible label, not only an accessible name: three bare pills
-            * beside the category bar read as three more categories. The
-            * group is named by this text through `aria-labelledby` rather
-            * than an `aria-label`, so a screen reader does not hear it
-            * twice. */}
-          <span className={css.sortLabel} id={sortLabelId}>{t('sortLabel')}</span>
-          {SHELF_ORDERS.map(name => (
+      <div className={css.shelfBody} data-shop-shelf>
+        <div className={css.controls} data-shop-controls>
+          {/* The rail's headings exist at every width and are hidden below the
+            * container threshold, where the controls are one wrapping bar and
+            * these words would label nothing (design
+            * 2026-11-02-shop-widescreen-layout §4, §6). */}
+          <h2 className={css.railHeading}>{t('categoriesHeading')}</h2>
+          <div className={css.categoryBar} role="group" aria-label={t('catalog')}>
             <button
-              key={name}
               type="button"
-              // The category pills' own classes: a choice among a few, which
-              // is what this is — and the pressed rule they carry is already
-              // pinned to colour only, so the row cannot reflow on a click.
-              className={order === name ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
-              aria-pressed={order === name}
-              data-shop-order={name}
-              onClick={() => { page.setView({ order: name, visibleCount: SHOP_VISIBLE_BATCH }) }}
+              className={category === null ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
+              aria-pressed={category === null}
+              onClick={() => { page.setView({ category: null, visibleCount: SHOP_VISIBLE_BATCH }) }}
+              data-shop-category-all
             >
-              {t(shelfOrderLocaleKey(name))}
+              {/* browsable.length, not the sum of the per-category counts: an
+                * entry whose category is outside CATEGORY_ORDER lands in no
+                * bucket and the sum would quietly lose it. */}
+              <span>{t('all')}</span> <span>{browsable.length}</span>
             </button>
-          ))}
-        </span>
-      </div>
-      {result.plugins.length === 0 ? (
-        <p className={css.emptyLine}>{t('empty')}</p>
-      ) : filtered.length === 0 ? (
-        /* Which control emptied the shelf. `matched` is what the category and
-         * the search box selected, so a non-empty `matched` with an empty
-         * `filtered` says the incompatible modifier took the rest — and the
-         * reader has to be told, because the search box they would look at is
-         * empty and the modifier's own state survives category switches. The
-         * generic search-miss line said "No matching plugins" over a shelf
-         * their own toggle had cleared.
-         *
-         * The Installed view selects by the installed list, so until that
-         * list answers it is empty for want of an answer, not of a match: a
-         * page store keeps the filter, so a return can open on this view
-         * before the list does. It says it is reading the list then; a
-         * failed list says so on its own line (`OutdatedSection`), and the
-         * shelf adds nothing to it. */
-        category === 'installed' && installedState.kind !== 'ready' ? (
-          installedState.kind === 'loading' ? (
-            <p className={css.emptyLine} data-shop-installed-loading>{t('installedLoading')}</p>
-          ) : null
-        ) : (
-          <p className={css.emptyLine} data-shop-empty>
-            {matched.length > 0 ? t('emptyIncompatibleFiltered') : t('emptySearch')}
-          </p>
-        )
-      ) : (
-        <>
-          <ul className={css.cards}>
-            {/* Keyed by install identity, never by name: the catalog's
-              * uniqueness invariant is the identity, and 243 of its entries
-              * share a name with another (see entryKey). A name key handed
-              * React duplicates, and it then left every duplicate's card
-              * orphaned in the DOM when the filter changed. The item carries
-              * the same identity, which the page records as the card the
-              * reader is at and finds again on its return (ShopPage.tsx). */}
-            {visible.map(entry => {
-              // Once per card. `entryKey` builds a fresh string on every call,
-              // and this line was asking for four of them.
-              const key = entryKey(entry)
-              return (
-                <li key={key} data-shop-identity={key}>
-                  <EntryCard entry={entry} icon={iconOf(entry, icons)} stars={starsOf(entry, stars)} order={order} shelfDay={shelfDayOf(entry)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} harness={harnessVerdictOf(harnessVerdicts, key)} nameTakenBy={nameTakenByKey.get(key)} t={t} flow={flows.flowFor(key)} uninstallFlow={uninstallFlows.flowFor(key)} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} page={page} />
-                </li>
-              )
-            })}
-            {incremental && visibleCount < filtered.length && (
-              <li ref={sentinelRef} className={css.cardsSentry} data-shop-sentry aria-hidden="true" />
-            )}
-          </ul>
-          {incremental && visibleCount < filtered.length && (
-            <p className={css.showingLine} aria-live="polite">
-              {t('showing', { shown: String(visibleCount), total: String(filtered.length) })}
-            </p>
+            {CATEGORY_ORDER.map(key => (
+              <button
+                key={key}
+                type="button"
+                className={category === key ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
+                aria-pressed={category === key}
+                /* The hue the pressed state paints with, read from the same table
+                 * the cards' spines and badges read (`ShopTab.module.css`). It
+                 * rides the DOM rather than an inline style so the two surfaces
+                 * cannot drift: there is one table, and a tab is the colour of the
+                 * cards it filters to.
+                 *
+                 * It is a STYLING attribute and never a test hook: every card
+                 * carries `data-category` too, so `[data-category="tool"]` names a
+                 * tab and a card at once. That collision already made a spec count
+                 * seven tabs as seven cards; `data-shop-category-tab` is the hook,
+                 * matching the `data-shop-category-all` / `-installed` idiom on
+                 * either side of this loop. */
+                data-category={key}
+                data-shop-category-tab={key}
+                onClick={() => { page.setView({ category: key, visibleCount: SHOP_VISIBLE_BATCH }) }}
+              >
+                <span>{t(categoryLocaleKey(key))}</span> <span>{categoryCounts.get(key) ?? 0}</span>
+              </button>
+            ))}
+            {/* No `data-category`: Installed selects by installed state, not by
+              * `catalog.category`, so it has no hue of its own and keeps the brand
+              * token `.categoryButton` sets as the fallback. Same for All. */}
+            <button
+              type="button"
+              className={category === 'installed' ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
+              aria-pressed={category === 'installed'}
+              data-shop-category-installed
+              onClick={() => { page.setView({ category: 'installed', visibleCount: SHOP_VISIBLE_BATCH }) }}
+            >
+              <span>{t('installed')}</span> <span>{installedCount}</span>
+            </button>
+          </div>
+          {/* The incompatible filter, at the far edge of the controls row at
+            * narrow widths (the stylesheet pushes it there) and under the
+            * rail's "Filter" heading when the rail exists. A MODIFIER, not a
+            * ninth category: the categories
+            * choose what to show and this subtracts from whatever they chose, so
+            * it does not participate in `category` state and its own state
+            * survives a category switch. The count is over `browsable` like the
+            * category counts, so it says how many entries the shelf holds badged
+            * "Incompatible" — not how many the current filter shows.
+            *
+            * So it is a SWITCH and not a pill. It wore `.categoryButton` and sat
+            * in the same row at the same size, which made a boolean modifier
+            * read as a ninth tab that happened to be red — the tabs are a
+            * choose-one group and this one is on or off, and nothing in the
+            * shape said so. The track is the shop's existing switch, the one
+            * every installed card carries, so there is one switch idiom here
+            * rather than two.
+            *
+            * Absent in the Installed view, where the modifier does not apply:
+            * that view is the only place a broken install can be disabled or
+            * removed, so nothing is subtracted from it, and offering a control
+            * that changes nothing would be a claim the view cannot honour. The
+            * state itself survives — switching back brings it and its switch
+            * back.
+            *
+            * `role="switch"` with `aria-checked` is what a fixed label buys.
+            * The label used to flip between "Hide" and "Show", which ruled out
+            * any state attribute — pairing a flipping label with a pressed state
+            * announces "Show incompatible 1, pressed" while they are hidden,
+            * the inverse of the truth — and cost a length: two labels are two
+            * widths, so the control resized under the pointer that had just
+            * clicked it, in a bar that wraps. The switch carries the state, the
+            * words name what it does, and the box never changes size. The action
+            * that a click performs now lives in the `title` alone, which is the
+            * one place a changing string costs no layout. */}
+          {category !== 'installed' && (
+            <>
+              <h2 className={css.railHeading}>{t('filterHeading')}</h2>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={hideIncompatible}
+                className={hideIncompatible ? `${css.incompatibleFilter} ${css.incompatibleFilterOn}` : css.incompatibleFilter}
+                title={t(hideIncompatible ? 'showIncompatibleTitle' : 'incompatibleFilterTitle')}
+                data-shop-hide-incompatible
+                onClick={() => { page.updateView(view => ({ hideIncompatible: !view.hideIncompatible, visibleCount: SHOP_VISIBLE_BATCH })) }}
+              >
+                {/* Decoration, not content: the button already carries the name
+                  * and `aria-checked` already carries the state, so an exposed
+                  * track would announce a second, nameless switch inside it. */}
+                <span className={hideIncompatible ? `${css.switch} ${css.switchOn}` : css.switch} aria-hidden="true">
+                  <span className={css.switchKnob} />
+                </span>
+                {t('hideIncompatible', { count: incompatibleCount })}
+              </button>
+            </>
           )}
-        </>
-      )}
-      <OutdatedSection
-        state={installedState}
-        entriesByKey={entriesByKey}
-        icons={icons}
-        missingByKey={missingByKey}
-        harnessVerdicts={harnessVerdicts}
-        t={t}
-        setEnabled={setEnabled}
-        flowFor={flows.flowFor}
-        uninstallFor={uninstallFlows.flowFor}
-        restart={restart}
-        restartBlocked={restartBlocked}
-        reload={reload}
-        page={page}
-      />
-      {/* Shadowed rows (§C10) sit only in the Installed view: that view is
-        * management, not shelf, and management is exactly what these entries
-        * lost. Everywhere else they would just repeat the shelf's "not
-        * shown here" rule. */}
-      {category === 'installed' && installedState.kind === 'ready' && (
-        <ShadowedSection
-          entries={installedState.entries}
-          icons={icons}
-          entriesByKey={entriesByKey}
-          t={t}
-          uninstallFlows={uninstallFlows}
-          restart={restart}
-          restartBlocked={restartBlocked}
-          reload={reload}
-        />
-      )}
+        </div>
+        <div className={css.results} data-shop-results>
+          <div className={css.catalogStatsRow}>
+            <p className={css.catalogStats} data-shop-catalog-stats>{t('catalogStats', { count: String(browsable.length), date: result.builtAt.slice(0, 10) })}</p>
+            <button
+              type="button"
+              className={css.catalogRefreshButton}
+              data-shop-catalog-refresh
+              disabled={reloading}
+              onClick={() => { setReloading(true); setReloadFailed(false); setRequest({ kind: 'refresh', reverdicts: pendingReverdict() }); setVersionReload(current => current + 1) }}
+            >
+              {reloading ? t('refreshing') : t('refresh')}
+            </button>
+            {reloadFailed && <span className={css.catalogRefreshFailed} data-shop-catalog-refresh-failed>{t('refreshFailed')}</span>}
+            <span className={css.sortGroup} role="group" aria-labelledby={sortLabelId} data-shop-sort>
+              {/* A visible label, not only an accessible name: three bare pills
+                * beside the category bar read as three more categories. The
+                * group is named by this text through `aria-labelledby` rather
+                * than an `aria-label`, so a screen reader does not hear it
+                * twice. */}
+              <span className={css.sortLabel} id={sortLabelId}>{t('sortLabel')}</span>
+              {SHELF_ORDERS.map(name => (
+                <button
+                  key={name}
+                  type="button"
+                  // The category pills' own classes: a choice among a few, which
+                  // is what this is — and the pressed rule they carry is already
+                  // pinned to colour only, so the row cannot reflow on a click.
+                  className={order === name ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
+                  aria-pressed={order === name}
+                  data-shop-order={name}
+                  onClick={() => { page.setView({ order: name, visibleCount: SHOP_VISIBLE_BATCH }) }}
+                >
+                  {t(shelfOrderLocaleKey(name))}
+                </button>
+              ))}
+            </span>
+          </div>
+          {result.plugins.length === 0 ? (
+            <p className={css.emptyLine}>{t('empty')}</p>
+          ) : filtered.length === 0 ? (
+            /* Which control emptied the shelf. `matched` is what the category and
+             * the search box selected, so a non-empty `matched` with an empty
+             * `filtered` says the incompatible modifier took the rest — and the
+             * reader has to be told, because the search box they would look at is
+             * empty and the modifier's own state survives category switches. The
+             * generic search-miss line said "No matching plugins" over a shelf
+             * their own toggle had cleared.
+             *
+             * The Installed view selects by the installed list, so until that
+             * list answers it is empty for want of an answer, not of a match: a
+             * page store keeps the filter, so a return can open on this view
+             * before the list does. It says it is reading the list then; a
+             * failed list says so on its own line (`OutdatedSection`), and the
+             * shelf adds nothing to it. */
+            category === 'installed' && installedState.kind !== 'ready' ? (
+              installedState.kind === 'loading' ? (
+                <p className={css.emptyLine} data-shop-installed-loading>{t('installedLoading')}</p>
+              ) : null
+            ) : (
+              <p className={css.emptyLine} data-shop-empty>
+                {matched.length > 0 ? t('emptyIncompatibleFiltered') : t('emptySearch')}
+              </p>
+            )
+          ) : (
+            <>
+              <ul className={css.cards}>
+                {/* Keyed by install identity, never by name: the catalog's
+                  * uniqueness invariant is the identity, and 243 of its entries
+                  * share a name with another (see entryKey). A name key handed
+                  * React duplicates, and it then left every duplicate's card
+                  * orphaned in the DOM when the filter changed. The item carries
+                  * the same identity, which the page records as the card the
+                  * reader is at and finds again on its return (ShopPage.tsx). */}
+                {visible.map(entry => {
+                  // Once per card. `entryKey` builds a fresh string on every call,
+                  // and this line was asking for four of them.
+                  const key = entryKey(entry)
+                  return (
+                    <li key={key} data-shop-identity={key}>
+                      <EntryCard entry={entry} icon={iconOf(entry, icons)} stars={starsOf(entry, stars)} order={order} shelfDay={shelfDayOf(entry)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} harness={harnessVerdictOf(harnessVerdicts, key)} nameTakenBy={nameTakenByKey.get(key)} t={t} flow={flows.flowFor(key)} uninstallFlow={uninstallFlows.flowFor(key)} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} page={page} />
+                    </li>
+                  )
+                })}
+                {incremental && visibleCount < filtered.length && (
+                  <li ref={sentinelRef} className={css.cardsSentry} data-shop-sentry aria-hidden="true" />
+                )}
+              </ul>
+              {incremental && visibleCount < filtered.length && (
+                <p className={css.showingLine} aria-live="polite">
+                  {t('showing', { shown: String(visibleCount), total: String(filtered.length) })}
+                </p>
+              )}
+            </>
+          )}
+          <OutdatedSection
+            state={installedState}
+            entriesByKey={entriesByKey}
+            icons={icons}
+            missingByKey={missingByKey}
+            harnessVerdicts={harnessVerdicts}
+            t={t}
+            setEnabled={setEnabled}
+            flowFor={flows.flowFor}
+            uninstallFor={uninstallFlows.flowFor}
+            restart={restart}
+            restartBlocked={restartBlocked}
+            reload={reload}
+            page={page}
+          />
+          {/* Shadowed rows (§C10) sit only in the Installed view: that view is
+            * management, not shelf, and management is exactly what these entries
+            * lost. Everywhere else they would just repeat the shelf's "not
+            * shown here" rule. */}
+          {category === 'installed' && installedState.kind === 'ready' && (
+            <ShadowedSection
+              entries={installedState.entries}
+              icons={icons}
+              entriesByKey={entriesByKey}
+              t={t}
+              uninstallFlows={uninstallFlows}
+              restart={restart}
+              restartBlocked={restartBlocked}
+              reload={reload}
+            />
+          )}
+        </div>
+      </div>
     </div>
   )
 }

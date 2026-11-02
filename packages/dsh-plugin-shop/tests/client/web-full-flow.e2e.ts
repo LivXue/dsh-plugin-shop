@@ -761,6 +761,120 @@ async function readPill(pill: Locator) {
   })
 }
 
+/** The shelf's three arrangements, chosen by the tab root's inline size — the
+ * page's own width, not the window's (design 2026-11-02-shop-widescreen-layout
+ * §3). dsh's sidebar and the page's padding sit between the two, so the run
+ * measures that chrome once (at 1024, where the tab is below every
+ * breakpoint) and derives three windows that target tab widths of 1180,
+ * 1000 and 804. A hard-coded pair of windows would assert the HOST's sidebar
+ * width, not this page's layout: the 0.1.5 leg's chrome differs from
+ * 0.2.x's. The sticky check runs in the short window the restore case uses,
+ * the only one here that makes a six-card shelf scroll. */
+async function checkShelfLayout(app: Page, shop: Locator): Promise<void> {
+  const read = (): Promise<{ panel: number; rail: number; position: string; display: string; tracks: number; overhang: number; unfilled: number }> =>
+    shop.evaluate(el => {
+      const tab = el.querySelector('[data-shop-tab]')
+      const controls = el.querySelector('[data-shop-controls]')
+      const shelf = el.querySelector('[data-shop-shelf]')
+      const cards = el.querySelector('[data-shop-results] ul')
+      const column = cards?.parentElement ?? null
+      const items = [...(cards?.querySelectorAll(':scope > li') ?? [])]
+      return {
+        panel: tab?.getBoundingClientRect().width ?? 0,
+        rail: controls?.getBoundingClientRect().width ?? 0,
+        position: controls === null ? 'missing' : getComputedStyle(controls).position,
+        display: shelf === null ? 'missing' : getComputedStyle(shelf).display,
+        // Resolved to pixels: "434px 434px" is two tracks, "1078px" one.
+        tracks: cards === null ? 0 : getComputedStyle(cards).gridTemplateColumns.split(' ').length,
+        // How far a card pokes out of its results column (0 when none does).
+        overhang: column === null ? 0 : Math.max(0, ...items.map(item => item.getBoundingClientRect().right - column.getBoundingClientRect().right)),
+        // How far a card's own box stops short of its grid cell's bottom.
+        // `margin-top: auto` on the action row can only line two cards' buttons
+        // up if the card fills the cell first (design
+        // 2026-11-02-shop-widescreen-layout §5).
+        unfilled: Math.max(0, ...items.map(item => {
+          const card = item.querySelector('[data-shop-entry]')
+          return card === null ? 0 : item.getBoundingClientRect().bottom - card.getBoundingClientRect().bottom
+        })),
+      }
+    })
+  // Two frames after a resize: a container query re-evaluates with layout, and
+  // the read below forces it, but the second frame keeps the first paint from
+  // being the one measured.
+  const settle = (): Promise<unknown> => app.evaluate(() => new Promise(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(() => { resolve(null) }))
+  }))
+  const measureAt = async (width: number, height: number) => {
+    await app.setViewportSize({ width, height })
+    await settle()
+    return read()
+  }
+  try {
+    // The window is not the tab: dsh's sidebar and the page's own padding sit
+    // between. Measure that chrome once, in a window whose tab is below every
+    // breakpoint, then derive the three windows from it, so no host's sidebar
+    // width is hard-coded — the 0.1.5 leg's differs from 0.2.x's, and a fixed
+    // 1440 could land on the rail there and on two columns here.
+    const probe = await measureAt(1024, 1000)
+    expect(probe.panel, '1024px window: the tab is not below the two-column bound').toBeLessThan(872)
+    const chrome = 1024 - probe.panel
+    expect(chrome, 'the window-to-tab chrome is not positive').toBeGreaterThan(96)
+    const wideWidth = Math.round(1140 + chrome + 40)
+    const cases = [
+      { width: wideWidth, min: 1140, max: Number.POSITIVE_INFINITY },
+      { width: Math.round(1000 + chrome), min: 872, max: 1140 },
+      { width: Math.round(804 + chrome), min: 0, max: 872 },
+    ]
+    for (const one of cases) {
+      const measured = await measureAt(one.width, 1000)
+      const where = `${String(one.width)}px window: panel ${String(Math.round(measured.panel))}px`
+      expect(measured.panel, where).toBeGreaterThanOrEqual(one.min)
+      expect(measured.panel, where).toBeLessThan(one.max)
+      const wide = measured.panel >= 1140
+      expect(measured.position, `${where}: controls position`).toBe(wide ? 'sticky' : 'static')
+      expect(measured.display, `${where}: shelf arrangement`).toBe(wide ? 'grid' : 'flex')
+      expect(measured.tracks, `${where}: card columns`).toBe(measured.panel >= 872 ? 2 : 1)
+      expect(measured.overhang, `${where}: a card pokes out of its column`).toBeLessThanOrEqual(1)
+      expect(measured.unfilled, `${where}: a card stops short of its grid cell`).toBeLessThanOrEqual(1)
+      if (wide) expect(Math.round(measured.rail), `${where}: rail width`).toBe(232)
+    }
+    // Sticky: in a 480px-tall window, compare the rail's movement with the
+    // results' over the same 100px of scroll. A stuck rail moves less; a
+    // static one moves exactly as far, which is the failure `.panel`'s
+    // `overflow: clip` could cause if `clip` had made it a scrollport.
+    await app.setViewportSize({ width: wideWidth, height: 480 })
+    await settle()
+    const room = await shop.evaluate(el => el.scrollHeight - el.clientHeight)
+    expect(room, 'the shelf does not scroll, so the sticky edge is not exercised').toBeGreaterThan(120)
+    // At the bottom, then 100px above it. The results move the full 100px
+    // between the two; a sticky rail moves less, because part of that range
+    // is spent holding its edge. A static rail moves exactly as far as the
+    // results do, which is the failure `overflow: clip` could cause if it
+    // had made the panel a scrollport.
+    const positions = (): Promise<{ rail: number; results: number }> => shop.evaluate(el => ({
+      rail: el.querySelector('[data-shop-controls]')?.getBoundingClientRect().top ?? Number.NaN,
+      results: el.querySelector('[data-shop-identity]')?.getBoundingClientRect().top ?? Number.NaN,
+    }))
+    await shop.evaluate(el => {
+      if (el instanceof HTMLElement) el.scrollTop = el.scrollHeight - el.clientHeight
+    })
+    await settle()
+    const bottom = await positions()
+    await shop.evaluate(el => {
+      if (el instanceof HTMLElement) el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - 100)
+    })
+    await settle()
+    const up = await positions()
+    const resultsMoved = Math.abs(up.results - bottom.results)
+    const railMoved = Math.abs(up.rail - bottom.rail)
+    expect(resultsMoved, 'the results did not move, so the comparison proves nothing').toBeGreaterThan(90)
+    expect(railMoved, 'the rail moved with the results').toBeLessThan(resultsMoved - 2)
+    await shop.evaluate(el => { if (el instanceof HTMLElement) el.scrollTop = 0 })
+  } finally {
+    await app.setViewportSize({ width: 1680, height: 1000 })
+  }
+}
+
 /** Exercise real hover/click states under both harness theme palettes. */
 async function checkCategoryBar(app: Page, shop: Locator): Promise<void> {
   const all = shop.locator('[data-shop-category-all]')
@@ -1612,6 +1726,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await liveCard.locator('img').waitFor({ state: 'attached', timeout: 10_000 })
       expect(await liveCard.locator('img').getAttribute('src')).toBe(DEFAULT_ICON_DATA_URL)
 
+      // The three arrangements of the shelf, each against the width the tab
+      // actually gets, and the rail's sticky edge.
+      await checkShelfLayout(app, shop)
       // Both themes and all three active states: readable text, the shared
       // category hue on the selected border, and exact category-tab widths.
       await checkCategoryBar(app, shop)
@@ -1621,9 +1738,12 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await checkStandInText(app, shop, 'dsh-e2e-fixture-plugin')
       // The page keeps the reader's place across leaving and returning: the
       // card at its top edge comes back at the same height (design
-      // 2026-10-16-shop-sidebar-page §5.7). Six cards fit the usual
-      // viewport, so a short one makes the page scroll; the usual one comes
-      // back even when a step here fails, so no later case runs short.
+      // 2026-10-16-shop-sidebar-page §5.7). Since 2026-11-02 the shelf is a
+      // two-column grid at this width; the restore reads the card's rect,
+      // never the column count, so the anchor returns at the top of its row
+      // (design 2026-11-02-shop-widescreen-layout §4). Six cards fit the
+      // usual viewport, so a short one makes the page scroll; the usual one
+      // comes back even when a step here fails, so no later case runs short.
       await app.setViewportSize({ width: 1680, height: 480 })
       try {
         await shop.locator('[data-shop-page-title]').hover()
@@ -2583,7 +2703,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   it(
     'keeps every card inside the column after the window narrows',
     async () => {
-      // The page's column follows the window, 960px wide on a wide one and
+      // The page's column follows the window, 1280px wide on a wide one and
       // 662px at 1024, and a card the browser skips (`content-visibility:
       // auto` on `.card`) keeps the width it last rendered at. Browsing at
       // 1440 and narrowing to 1024 left every card 960px wide in the 662px
@@ -2597,7 +2717,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await shop.locator('[data-shop-category-all]').click()
       await shop.locator('[data-shop-entry]').first().waitFor({ state: 'visible', timeout: 15_000 })
       // Wide first, short enough that the shelf scrolls, so every card is
-      // rendered once at the 960px column on the way through.
+      // rendered once at the 1280px column on the way through.
       await app.setViewportSize({ width: 1680, height: 480 })
       try {
         // Every card renders once at the wide column: through the shelf a

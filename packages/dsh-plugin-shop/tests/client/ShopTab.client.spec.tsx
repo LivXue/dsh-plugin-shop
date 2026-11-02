@@ -180,8 +180,8 @@ describe('ShopTab', () => {
     const { injected } = bench(snapshot())
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    // The card shows the badges on its first line and the clamped summary
-    // below; the capabilities live in the expanded detail.
+    // The card shows the badges on the line under its name and the clamped
+    // summary below; the capabilities live in the expanded detail.
     // The community tier is not badged: every one of the live catalog's 4915
     // entries carries it, so the label said nothing. verified and
     // verified-stale still are — see below.
@@ -1820,6 +1820,105 @@ describe('ShopTab', () => {
     fireEvent.click(tool)
     expect(tool.getAttribute('aria-pressed')).toBe('true')
     expect(all.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('puts the controls before the results in one shelf body', async () => {
+    // The layout switches between one column and a rail beside a grid by CSS
+    // alone, so both boxes exist at every width, in source order controls →
+    // results (design 2026-11-02-shop-widescreen-layout §4). One hook each:
+    // a second copy would give the page two places to read the same control.
+    const { injected } = bench(snapshot())
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const shelf = nodeAt(container, '[data-shop-shelf]')
+    const controls = nodeAt(container, '[data-shop-controls]')
+    const results = nodeAt(container, '[data-shop-results]')
+    expect(controls.parentElement).toBe(shelf)
+    expect(results.parentElement).toBe(shelf)
+    expect(controls.nextElementSibling).toBe(results)
+    expect(container.querySelectorAll('[data-shop-shelf]').length).toBe(1)
+    // The bar is a control; the stats row and the shelf are results.
+    expect(nodeAt(container, '[data-shop-category-all]').closest('[data-shop-results]')).toBeNull()
+    expect(nodeAt(container, '[data-shop-catalog-stats]').closest('[data-shop-results]')).toBe(results)
+    expect(nodeAt(container, '[data-shop-entry]').closest('[data-shop-results]')).toBe(results)
+  })
+
+  it('renders every control once and both managed sections inside the results', async () => {
+    // The two arrangements reflow one DOM tree, so a control rendered twice
+    // would be a second tab stop and a second source of state. The outdated
+    // and shadowed sections belong to the results column, under the grid,
+    // never across the rail (design 2026-11-02-shop-widescreen-layout §4).
+    const shadowed: InstalledFixture = {
+      name: 'dsh-shadowed-plugin', source: 'github', repo: 'alice/dsh-shadowed-plugin',
+      installed: 'a'.repeat(40), latest: null, outdated: false, enabled: true, shadowed: true,
+    }
+    const { injected } = bench(snapshot(), [
+      { name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true },
+      shadowed,
+    ])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-entry]')).toBeTruthy())
+    expect(container.querySelectorAll('[data-shop-category-all]').length).toBe(1)
+    expect(container.querySelectorAll('[data-shop-category-tab]').length).toBe(7)
+    expect(container.querySelectorAll('[data-shop-category-installed]').length).toBe(1)
+    expect(container.querySelectorAll('[data-shop-hide-incompatible]').length).toBe(1)
+    expect(container.querySelectorAll('[data-shop-order]').length).toBe(3)
+    const results = nodeAt(container, '[data-shop-results]')
+    await waitFor(() => expect(container.querySelector('[data-shop-outdated]')).toBeTruthy())
+    expect(nodeAt(container, '[data-shop-outdated]').parentElement).toBe(results)
+    expect(nodeAt(container, '[data-shop-outdated-entry]').closest('[data-shop-results]')).toBe(results)
+    fireEvent.click(nodeAt(container, '[data-shop-category-installed]'))
+    await waitFor(() => expect(container.querySelector('[data-shop-shadowed]')).toBeTruthy())
+    expect(nodeAt(container, '[data-shop-shadowed]').parentElement).toBe(results)
+    expect(nodeAt(container, '[data-shop-shadowed-entry]').closest('[data-shop-results]')).toBe(results)
+  })
+
+  it('moves the incompatible switch out of the category group, under its own heading', async () => {
+    // A boolean modifier was never a ninth category, and the wide rail needs
+    // a node between the group and the switch for its heading (design
+    // 2026-11-02-shop-widescreen-layout §4, §6). In the Installed view the
+    // switch and its heading are both absent, because the modifier does not
+    // apply there; the categories' heading stays.
+    const { injected } = bench(snapshot())
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const controls = nodeAt(container, '[data-shop-controls]')
+    const group = nodeAt(container, '[role="group"][aria-label="Plugin catalog"]')
+    const filter = nodeAt(container, '[data-shop-hide-incompatible]')
+    expect(group.contains(filter)).toBe(false)
+    expect(filter.parentElement).toBe(controls)
+    const filterHeading = filter.previousElementSibling
+    expect(filterHeading?.tagName).toBe('H2')
+    expect(filterHeading?.textContent).toBe(en.filterHeading)
+    const categoriesHeading = group.previousElementSibling
+    expect(categoriesHeading?.tagName).toBe('H2')
+    expect(categoriesHeading?.textContent).toBe(en.categoriesHeading)
+    fireEvent.click(nodeAt(container, '[data-shop-category-installed]'))
+    expect(container.querySelector('[data-shop-hide-incompatible]')).toBeNull()
+    expect([...container.querySelectorAll('h2')].map(node => node.textContent)).not.toContain(en.filterHeading)
+    expect([...container.querySelectorAll('h2')].map(node => node.textContent)).toContain(en.categoriesHeading)
+  })
+
+  it('puts a card\'s badges under its name, inside the header button', async () => {
+    // At a 430px grid track the seven-badge cluster leaves the name about
+    // 120px when it shares the row. The cluster moves under the name, and the
+    // chevron keeps the right edge (design 2026-11-02-shop-widescreen-layout
+    // §5). Every badge stays in the header button, so clicking one still
+    // expands the card.
+    const { injected } = bench(snapshot())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const name = screen.getByText('dsh-hello-plugin')
+    const heading = name.parentElement
+    const header = heading?.parentElement
+    expect(header?.tagName).toBe('BUTTON')
+    expect(header?.children[1]).toBe(heading)
+    expect(header?.firstElementChild?.querySelector('img')).toBeTruthy()
+    expect(header?.lastElementChild?.tagName.toLowerCase()).toBe('svg')
+    const badges = name.nextElementSibling
+    expect(badges).toBe(heading?.lastElementChild)
+    expect(badges?.querySelector('[data-card-version]')).toBeTruthy()
+    expect(badges?.querySelector('[data-shop-source-npm]')).toBeTruthy()
   })
 
   it('heads the update rows "Updates available", which the Installed filter does not say', () => {
