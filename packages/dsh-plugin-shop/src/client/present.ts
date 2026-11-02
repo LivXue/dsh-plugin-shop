@@ -212,11 +212,12 @@ export function refusesInstall(blockers: readonly { kind: BlockerKind }[]): bool
 
 /** The key dsh 0.2.1 lists a package's own `engines.dsh` range under, among
  * the requirements it refuses (design 2026-10-19-dsh-021-readiness, section
- * 4). No card receives it yet: the prediction judges the catalog's `dshPeers`
- * alone, and the catalog carries no `engines` (that section's known gap). A
- * refusal dsh raises at install time names the key in the install's own detail
- * (`versionRefusalDetail`), which never passes through here. So look for no
- * producer in `peerVerdictsOf`; this waits for the catalog to carry `engines`. */
+ * 4). Cards DO receive it now: the catalog carries `engines` from the 2026-11-02
+ * build on (design 2026-11-02-market-borrowings §1), `ownManifest` hands it to
+ * dsh's own rule, and a refusal comes back with this key in the map — which is
+ * why {@link refusedPeersText} has to render it as `dsh <range>` rather than as
+ * a package name. An install-time refusal carries the same key in its own
+ * detail (`versionRefusalDetail`), which never passes through here. */
 const ENGINES_DSH = 'engines.dsh'
 
 /**
@@ -363,6 +364,9 @@ export interface InstallStatusShape {
   activation?: Activation
   restartReason?: HotRestartReason
   detail?: string
+  /** The terminal line that ran, in the form a reader can retry by hand
+   * (design 2026-11-02-market-borrowings §5). Present on a failure only. */
+  command?: string
 }
 
 /** The install view state machine (§7.2). `phase` distinguishes the download
@@ -376,7 +380,7 @@ export type InstallView =
   | { kind: 'rejected'; code: InstallRejectionCode; detail: string }
   | { kind: 'running'; installId: string; log: string[]; phase: 'downloading' | 'installing' }
   | { kind: 'done'; activation: Activation; log: string[]; restartReason?: HotRestartReason; detail?: string }
-  | { kind: 'failed'; detail: string; log: string[] }
+  | { kind: 'failed'; detail: string; log: string[]; command?: string }
 
 /** One event the install view reacts to. */
 export type InstallEvent =
@@ -543,7 +547,7 @@ export function reduceInstall(state: InstallView, event: InstallEvent): InstallV
           ...(status.detail !== undefined ? { detail: status.detail } : {}),
         }
       }
-      return { kind: 'failed', detail: status.detail ?? '', log: status.log }
+      return { kind: 'failed', detail: status.detail ?? '', log: status.log, ...(status.command !== undefined ? { command: status.command } : {}) }
     }
   }
 }
@@ -670,13 +674,69 @@ export function authorOf(entry: CatalogEntry): string | null {
 
 export function npmPageUrl(entry: CatalogEntry): string | null {
   if (entry.source !== 'npm') return null
-  const name = entry.name
+  return npmPackageUrl(entry.name)
+}
+
+/** The npm page of one package name, or null when the name is not one npm
+ * could have. The validation lives here, once, because both the entry's own
+ * link and the update row's version link build the same path from a name that
+ * is untrusted on one of them (`ShopInstalledEntry.name` is a profile
+ * manifest key).
+ */
+function npmPackageUrl(name: string): string | null {
   // 214 is npm's own limit; the segment checks reject `.`/`..` so the path
   // cannot climb out of /package/.
   if (name.length === 0 || name.length > 214) return null
   if (!/^(@[A-Za-z0-9._-]+\/)?[A-Za-z0-9._-]+$/.test(name)) return null
   if (name.split('/').some(segment => segment === '.' || segment === '..' || segment === '@')) return null
   return `https://www.npmjs.com/package/${name}`
+}
+
+/** A GitHub `owner/slug`: letters, digits, dot, dash, underscore, one slash. */
+const GITHUB_REPO = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
+
+/** Whether `repo` is a GitHub identity this code will put in a URL path. The
+ * grammar alone admits `.` and `..`, which the URL parser then reads as path
+ * segments — the same hole `npmPageUrl` closes on the npm side. */
+function isGithubRepo(repo: string): boolean {
+  return GITHUB_REPO.test(repo) && repo.split('/').every(segment => segment !== '.' && segment !== '..')
+}
+
+/** A version segment safe to put in one URL path piece. */
+const URL_VERSION = /^[A-Za-z0-9._+-]{1,256}$/
+
+/**
+ * Where an update's changes can be read, or null when no link can be built
+ * honestly (design 2026-11-02-market-borrowings §4).
+ *
+ * Built from the installed row alone, never from `entry.repository`: that
+ * field is author-declared text and is not the install source, so a link made
+ * from it could send a reader to a repository that serves different code.
+ * `row.repo` is the catalog's own github identity, the thing that installed.
+ *
+ * - npm: the npm page of the target version, which lists its own release
+ *   notes when the author wrote them, and its publication date either way.
+ * - github commit to commit: the compare view, which is the diff itself.
+ * - anything else on github (a release tag, or a value that is not a commit):
+ *   the repository's releases, which exists even when no release does.
+ */
+export function whatChangedUrl(row: {
+  source: 'npm' | 'github'
+  name: string
+  repo?: string
+  installed: string
+  latest: string
+}): string | null {
+  if (row.source === 'npm') {
+    const base = npmPackageUrl(row.name)
+    if (base === null || !URL_VERSION.test(row.latest)) return null
+    return `${base}/v/${row.latest}`
+  }
+  if (row.repo === undefined || !isGithubRepo(row.repo)) return null
+  if (COMMIT_PIN.test(row.installed) && COMMIT_PIN.test(row.latest)) {
+    return `https://github.com/${row.repo}/compare/${row.installed}...${row.latest}`
+  }
+  return `https://github.com/${row.repo}/releases`
 }
 
 /**

@@ -18,6 +18,7 @@ import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
 import { gateOperand, INSTALL_TIMEOUT_MS, startInstall, startUninstall, type InstallStatus, type RunningInstall } from './executor.ts'
 import { cleanHotDir, hotMount, hotUnmount, nodeHotFs, type HotFs } from './hot.ts'
+import { nodeShopStateFs, readShopState, rollbackSpec, writeShopState, type ShopStateFs } from './state.ts'
 import { activationOf, type Activation } from './activation.ts'
 import { hasClientHalf } from './client-half.ts'
 import { restartCommand, startRestart, type RestartOutcome } from './restart.ts'
@@ -148,6 +149,10 @@ export interface ShopGatewayOptions {
   restartExitDelayMs?: number
   /** Test-only injection: the pins file's filesystem; production uses node:fs. */
   pinFs?: RepoPinFs
+  /** Test-only injection: the profile state file's filesystem (favorites and
+   * rollback records, `state.ts`); production uses node:fs with a
+   * write-then-rename. */
+  stateFs?: ShopStateFs
   /** Test-only injection: the explicit `allowRestart` override; production
    * reads the loader row's `config.allowRestart`. */
   allowRestart?: boolean
@@ -347,6 +352,14 @@ export interface ShopInstalledEntry {
   shadowed?: true
 }
 
+/** What `shop/state` answers (design 2026-11-02-market-borrowings §6–§7):
+ * starred install identities, and per identity the version an update
+ * replaced — the version a rollback would restore. */
+export interface ShopStateResult {
+  favorites: string[]
+  rollback: Record<string, string>
+}
+
 /** One row of the row config the bundle patch (§cordis.patch.yml) supplies. */
 interface ShopRowConfig {
   catalogUrl?: unknown
@@ -538,6 +551,9 @@ export class ShopGateway extends TypertRemoteService {
   private committedRestart: ShopRestartResult | null = null
   private readonly latestVersion: () => Promise<string | null>
   private readonly pinFs: RepoPinFs
+  /** Favorites and rollback records (`state.ts`), read and written through
+   * this seam so tests never touch the real profile. */
+  private readonly stateFs: ShopStateFs
   private readonly allowRestart?: boolean
   private readonly env: NodeJS.ProcessEnv
   /** The platform the restart gate reads; production defaults to
@@ -615,6 +631,7 @@ export class ShopGateway extends TypertRemoteService {
       },
     }
     this.allowRestart = options.allowRestart
+    this.stateFs = options.stateFs ?? nodeShopStateFs
     this.env = options.env ?? process.env
     this.platform = options.platform ?? process.platform
     this.ppid = options.ppid ?? process.ppid
@@ -1511,6 +1528,12 @@ export class ShopGateway extends TypertRemoteService {
     // this session, whose module is still in the cache.
     const isUpdate = installedSpec !== undefined
     const alreadyImported = isUpdate || this.imported.has(args.name)
+    // Remember what this update replaces BEFORE it runs, so the rollback
+    // offer exists the moment the new version lands (design
+    // 2026-11-02-market-borrowings §6). A failed install leaves the record
+    // naming the version still installed, which the client hides — the offer
+    // is shown only when the record differs from what is installed.
+    if (isUpdate) this.rememberPrevious(entry, args.name)
     // Read before the spawn: the post-install check below is synchronous, and
     // which dsh runs cannot change while it runs (see `harnessRead`).
     const harness = await this.runningHarness()
@@ -1775,6 +1798,72 @@ export class ShopGateway extends TypertRemoteService {
     for (const id of finishedIds.slice(0, excess)) this.installs.delete(id)
   }
 
+  /**
+   * Record the version an update is about to replace, so a rollback can
+   * restore it (design 2026-11-02-market-borrowings §6).
+   *
+   * Called only for an update, before the spawn. A fresh install has nothing
+   * to go back to, and a record naming the version already installed is
+   * harmless: the client offers a rollback only when the record differs from
+   * what is installed, so a failed update leaves no offer.
+   *
+   * Every failure here is swallowed. A rollback point is a convenience; an
+   * install that would succeed must not fail because the profile directory
+   * could not take a bookmark, and the same unwritable directory is about to
+   * fail the install on its own with a message worth reading.
+   */
+  private rememberPrevious(entry: CatalogEntry, name: string): void {
+    const current = this.installedVersionOf(entry)
+    if (current === undefined || current === entry.version) return
+    try {
+      const state = readShopState(this.stateFs, this.profileDirResolved())
+      state.previous[identityKey(entry)] = {
+        source: entry.source,
+        name,
+        ...(entry.repo !== undefined ? { repo: entry.repo } : {}),
+        ...(entry.subdir !== undefined ? { subdir: entry.subdir } : {}),
+        version: current,
+      }
+      writeShopState(this.stateFs, this.profileDirResolved(), state)
+    } catch {
+      // Swallows an unwritable state file. See the note above: the install
+      // proceeds, and there is simply no rollback offer for this one.
+    }
+  }
+
+  /**
+   * The version of `entry` currently on disk, or undefined when it cannot be
+   * read.
+   *
+   * npm reads the installed package's own manifest rather than the profile's
+   * dependency spec: a profile may hold a RANGE (`^1.2.3`), and recording
+   * that as "the previous version" would roll a reader forward to whatever
+   * the registry serves on the day they click. github reads the pin the shop
+   * wrote at install time, which is the commit that actually runs.
+   */
+  private installedVersionOf(entry: CatalogEntry): string | undefined {
+    if (entry.source === 'github') {
+      try {
+        const pins = readRepoPins(this.pinFs, this.pinsPath())
+        return pins[identityKey(entry)] ?? pins[entry.name]
+      } catch {
+        // Swallows an unreadable pins file: no pin means no recordable
+        // version, and the caller then records nothing.
+        return undefined
+      }
+    }
+    try {
+      const manifest = JSON.parse(
+        this.pinFs.read(join(this.profileDirResolved(), 'node_modules', entry.name, 'package.json')),
+      ) as { version?: unknown }
+      return typeof manifest.version === 'string' && manifest.version.trim() !== '' ? manifest.version : undefined
+    } catch {
+      // Swallows an absent or unreadable installed manifest: the package is
+      // not where a hoisted install puts it, so no version is recorded.
+      return undefined
+    }
+  }
+
   /** Whether any command this gateway started is still running — or still
    * waiting its turn. */
   private hasRunningCommand(): boolean {
@@ -1815,6 +1904,75 @@ export class ShopGateway extends TypertRemoteService {
   @Remote('installedSpecs')
   async installedSpecs(): Promise<Record<string, string> | null> {
     return this.profileDependenciesOrNone() ?? null
+  }
+
+  /**
+   * What the shop remembers between visits: the reader's favorites and, per
+   * install identity, the version an update replaced (design
+   * 2026-11-02-market-borrowings §6–§7).
+   *
+   * `rollback` carries a VERSION rather than a spec: the client renders it as
+   * the offer ("roll back to 1.2.3"), and the spec that installs it is built
+   * by the host from the same record. A malformed or missing file reads as
+   * empty state — losing stars must never take the page down.
+   */
+  @Remote('state')
+  async shopState(): Promise<ShopStateResult> {
+    const state = readShopState(this.stateFs, this.profileDirResolved())
+    const rollback: Record<string, string> = {}
+    for (const [key, record] of Object.entries(state.previous)) rollback[key] = record.version
+    return { favorites: state.favorites, rollback }
+  }
+
+  /**
+   * Star or unstar one install identity (§7).
+   *
+   * A write failure is reported rather than swallowed: the client flips its
+   * star optimistically and would otherwise show a favorite that is gone on
+   * the next visit. The key is stored verbatim — it is the identity the
+   * catalog itself uses, and an unknown one is harmless until it matches.
+   */
+  @Remote('setFavorite')
+  async setFavorite(args: { key: string; favorite: boolean }): Promise<{ ok: boolean; detail?: string }> {
+    const state = readShopState(this.stateFs, this.profileDirResolved())
+    const has = state.favorites.includes(args.key)
+    if (args.favorite && !has) state.favorites.push(args.key)
+    if (!args.favorite && has) state.favorites = state.favorites.filter(key => key !== args.key)
+    try {
+      writeShopState(this.stateFs, this.profileDirResolved(), state)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, detail: `The favorite could not be saved: ${(error as Error).message}` }
+    }
+  }
+
+  /**
+   * Re-install the version an entry was updated from (§6).
+   *
+   * Takes only the install identity. The spec is built by `rollbackSpec` from
+   * this host's own record, so a client cannot name a version or a spec the
+   * shop never wrote — the same invariant `installStart` holds by building
+   * its spec from the snapshot. The install then runs through the ordinary
+   * CLI path, with the same records, activation verdict and notices an
+   * update gets.
+   */
+  @Remote('rollbackStart')
+  async rollbackStart(args: { key: string }): Promise<ShopInstallResult> {
+    const manager = this.pluginManager()
+    if (isDesktopProfile(this.profile) && manager === null) return { ok: false, code: 'desktop-profile', detail: DESKTOP_PROFILE_DETAIL }
+    const state = readShopState(this.stateFs, this.profileDirResolved())
+    const record = Object.hasOwn(state.previous, args.key) ? state.previous[args.key] : undefined
+    if (record === undefined) {
+      return { ok: false, code: 'not-in-catalog', detail: 'dsh-plugin-shop: there is no earlier version recorded for this plugin.' }
+    }
+    const spec = rollbackSpec(record)
+    if (spec === undefined) {
+      return { ok: false, code: 'version-mismatch', detail: `dsh-plugin-shop: the recorded earlier version of ${record.name} cannot be installed.` }
+    }
+    const harness = await this.runningHarness()
+    const running = this.startCliInstall(record.name, spec, harness, true)
+    this.track(running)
+    return { ok: true, installId: running.installId, state: running.status().state }
   }
 
   /** Installed catalog plugins (§7.3): every entry of the snapshot the profile

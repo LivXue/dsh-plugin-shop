@@ -38,7 +38,7 @@ describe('the reader\'s place', () => {
   it('opens on the star order, every category and the first batch', () => {
     const { store } = bench()
     expect(store.getSnapshot().view).toBe(INITIAL_VIEW)
-    expect(INITIAL_VIEW).toEqual({ query: '', category: null, order: 'stars', hideIncompatible: false, visibleCount: SHOP_VISIBLE_BATCH })
+    expect(INITIAL_VIEW).toEqual({ query: '', category: null, order: 'stars', hideIncompatible: false, favoritesOnly: false, visibleCount: SHOP_VISIBLE_BATCH })
     expect(store.isExpanded(KEY)).toBe(false)
     store.dispose()
   })

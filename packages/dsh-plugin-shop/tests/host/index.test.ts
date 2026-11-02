@@ -4391,6 +4391,9 @@ describe("installs and updates through dsh's pluginManager", () => {
       state: 'failed',
       log: ["via dsh's plugin manager: install dsh-managed@1.0.0", bridgeTo('dsh-managed@1.0.0'), 'installing...'],
       detail: 'pnpm failed in the profile. Run: dsh plugin --profile web install — installing...',
+      // The retry line the failure now carries (design 2026-11-02-market-borrowings
+      // §5), quoted because a github operand contains `&`.
+      command: 'dsh plugin --profile web add "dsh-managed@1.0.0"',
     })
     expect(cliCalls(cliDir)).toEqual(['plugin --profile web add dsh-managed@1.0.0'])
   })
