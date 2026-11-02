@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { EMPTY_SHOP_STATE, FAVORITES_MAX, PREVIOUS_MAX, readShopState, rollbackSpec, statePath, writeShopState, type ShopState } from '../../src/host/state.ts'
 import { memHotFs } from './mem-fs.ts'
@@ -18,7 +19,10 @@ const PROFILE = '/profile'
 
 describe('the profile state file', () => {
   it('lives under .dsh-shop, where the boot wipe does not reach', () => {
-    expect(statePath(PROFILE)).toBe('/profile/.dsh-shop/state.json')
+    // Built with `join`, never as a POSIX literal: the product composes the
+    // path with `join` too, and on Windows the two spellings differ (the
+    // rule `mem-fs.ts` records for every path fixture in this directory).
+    expect(statePath(PROFILE)).toBe(join(PROFILE, '.dsh-shop', 'state.json'))
   })
 
   it('reads a missing file as empty state', () => {
