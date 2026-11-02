@@ -294,7 +294,11 @@ specified, with these builder calls:
   2026-10-22 clipping case guards. The sticky check compares the rail's
   movement with the results' over the same 100 px of scroll, because the
   shelf scrolls only about 262 px in that window — less than a fixed-offset
-  check assumed.
+  check assumed. The existing clipping case derives its narrow window the
+  same way: at a fixed 1024 its single 662 px column is wider than a 634 px
+  wide-grid card, and its skipped-card precondition did not hold at a 160 px
+  window on Ubuntu; it now runs at 60 px and narrows to one card-width below
+  the measured wide card.
 - The existing 1680×480 restore round trip is the grid case; no second round
   trip was added, because the restore reads the card's rect, not the column
   count.

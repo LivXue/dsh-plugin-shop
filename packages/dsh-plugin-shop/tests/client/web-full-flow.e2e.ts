@@ -2703,23 +2703,34 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   it(
     'keeps every card inside the column after the window narrows',
     async () => {
-      // The page's column follows the window, 1280px wide on a wide one and
-      // 662px at 1024, and a card the browser skips (`content-visibility:
-      // auto` on `.card`) keeps the width it last rendered at. Browsing at
-      // 1440 and narrowing to 1024 left every card 960px wide in the 662px
-      // column, its right side clipped — badges, version, chevron, size and
+      // The page's tab follows the window -- 1280px on a wide one, 662px at
+      // 1024 -- and a card the browser skips (`content-visibility: auto` on
+      // `.card`) keeps the size it last rendered at. Browsing at 1440 and
+      // narrowing to 1024 once left every card 960px wide in the 662px
+      // column, its right side clipped -- badges, version, chevron, size and
       // author (measured on dsh 0.2.1-rc.2, 0.2.0-rc.2 and 0.1.7-rc.2 on
       // 2026-10-22). Only a real layout shows it: jsdom lays nothing out.
+      //
+      // Since 2026-11-02 the wide shelf is a two-column grid, so a fixed
+      // 1024 no longer narrows below a wide card: its single 662px column is
+      // WIDER than a 634px wide-grid card, and the case would pass without
+      // exercising anything. The narrow window is therefore derived from the
+      // card's own measured width and from the chrome between window and tab,
+      // the way `checkShelfLayout` derives its windows.
       expect(page).toBeDefined()
       const app = page!
       const shop = await openShopPage(app)
       await shop.locator('input[type="search"]').fill('')
       await shop.locator('[data-shop-category-all]').click()
       await shop.locator('[data-shop-entry]').first().waitFor({ state: 'visible', timeout: 15_000 })
-      // Wide first, short enough that the shelf scrolls, so every card is
-      // rendered once at the 1280px column on the way through.
-      await app.setViewportSize({ width: 1680, height: 480 })
+      const tabWidth = (): Promise<number> => shop.evaluate(el => el.querySelector('[data-shop-tab]')?.getBoundingClientRect().width ?? Number.NaN)
       try {
+        await app.setViewportSize({ width: 1024, height: 1000 })
+        const chrome = 1024 - await tabWidth()
+        expect(chrome, 'the window-to-tab chrome is not positive').toBeGreaterThan(96)
+        // Wide first, tall enough that the shelf scrolls, so every card is
+        // rendered once at the wide column on the way through.
+        await app.setViewportSize({ width: 1680, height: 480 })
         // Every card renders once at the wide column: through the shelf a
         // frame at a time, then back to the top.
         await shop.evaluate(async el => {
@@ -2732,28 +2743,29 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
           el.scrollTop = 0
           await frame()
         })
-        // Then short, still wide. The browser renders the cards within about
-        // half a viewport of the visible area and skips the rest, and a card
-        // skipped while wide keeps its wide width when the window narrows,
-        // as the cards down a real shelf are. The first version of this case
-        // narrowed while the six fixture cards were still rendered, and they
-        // laid out again at the narrow width: it passed on the build it was
-        // written against (2026-10-22). At 160px high the shelf below the
-        // toolbar is past that half viewport.
-        await app.setViewportSize({ width: 1680, height: 160 })
+        const wideCard = await shop.evaluate(el => el.querySelector('[data-shop-entry]')?.getBoundingClientRect().width ?? Number.NaN)
+        expect(wideCard, 'no card to measure').toBeGreaterThan(300)
+        // Then shorter than any card, so every card sits far outside the
+        // viewport and the browser skips its contents. At 160px the grid's
+        // three rows left the last one inside Chromium's proximity margin on
+        // Ubuntu and the precondition failed there while Windows passed; at
+        // 60px the whole shelf is past it.
+        await app.setViewportSize({ width: 1680, height: 60 })
         // The case is about skipped cards, so it first finds some: a card
         // skipping its contents reports its header as not visible.
         const skipped = (): Promise<number> => shop.evaluate(el => [...el.querySelectorAll('[data-shop-entry] > button[aria-expanded]')]
           .filter(header => !header.checkVisibility({ contentVisibilityAuto: true })).length)
         await expect.poll(skipped, { timeout: 5_000, message: 'no card is skipped, so the kept width is not exercised' }).toBeGreaterThan(0)
-        await app.setViewportSize({ width: 1024, height: 160 })
+        // Narrower than one wide card: a card that kept its wide width
+        // overhangs the tab, which is the defect this case guards.
+        await app.setViewportSize({ width: Math.round(wideCard - 60 + chrome), height: 60 })
         // Settled: two reads two frames apart agree on every card's width.
         const overhang = (): Promise<string> => shop.evaluate(el => new Promise<string>(resolve => {
           const read = (): string => {
-            const column = el.querySelector('[data-shop-tab]')?.getBoundingClientRect()
-            if (column === undefined) return 'no column'
-            return [...el.querySelectorAll('li[data-shop-identity]')]
-              .map(item => ({ id: item.getAttribute('data-shop-identity'), over: Math.round(item.getBoundingClientRect().right - column.right) }))
+            const tab = el.querySelector('[data-shop-tab]')?.getBoundingClientRect()
+            if (tab === undefined) return 'no tab'
+            return [...el.querySelectorAll('[data-shop-entry]')]
+              .map(card => ({ id: card.getAttribute('data-shop-entry'), over: Math.round(card.getBoundingClientRect().right - tab.right) }))
               .filter(card => card.over > 0)
               .map(card => `${String(card.id)} +${String(card.over)}px`)
               .join(', ')
@@ -2762,7 +2774,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
           requestAnimationFrame(() => requestAnimationFrame(() => { resolve(read() === first ? first : 'unsettled') }))
         }))
         await expect.poll(overhang, { timeout: 5_000 }).not.toBe('unsettled')
-        expect(await overhang(), 'cards wider than the column').toBe('')
+        expect(await overhang(), 'cards wider than the tab').toBe('')
       } finally {
         await app.setViewportSize({ width: 1680, height: 1000 })
       }
