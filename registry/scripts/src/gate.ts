@@ -513,6 +513,15 @@ export function gate(
     // against the catalog of 2026-09-26, the heaviest real list (62 peers)
     // leaves that entry under half this budget.
     ...(candidate.dshPeers !== undefined ? { dshPeers: candidate.dshPeers } : {}),
+    // The prepurchase facts (design 2026-11-02-market-borrowings §1–§2).
+    // `engines` is counted for the same reason `dshPeers` is — an author's
+    // semver range copied verbatim. `bin` is counted too: the names are the
+    // author's text, bounded to three of 48 characters but still theirs.
+    // `dependencies` is NOT counted: it is one integer of at most three
+    // digits, registry-written from a manifest count, so no author can inflate
+    // it into a delisting — the same reasoning `installSize` records above.
+    ...(candidate.engines !== undefined ? { engines: candidate.engines } : {}),
+    ...(candidate.bin !== undefined ? { bin: candidate.bin } : {}),
   })
   if (payloadBytes > ENTRY_PAYLOAD_MAX_BYTES) {
     return reject(name, 'no-manifest',

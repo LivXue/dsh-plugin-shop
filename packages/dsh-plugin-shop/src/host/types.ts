@@ -92,6 +92,21 @@ export interface CatalogEntry {
    * 2026-09-28-bundle-components-and-github-peers, section 7.3). Absent when
    * the catalog predates the field. */
   manifestVersion?: string
+  /** The manifest's own `engines.dsh` range (registry `Entry.engines`; design
+   * 2026-11-02-market-borrowings §1). dsh 0.2.1 lets it decide a compatibility
+   * verdict ALONE, so `ownManifest` hands it to the running dsh's rule beside
+   * {@link dshPeers} rather than instead of it. Absent when the package
+   * declares none, or when its catalog predates the field — and on a github
+   * entry until its repository is re-read under `DECLARATIONS_RULE` 4. */
+  engines?: string
+  /** The count of the manifest's runtime `dependencies` (registry
+   * `Entry.dependencies`; design 2026-11-02-market-borrowings §2). A
+   * prepurchase fact for the detail row, absent when none. */
+  dependencies?: number
+  /** The command names the manifest's `bin` declares (registry `Entry.bin`;
+   * same design): a fact about the install surface, never a claim about what
+   * any command does. Absent when none. */
+  bin?: string[]
   /** Wire-compatibility key, not a field to read — see {@link installSize},
    * which the catalog parse fills from this one. It names npm's OWN quantity
    * (`dist.unpackedSize`), so it is npm-only and the parse REFUSES one on a

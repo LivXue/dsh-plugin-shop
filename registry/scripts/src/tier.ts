@@ -74,6 +74,13 @@ export function assignTier(accepted: Accepted, config: RegistryConfig): Entry {
     // Newer still, so after it, and copied the same way: the running dsh
     // judges these ranges on the reader's machine, and nothing here does.
     ...(candidate.dshPeers !== undefined ? { dshPeers: candidate.dshPeers } : {}),
+    // The prepurchase facts (design 2026-11-02-market-borrowings §1–§2), the
+    // newest keys at the end of the optional block. Absence stays absence: a
+    // manifest that declares no `engines`, no dependency and no command adds
+    // no key rather than an empty one.
+    ...(candidate.engines !== undefined ? { engines: candidate.engines } : {}),
+    ...(candidate.dependencies !== undefined ? { dependencies: candidate.dependencies } : {}),
+    ...(candidate.bin !== undefined ? { bin: candidate.bin } : {}),
   }
   // Defence in depth: a github review is keyed by its repository now, so it
   // can no longer be reached by an npm name at all (config.ts). If one ever
@@ -166,6 +173,14 @@ export function assignRepoTier(accepted: RepoAccepted, config: RegistryConfig): 
     // rather than truthiness so a recorded `false` (a repo GraphQL answered
     // as an original) stays off the catalog row (design 2026-10-11 §1.1).
     ...(repo.forked === true ? { forked: true as const } : {}),
+    // The prepurchase facts, read by the same three readers from the same
+    // manifest, so a github entry carries what its npm twin would (design
+    // 2026-11-02-market-borrowings §1–§2). Absent when the manifest declares
+    // none; a rescued entry's values come from the manifest inside its
+    // tarball, which is what installs.
+    ...(repo.engines !== undefined ? { engines: repo.engines } : {}),
+    ...(repo.dependencies !== undefined ? { dependencies: repo.dependencies } : {}),
+    ...(repo.bin !== undefined ? { bin: repo.bin } : {}),
   }
   // A release-pinned entry is reviewed by its tarball sha256: the tag is
   // display only — a mutable ref an author can re-point at different content

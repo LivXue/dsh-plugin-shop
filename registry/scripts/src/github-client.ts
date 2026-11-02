@@ -16,7 +16,7 @@
 
 import { createHash } from 'node:crypto'
 import { truncateWholeCharacters, VERSION_MAX_LENGTH } from './gate.ts'
-import { compatibilityOf, dshPeersOf, FetchTimeoutError, fetchWithRetry, peerNamesOf, withTimeout } from './npm-client.ts'
+import { binNamesOf, compatibilityOf, dependencyCountOf, dshPeersOf, enginesDshOf, FetchTimeoutError, fetchWithRetry, peerNamesOf, withTimeout } from './npm-client.ts'
 import { parseBudgetVariable } from './pipeline.ts'
 import { fileListIncludes, type IconRead, iconDetail, iconLabel, readIconDeclaration, shownPath } from './icon-declaration.ts'
 import { canEverList } from './repo-gate.ts'
@@ -1265,6 +1265,12 @@ function projectCandidate(
  * a packed archive has applied its own ({@link PackedDeclarations}), so none
  * applies to it. The `none` read is never stored: the key is removed.
  *
+ * Since rule 4 (design 2026-11-02-market-borrowings §1–§2), `engines`,
+ * `dependencies` and `bin` as well: the range dsh 0.2.1 lets decide a
+ * compatibility verdict alone, the runtime dependency count, and the command
+ * names the manifest declares. The first is what makes the shop's prediction
+ * agree with dsh's own rule; the other two are prepurchase facts.
+ *
  * The one writer, and every place that writes a candidate's declarations goes
  * through it: the projection, a rescued root overwriting the ones its HEAD
  * projection wrote with its tarball's, and the manifest-only re-read. So the
@@ -1279,10 +1285,14 @@ function projectCandidate(
 function writeDeclarations(
   candidate: RepoCandidate,
   declarations: {
+    name?: unknown
     peerDependencies?: unknown
     peerDependenciesMeta?: unknown
     dsh?: unknown
     version?: unknown
+    engines?: unknown
+    dependencies?: unknown
+    bin?: unknown
     icon?: unknown
     exports?: unknown
     files?: unknown
@@ -1301,6 +1311,20 @@ function writeDeclarations(
     delete candidate.dshPeers
     delete candidate.manifestVersion
   }
+  // The three prepurchase facts (design 2026-11-02-market-borrowings §1–§2).
+  // Removed, never left stale, when this manifest declares none: absent beside
+  // the current stamp means "declares none", and keeping the previous
+  // declaration would publish one this manifest never made.
+  const engines = enginesDshOf(declarations)
+  if (engines === undefined) delete candidate.engines
+  else candidate.engines = engines
+  const dependencies = dependencyCountOf(declarations)
+  if (dependencies === undefined) delete candidate.dependencies
+  else candidate.dependencies = dependencies
+  const packageName = typeof declarations.name === 'string' ? declarations.name : undefined
+  const bin = binNamesOf(declarations, packageName)
+  if (bin === undefined) delete candidate.bin
+  else candidate.bin = bin
   const read = readIconDeclaration(declarations)
   const icon: IconRead = read.kind === 'declared' && !fileListIncludes(declarations.files, read.declaration.path)
     ? { kind: 'refused', detail: iconDetail.notInFiles(iconLabel(read.declaration.source), shownPath(read.declaration.path)) }

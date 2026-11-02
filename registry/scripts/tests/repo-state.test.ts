@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { binNamesOf, dependencyCountOf, enginesDshOf } from '../src/npm-client.ts'
 import { DECLARATIONS_RULE, applyArchivedFlags, applyForkFlags, diffRepoState, layerArchivedFlags, layerForkFlags, needsDeclarationsReread, nextRepoState, parseRepoState, repoGoneDetail, serializeRepoState, staleFailureRepos } from '../src/repo-state.ts'
 import type { RepoState, RepoStateEntry } from '../src/repo-state.ts'
 import type { Candidate, RepoCandidate } from '../src/types.ts'
@@ -897,6 +898,37 @@ describe('a carried declarations record is checked on the way in', () => {
     // this build never writes is a malformed registry file, like a malformed
     // `peers` or `compatibility`.
     expect(() => parseRepoState(rowWith(extra))).toThrow(`a/one has a candidate with ${message}`)
+  })
+
+  describe('the prepurchase facts (design 2026-11-02-market-borrowings §1–§2)', () => {
+    it('round-trips what the three readers write', () => {
+      const engines = enginesDshOf({ engines: { dsh: '>=0.2.1-rc.2' } })
+      const dependencies = dependencyCountOf({ dependencies: { a: '1', b: '2' } })
+      const bin = binNamesOf({ bin: { 'dsh-a': './a.js' } }, 'dsh-a')
+      const parsed = parseRepoState(rowWith({ engines, dependencies, bin }))['a/one']?.candidates[0]
+      expect(parsed?.engines).toBe('>=0.2.1-rc.2')
+      expect(parsed?.dependencies).toBe(2)
+      expect(parsed?.bin).toEqual(['dsh-a'])
+    })
+
+    it('keeps an empty engines range, which dsh reads as unsatisfiable on purpose', () => {
+      const parsed = parseRepoState(rowWith({ engines: '' }))['a/one']?.candidates[0]
+      expect(parsed?.engines).toBe('')
+    })
+
+    it.each([
+      ['a non-string engines range', { engines: 1 }, 'a malformed engines range'],
+      ['an array engines range', { engines: ['>=1'] }, 'a malformed engines range'],
+      ['a zero dependency count', { dependencies: 0 }, 'a malformed dependencies count'],
+      ['a fractional dependency count', { dependencies: 1.5 }, 'a malformed dependencies count'],
+      ['a string dependency count', { dependencies: '1' }, 'a malformed dependencies count'],
+      ['a bin that is not an array', { bin: 'dsh-a' }, 'a malformed bin record'],
+      ['a bin holding a non-string', { bin: ['dsh-a', 1] }, 'a malformed bin record'],
+    ])('throws on %s', (_label, extra, message) => {
+      // Types only, never the readers' bounds: a bound tightened later must
+      // not turn every record written under it into a build that cannot start.
+      expect(() => parseRepoState(rowWith(extra))).toThrow(`a/one has a candidate with ${message}`)
+    })
   })
 
   describe('the icon record (design 2026-10-23-shop-plugin-icons §4)', () => {

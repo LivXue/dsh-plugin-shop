@@ -449,6 +449,19 @@ describe('the per-entry size budget on the github channel', () => {
       .toBe(marginal('peers', peers) + marginal('compatibility', compatibility))
   })
 
+  it('counts engines and bin toward the payload budget, and dependencies not at all', () => {
+    // The same differential as `peers` above (design 2026-11-02-market-borrowings
+    // §1–§2): `engines` and `bin` are author text copied into the entry, so
+    // each costs its own bytes; `dependencies` is one registry-written integer
+    // no author can inflate, and the npm gate's comment says why it is not
+    // counted. A probe that forgot either of the two would pass without this.
+    const engines = '>=0.2.1-rc.2 <0.3.0'
+    expect(reported({ engines }) - reported({})).toBe(marginal('engines', engines))
+    const bin = ['dsh-a', 'dsh-b', 'dsh-c']
+    expect(reported({ bin }) - reported({})).toBe(marginal('bin', bin))
+    expect(reported({ dependencies: 42 })).toBe(reported({}))
+  })
+
   it('counts dshPeers and manifestVersion toward the payload budget', () => {
     // Both are emitted on a github entry (design
     // 2026-09-28-bundle-components-and-github-peers, section 6.3), so both

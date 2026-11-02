@@ -386,6 +386,11 @@ export function gateRepo(
     // 2026-09-28-bundle-components-and-github-peers, section 6.3).
     ...(candidate.dshPeers !== undefined ? { dshPeers: candidate.dshPeers } : {}),
     ...(candidate.manifestVersion !== undefined ? { manifestVersion: candidate.manifestVersion } : {}),
+    // The prepurchase facts, counted as the npm gate counts them (design
+    // 2026-11-02-market-borrowings §1–§2): `engines` and `bin` are author
+    // text; `dependencies` is one registry-written integer and is not counted.
+    ...(candidate.engines !== undefined ? { engines: candidate.engines } : {}),
+    ...(candidate.bin !== undefined ? { bin: candidate.bin } : {}),
   })
   if (payloadBytes > ENTRY_PAYLOAD_MAX_BYTES) {
     return reject(unit, 'no-manifest',

@@ -82,10 +82,14 @@ import type { UnbuiltFinding } from './types.ts'
  * reaches. A path the archive lacks is the icon step's `notInRelease`.
  */
 export interface PackedDeclarations {
+  name: unknown
   peerDependencies: unknown
   peerDependenciesMeta: unknown
   dsh: unknown
   version: unknown
+  engines: unknown
+  dependencies: unknown
+  bin: unknown
   icon: unknown
   exports: unknown
 }
@@ -506,6 +510,9 @@ interface PackedManifest {
   peerDependencies?: unknown
   peerDependenciesMeta?: unknown
   version?: unknown
+  engines?: unknown
+  dependencies?: unknown
+  bin?: unknown
 }
 
 /**
@@ -580,10 +587,14 @@ function openPackedManifest(
 function declarationsOf(manifest: PackedManifest): PackedDeclarations {
   // By fixed keys, never an input-derived one.
   return {
+    name: manifest.name,
     peerDependencies: manifest.peerDependencies,
     peerDependenciesMeta: manifest.peerDependenciesMeta,
     dsh: manifest.dsh,
     version: manifest.version,
+    engines: manifest.engines,
+    dependencies: manifest.dependencies,
+    bin: manifest.bin,
     icon: manifest.icon,
     exports: manifest.exports,
   }

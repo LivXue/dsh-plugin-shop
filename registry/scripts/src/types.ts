@@ -140,6 +140,20 @@ export interface Candidate {
    */
   dshPeers?: Record<string, string>
   /**
+   * The manifest's own `engines.dsh` range, verbatim, or absent when it
+   * declares none (`enginesDshOf`, design 2026-11-02-market-borrowings §1).
+   * dsh 0.2.1 lets this field decide a compatibility verdict ALONE — it never
+   * reads the peers beside it — so {@link Candidate.dshPeers} alone cannot
+   * predict a refusal.
+   */
+  engines?: string
+  /** The count of the manifest's runtime `dependencies`, or absent when none
+   * (`dependencyCountOf`, design 2026-11-02-market-borrowings §2). */
+  dependencies?: number
+  /** The command names the manifest's `bin` declares, at most three
+   * (`binNamesOf`, design 2026-11-02-market-borrowings §2). */
+  bin?: string[]
+  /**
    * What the latest version's manifest says about its icon, by dsh 0.2.1's
    * rule (`readIconDeclaration`, design 2026-10-23-shop-plugin-icons §4):
    * `declared` is an icon dsh would try to read, with its file and media type,
@@ -294,6 +308,17 @@ export interface RepoCandidate {
    * its tarball's.
    */
   dshPeers?: Record<string, string>
+  /**
+   * The same three prepurchase facts {@link Candidate.engines},
+   * {@link Candidate.dependencies} and {@link Candidate.bin} carry, read by
+   * the same three readers from the same manifest a rescue's tarball holds
+   * (design 2026-11-02-market-borrowings §1–§2). They are written by the one
+   * declarations writer with the rest, so a re-read under a newer
+   * `DECLARATIONS_RULE` fills them.
+   */
+  engines?: string
+  dependencies?: number
+  bin?: string[]
   /**
    * The installed manifest's own `version`, verbatim and bounded by the npm
    * `version` bound (`VERSION_MAX_LENGTH`), and never blank: the version dsh
@@ -686,6 +711,43 @@ export interface Entry {
    * until its repository is re-read under `DECLARATIONS_RULE` 2.
    */
   dshPeers?: Record<string, string>
+  /**
+   * The manifest's own `engines.dsh` range, verbatim, or absent when it
+   * declares none (design 2026-11-02-market-borrowings §1).
+   *
+   * Not a decoration beside {@link Entry.dshPeers}: dsh 0.2.1's
+   * `unmetRequirements` returns on this key and NEVER reads the peers when it
+   * is present, so an entry carrying both is judged by this alone. The shop's
+   * prediction hands both to dsh's own rule through a synthesised manifest
+   * (`compatibility.ts`'s `ownManifest`), which is why publishing it fixes a
+   * verdict rather than adding a label. A blank range is published as it is:
+   * dsh reads it as unsatisfiable and the card quotes it.
+   *
+   * Additive and optional, so it rides every schemaVersion: a client that
+   * predates it strips the key. Both channels, written with the other
+   * declarations.
+   */
+  engines?: string
+  /**
+   * How many runtime `dependencies` the installed manifest declares, or
+   * absent when none (design 2026-11-02-market-borrowings §2).
+   *
+   * A count, never names: it answers "how much does this drag in" on the
+   * detail row, and npm is one click away for the list. Registry-written from
+   * a manifest and bounded to three digits, so it is not counted in the
+   * gate's payload probe — no author can inflate it.
+   */
+  dependencies?: number
+  /**
+   * The command names the installed manifest's `bin` declares, at most three,
+   * or absent when none (design 2026-11-02-market-borrowings §2). A name here
+   * means an executable appears on `PATH` after install — the one surface
+   * change a manifest states outright, and a fact about installation rather
+   * than a claim about what the command does.
+   *
+   * Author text copied verbatim, so it IS counted in the payload probe.
+   */
+  bin?: string[]
   /**
    * A github entry's installed manifest `version` (see
    * {@link RepoCandidate.manifestVersion}), present exactly when its

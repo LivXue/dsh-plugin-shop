@@ -251,12 +251,15 @@ export function emit(
   // SHOP_CATALOG_V5 at release time restores it without re-reviewing anything
   // (design §3.5). The additive fields (`added`, `tarball`, `replacement`,
   // `peers`, `publisher`, `unpackedSize`, `installSize`, `compatibility`,
-  // `dshPeers`, `archived`, `forked`, `manifestVersion`, `icon`) ride EVERY
+  // `dshPeers`, `archived`, `forked`, `manifestVersion`, `icon`, `engines`,
+  // `dependencies`, `bin`) ride EVERY
   // version: an old client's zod strips a key it does not know (consumer-side
   // zod is non-strict by design), so none of them needs a gate. `icon` is
   // optional and the index's `icons` pointer is too; an older shop's non-strict
   // parse drops both and draws every entry as it does today, so the icons
   // sidecar leaves the version at 5 (design 2026-10-23-shop-plugin-icons §6.3).
+  // `engines`, `dependencies` and `bin` are the same kind of key and ride every
+  // version for the same reason (design 2026-11-02-market-borrowings §8).
   // Keep this list whole — it is the one place the "does a new field need a
   // version gate?" decision is recorded, and a reader who finds their field
   // missing cannot tell a deliberate gate from an omission. `peers` had one

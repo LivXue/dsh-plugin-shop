@@ -71,8 +71,14 @@ export interface PeerCheck {
    * default re-reads the file on every call, which measured 75 ms against
    * 12 ms for 2,000 manifests on 0.1.7-rc.2. The incompatible harness peers
    * of one manifest, or undefined when there are none. Throws for a manifest
-   * it cannot judge. */
-  evaluate(manifest: { name: string; version: string; peerDependencies: Record<string, string> }, exemptions: Record<string, string[]>): PeerIssue | undefined
+   * it cannot judge.
+   *
+   * `engines` is passed through to the rule, which reads it in place of
+   * `peerDependencies` when present (design 2026-11-02-market-borrowings §1).
+   * It is optional here so a caller with no catalog `engines` — every client
+   * older than that field, and every entry whose author declares none —
+   * behaves exactly as before. */
+  evaluate(manifest: { name: string; version: string; peerDependencies: Record<string, string>; engines?: { dsh: string } }, exemptions: Record<string, string[]>): PeerIssue | undefined
   /** `readProfileVersionExemptions(profileDir)`: exact `name@version` keys
    * mapped to the dsh versions each is exempted on. */
   exemptions(profileDir: string): Record<string, string[]>
