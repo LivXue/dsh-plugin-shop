@@ -771,7 +771,7 @@ async function readPill(pill: Locator) {
  * 0.2.x's. The sticky check runs in the short window the restore case uses,
  * the only one here that makes a six-card shelf scroll. */
 async function checkShelfLayout(app: Page, shop: Locator): Promise<void> {
-  const read = (): Promise<{ panel: number; rail: number; position: string; display: string; tracks: number; overhang: number; unfilled: number }> =>
+  const read = (): Promise<{ panel: number; rail: number; position: string; display: string; tracks: number; overhang: number; unfilled: number; railButton: number; labelGap: number; switchWidth: number; switchRightGap: number; barToSwitch: number }> =>
     shop.evaluate(el => {
       const tab = el.querySelector('[data-shop-tab]')
       const controls = el.querySelector('[data-shop-controls]')
@@ -779,6 +779,17 @@ async function checkShelfLayout(app: Page, shop: Locator): Promise<void> {
       const cards = el.querySelector('[data-shop-results] ul')
       const column = cards?.parentElement ?? null
       const items = [...(cards?.querySelectorAll(':scope > li') ?? [])]
+      // The rail's inside: the All button, its label and count spans, and
+      // the switch. A geometry-only check of the rail's box passed while
+      // every wide rule for these was overridden by a later base rule
+      // (review, 2026-11-02), so these are measured too.
+      const all = el.querySelector('[data-shop-category-all]')
+      const spans = [...(all?.querySelectorAll(':scope > span') ?? [])]
+      const filter = el.querySelector('[data-shop-hide-incompatible]')
+      // By position, not aria-label: this page runs in zh-CN, where the group
+      // is named 插件目录. The switch is the group's SIBLING, so the only
+      // group inside the controls row is the category bar.
+      const bar = el.querySelector('[data-shop-controls] [role="group"]')
       return {
         panel: tab?.getBoundingClientRect().width ?? 0,
         rail: controls?.getBoundingClientRect().width ?? 0,
@@ -796,6 +807,17 @@ async function checkShelfLayout(app: Page, shop: Locator): Promise<void> {
           const card = item.querySelector('[data-shop-entry]')
           return card === null ? 0 : item.getBoundingClientRect().bottom - card.getBoundingClientRect().bottom
         })),
+        railButton: all?.getBoundingClientRect().width ?? 0,
+        labelGap: spans.length === 2
+          ? (spans[1]?.getBoundingClientRect().left ?? 0) - (spans[0]?.getBoundingClientRect().right ?? 0)
+          : Number.NaN,
+        switchWidth: filter?.getBoundingClientRect().width ?? 0,
+        switchRightGap: filter !== null && controls !== null
+          ? controls.getBoundingClientRect().right - filter.getBoundingClientRect().right
+          : Number.NaN,
+        barToSwitch: filter !== null && bar !== null
+          ? filter.getBoundingClientRect().left - bar.getBoundingClientRect().right
+          : Number.NaN,
       }
     })
   // Two frames after a resize: a container query re-evaluates with layout, and
@@ -836,7 +858,23 @@ async function checkShelfLayout(app: Page, shop: Locator): Promise<void> {
       expect(measured.tracks, `${where}: card columns`).toBe(measured.panel >= 872 ? 2 : 1)
       expect(measured.overhang, `${where}: a card pokes out of its column`).toBeLessThanOrEqual(1)
       expect(measured.unfilled, `${where}: a card stops short of its grid cell`).toBeLessThanOrEqual(1)
-      if (wide) expect(Math.round(measured.rail), `${where}: rail width`).toBe(232)
+      if (wide) {
+        expect(Math.round(measured.rail), `${where}: rail width`).toBe(232)
+        // The rail's inside, not only its box: the All button fills the rail
+        // and splits its label and count, and the switch is a full-width row.
+        // A review on 2026-11-02 measured these overridden while the box
+        // checks passed.
+        expect(measured.railButton, `${where}: the rail's button is not a full-width row`).toBeGreaterThan(200)
+        expect(measured.labelGap, `${where}: the button does not split label and count`).toBeGreaterThan(40)
+        expect(measured.switchWidth, `${where}: the switch is not a full-width row`).toBeGreaterThan(200)
+      } else if (measured.tracks === 2) {
+        // Two columns without the rail: the switch is the bar's sibling and
+        // must sit flush right with room to spare — what `margin-left: auto`
+        // buys. The rail cannot show this: its switch is a full-width row
+        // whatever the margin does.
+        expect(measured.switchRightGap, `${where}: the switch is not flush with the controls row`).toBeLessThanOrEqual(1)
+        expect(measured.barToSwitch, `${where}: no room between the bar and the switch`).toBeGreaterThan(20)
+      }
     }
     // Sticky: in a 480px-tall window, compare the rail's movement with the
     // results' over the same 100px of scroll. A stuck rail moves less; a
@@ -2287,9 +2325,13 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await filter.waitFor({ state: 'visible', timeout: 10_000 })
       expect(await filter.textContent()).toBe(zh.hideIncompatible.replace('{count}', '1'))
       expect(await filter.getAttribute('aria-checked')).toBe('false')
-      // It sits at the far edge of the category bar: its RIGHT edge is the
-      // bar's right edge, which is what `margin-left: auto` guarantees and
-      // only a browser lays out.
+      // It sits at the far edge of the controls row: its RIGHT edge is the
+      // row's right edge, which is what `margin-left: auto` guarantees and
+      // only a browser lays out. Since 2026-11-02 the switch is a SIBLING of
+      // the bar, so the row — not the bar — is the edge it answers to; the
+      // two coincidentally share an edge in the rail, where the switch is a
+      // full-width row, which is why `checkShelfLayout` asserts the narrow
+      // and middle arrangements' free space as well.
       //
       // Stated as edge alignment rather than "further right than the last
       // tab" because the bar WRAPS. That first form passed on Windows, where
@@ -2300,13 +2342,13 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // layouts, which is why it is the property and the other was an
       // accident of how one machine broke the line.
       const filterBox = await filter.boundingBox()
-      const barBox = await shop.locator('[class*="categoryBar"]').boundingBox()
+      const controlsBox = await shop.locator('[data-shop-controls]').boundingBox()
       expect(filterBox).not.toBeNull()
-      expect(barBox).not.toBeNull()
-      if (filterBox !== null && barBox !== null) {
+      expect(controlsBox).not.toBeNull()
+      if (filterBox !== null && controlsBox !== null) {
         expect(
-          Math.abs((filterBox.x + filterBox.width) - (barBox.x + barBox.width)),
-          'the filter is not flush with the right edge of the category bar',
+          Math.abs((filterBox.x + filterBox.width) - (controlsBox.x + controlsBox.width)),
+          'the filter is not flush with the right edge of the controls row',
         ).toBeLessThan(2)
       }
 
@@ -2757,8 +2799,23 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
           .filter(header => !header.checkVisibility({ contentVisibilityAuto: true })).length)
         await expect.poll(skipped, { timeout: 5_000, message: 'no card is skipped, so the kept width is not exercised' }).toBeGreaterThan(0)
         // Narrower than one wide card: a card that kept its wide width
-        // overhangs the tab, which is the defect this case guards.
-        await app.setViewportSize({ width: Math.round(wideCard - 60 + chrome), height: 60 })
+        // overhangs the tab, which is the defect this case guards. The
+        // first window is derived from the chrome measured at 1024, but dsh's
+        // sidebar collapses at narrow windows, so the tab does not shrink by
+        // the window's own delta; the loop measures the tab it actually got
+        // and shrinks the window by whatever is still missing.
+        let narrowWidth = Math.round(wideCard - 60 + chrome)
+        let narrowTab = Number.POSITIVE_INFINITY
+        for (let attempt = 0; attempt < 6 && narrowWidth > 320; attempt++) {
+          await app.setViewportSize({ width: narrowWidth, height: 60 })
+          narrowTab = await tabWidth()
+          if (narrowTab < wideCard) break
+          narrowWidth = Math.round(narrowWidth - (narrowTab - wideCard + 40))
+        }
+        // The case only means something if the tab is now NARROWER than one
+        // wide card: without this a host whose chrome collapses could pass
+        // without any card overhanging anything.
+        expect(narrowTab, 'the narrow window is not narrower than one wide card').toBeLessThan(wideCard)
         // Settled: two reads two frames apart agree on every card's width.
         const overhang = (): Promise<string> => shop.evaluate(el => new Promise<string>(resolve => {
           const read = (): string => {

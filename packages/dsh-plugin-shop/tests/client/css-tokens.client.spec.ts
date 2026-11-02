@@ -202,7 +202,7 @@ describe('class references', () => {
       { prop: 'position', value: 'sticky' },
       { prop: 'top', value: 'calc(16px + var(--dsh-frame-top-clearance, 0px))' },
       { prop: 'align-self', value: 'start' },
-      { prop: 'max-height', value: 'calc(100vh - 32px)' },
+      { prop: 'max-height', value: 'calc(100vh - 32px - var(--dsh-frame-top-clearance, 0px))' },
       { prop: 'overflow', value: 'auto' },
     ])
     expect(wide('.railHeading')?.body ?? '').toMatch(/display:\s*block/)
@@ -253,6 +253,25 @@ describe('class references', () => {
       { prop: 'padding', value: '0' },
       { prop: 'animation', value: 'dshShopCardsIn 220ms ease' },
     ])
+  })
+
+  it('keeps the wide rules after every base rule they override', () => {
+    // Nesting in @container adds no specificity: between a container rule
+    // and a top-level rule of the same selector, source order decides. This
+    // block shipped ABOVE `.categoryBar`, `.categoryButton` and the two focus
+    // rules on 2026-11-02, so the rail kept the pills' row, the switch's auto
+    // margin and the outside ring, and the geometry-only e2e passed while the
+    // rail's inside was wrong. The block must stay last.
+    const start = css.indexOf('@container (min-width: 1140px)')
+    expect(start).toBeGreaterThan(0)
+    const inner = everyRule(css).filter(rule => rule.at.some(at => at.includes('min-width: 1140px')))
+    const top = everyRule(css).filter(rule => rule.at.length === 0)
+    expect(inner.length).toBeGreaterThan(0)
+    for (const rule of inner) {
+      for (const base of top.filter(candidate => candidate.selector === rule.selector)) {
+        expect(css.indexOf(`${base.selector} {`), `${rule.selector} is overridden by a later base rule`).toBeLessThan(start)
+      }
+    }
   })
 
   it('draws the Plugins page buttons at the size of that page\'s own small outline buttons', () => {
