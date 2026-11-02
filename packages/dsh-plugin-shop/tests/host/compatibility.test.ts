@@ -405,6 +405,46 @@ function refusal(name: string, version: string, exempted = false): PeerIssue {
 
 const PINNED = { '@deepseek-ai/dsh': '0.1.5-rc.3', '@deepseek-ai/dsh-web-app': '^0.1.2' }
 
+describe('engines.dsh reaches the rule', () => {
+  // dsh 0.2.1's `unmetRequirements` returns on an own `engines.dsh` and never
+  // reads `peerDependencies` when it is present (design
+  // 2026-11-02-market-borrowings §1). Before the catalog carried the range,
+  // the shop handed the rule the peers alone: it predicted a refusal dsh would
+  // not raise, and missed one it would.
+
+  it('hands the rule both declarations, so its own precedence decides', () => {
+    const { check, asked } = scriptedCheck({})
+    peerVerdictsOf([{ source: 'npm', name: 'dsh-both', version: '1.0.0', dshPeers: PINNED, engines: '>=0.2.0' }], check, {}, 'web')
+    expect(asked).toEqual([{
+      manifest: { name: 'dsh-both', version: '1.0.0', peerDependencies: PINNED, engines: { dsh: '>=0.2.0' } },
+      exemptions: {},
+    }])
+  })
+
+  it('forms a manifest for an entry that declares engines and no peers', () => {
+    // The case the old code could not see at all: a package whose only
+    // requirement is `engines.dsh` has no `dshPeers`, and `ownManifest` used
+    // to answer null for it.
+    const { check, asked } = scriptedCheck({ 'dsh-engines@1.0.0': refusal('dsh-engines', '1.0.0') })
+    const verdicts = peerVerdictsOf([{ source: 'npm', name: 'dsh-engines', version: '1.0.0', engines: '^9.0.0' }], check, {}, 'web')
+    expect(asked).toEqual([{ manifest: { name: 'dsh-engines', version: '1.0.0', peerDependencies: {}, engines: { dsh: '^9.0.0' } }, exemptions: {} }])
+    expect(verdicts['npm:dsh-engines']?.refused).toEqual({ '@deepseek-ai/dsh': '0.1.5-rc.3' })
+  })
+
+  it('still needs a manifest version for a github entry, engines or not', () => {
+    const commit = 'a'.repeat(40)
+    const { check, asked } = scriptedCheck({})
+    expect(peerVerdictsOf([{ source: 'github', name: 'dsh-git', repo: 'o/r', version: commit, engines: '^1.0.0' }], check, {}, 'web')).toEqual({})
+    expect(asked).toEqual([])
+  })
+
+  it('asks nothing about an entry that declares neither', () => {
+    const { check, asked } = scriptedCheck({})
+    expect(peerVerdictsOf([{ source: 'npm', name: 'plain', version: '1.0.0' }], check, {}, 'web')).toEqual({})
+    expect(asked).toEqual([])
+  })
+})
+
 describe('peerVerdictsOf', () => {
   it('reports what the running dsh refuses, with the command that exempts it', () => {
     const { check, asked } = scriptedCheck({ 'dsh-pinned@1.2.0': refusal('dsh-pinned', '1.2.0') })

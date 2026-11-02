@@ -2289,6 +2289,114 @@ export function dshPeersOf(manifest: { peerDependencies?: unknown }): Record<str
 }
 
 /**
+ * The manifest's own `engines.dsh` range, verbatim, or undefined when it
+ * declares none.
+ *
+ * dsh 0.2.1's rule reads this field BEFORE the harness peers and, when it is
+ * present, never looks at them: `unmetRequirements` in
+ * `@deepseek-ai/dsh-app-boot/lib/index.js` returns on an own `engines.dsh` key
+ * (read 2026-11-02). So a catalog that publishes peers alone predicts a
+ * refusal dsh will not raise, and misses one it will — which is why this
+ * field exists rather than being derived from `dshPeers`.
+ *
+ * Bounded by {@link DSH_PEER_RANGE_MAX_LENGTH}, the same figure a peer range
+ * gets, because dsh hands both to the same `semver.satisfies`. The value is
+ * NOT trimmed: dsh tests `range.trim() !== ''` and reads a blank range as
+ * unsatisfiable, so a blank one is published as it is and the card quotes it
+ * (present.ts's `refusedPeersText`) rather than silently dropping the one
+ * declaration that decides the verdict. A non-string drops the field: dsh
+ * throws on that manifest instead of refusing it, and a throw is not a
+ * prediction this catalog can carry.
+ * @param manifest - one version manifest, npm's or a repository's, unvalidated.
+ */
+export function enginesDshOf(manifest: { engines?: unknown }): string | undefined {
+  const engines = manifest.engines
+  if (engines === null || typeof engines !== 'object' || Array.isArray(engines)) return undefined
+  if (!Object.hasOwn(engines, 'dsh')) return undefined
+  const range = (engines as Record<string, unknown>).dsh
+  if (typeof range !== 'string' || range.length > DSH_PEER_RANGE_MAX_LENGTH) return undefined
+  return range
+}
+
+/**
+ * Maximum runtime dependencies this catalog records for one entry. A count,
+ * not a list: the label answers "how much does this drag in", and the names
+ * are already one click away on npm. No live manifest approaches this —
+ * sampled 2026-11-02, the heaviest of 40 live `dsh-plugin` packages declares
+ * 41 — so the bound is a shape guarantee, not a policy.
+ */
+export const DEPENDENCIES_MAX_COUNT = 999
+
+/**
+ * How many runtime `dependencies` one manifest declares, or undefined when it
+ * declares none or the field is not a plain object.
+ *
+ * `dependencies` and nothing else: `devDependencies` never install, and
+ * `peerDependencies` are the harness's own and already published as
+ * `dshPeers`. Optional and bundled dependencies are counted like any other
+ * because npm installs them.
+ * @param manifest - one version manifest, npm's or a repository's, unvalidated.
+ */
+export function dependencyCountOf(manifest: { dependencies?: unknown }): number | undefined {
+  const declared = manifest.dependencies
+  if (declared === null || typeof declared !== 'object' || Array.isArray(declared)) return undefined
+  const count = Object.keys(declared).length
+  if (count === 0 || count > DEPENDENCIES_MAX_COUNT) return undefined
+  return count
+}
+
+/** How many command names one entry may publish. A package with more is a
+ * toolchain, not a plugin, and the shelf's detail row is one line. */
+export const BIN_MAX_COUNT = 3
+
+/** Longest published command name. Real ones are the package's own name,
+ * whose npm bound is 214; this is tighter because the row is prose. */
+export const BIN_NAME_MAX_LENGTH = 48
+
+/**
+ * The command names a manifest's `bin` declares, in declaration order,
+ * deduplicated and bounded by {@link BIN_MAX_COUNT} and
+ * {@link BIN_NAME_MAX_LENGTH}, or undefined when it declares none.
+ *
+ * This is the one install surface a manifest states outright: a name here is
+ * an executable on `PATH` after the install. It is a FACT, never a permission
+ * verdict — the catalog says a command appears and says nothing about what
+ * the command does (design 2026-11-02-market-borrowings §3).
+ *
+ * `bin` is a string or an object in the wild. A string means npm links the
+ * command under the package's own name, which is why `packageName` is
+ * required for that form; an object's keys are the names. `undefined` for
+ * anything else, and for a name that is blank or over the length bound — a
+ * dropped name costs the row, never the listing.
+ * @param manifest - one version manifest, npm's or a repository's, unvalidated.
+ * @param packageName - the manifest's own name, for the string form.
+ */
+export function binNamesOf(manifest: { bin?: unknown }, packageName: string | undefined): string[] | undefined {
+  const declared = manifest.bin
+  const candidates: string[] = []
+  if (typeof declared === 'string') {
+    // A string `bin` names its target, and npm links the command under the
+    // package's own name; a blank string names no target and links nothing.
+    if (declared.trim() !== '' && packageName !== undefined && isPublishableBin(packageName)) candidates.push(packageName)
+  } else if (declared !== null && typeof declared === 'object' && !Array.isArray(declared)) {
+    for (const name of Object.keys(declared)) {
+      if (isPublishableBin(name)) candidates.push(name)
+    }
+  }
+  const kept: string[] = []
+  for (const name of candidates) {
+    if (kept.length === BIN_MAX_COUNT) break
+    if (!kept.includes(name)) kept.push(name)
+  }
+  return kept.length === 0 ? undefined : kept
+}
+
+/** Whether one `bin` value or key is a name this catalog publishes. */
+function isPublishableBin(name: string): boolean {
+  return name.trim() !== '' && name.length <= BIN_NAME_MAX_LENGTH
+}
+
+/**
  * Project one npm packument into a candidate.
  * @param packument - the parsed registry document for one package.
  * @returns the candidate, or null when the document names no usable latest version.
@@ -2380,6 +2488,9 @@ export function toCandidate(packument: unknown): Candidate | null {
       _npmUser?: { name?: unknown }
       peerDependencies?: unknown
       peerDependenciesMeta?: unknown
+      engines?: unknown
+      dependencies?: unknown
+      bin?: unknown
       icon?: unknown
       exports?: unknown
       dsh?: { bundle?: unknown; catalog?: unknown }
@@ -2450,6 +2561,21 @@ export function toCandidate(packument: unknown): Candidate | null {
     ...(() => {
       const dshPeers = dshPeersOf(manifest)
       return dshPeers === undefined ? {} : { dshPeers }
+    })(),
+    // The three prepurchase facts (design 2026-11-02-market-borrowings §1–§3).
+    // Each is absent rather than empty when the manifest says nothing, so the
+    // common case costs no bytes in every reader's `plugins.json`.
+    ...(() => {
+      const engines = enginesDshOf(manifest)
+      return engines === undefined ? {} : { engines }
+    })(),
+    ...(() => {
+      const dependencies = dependencyCountOf(manifest)
+      return dependencies === undefined ? {} : { dependencies }
+    })(),
+    ...(() => {
+      const bin = binNamesOf(manifest, name)
+      return bin === undefined ? {} : { bin }
     })(),
     // And most declare no icon, which is no key: the `none` read is never
     // stored. The whole manifest goes to the reader, since dsh finds `icon`

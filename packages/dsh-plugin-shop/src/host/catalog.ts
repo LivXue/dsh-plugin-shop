@@ -236,6 +236,24 @@ const entrySchema = z.object({
   // place it reaches a terminal, the exemption command, is offered only for
   // an exact version (`allowVersionCommand`).
   manifestVersion: z.string().optional(),
+  // The manifest's own `engines.dsh` range (design 2026-11-02-market-borrowings
+  // §1; registry `Entry.engines`). Not decoration: dsh 0.2.1's own rule returns
+  // on this key and never reads `dshPeers` when it is present, so
+  // `peerVerdictsOf` hands both to that rule and the verdict now matches what
+  // the install will actually do. A string on both channels, the empty range
+  // included — dsh reads a blank range as unsatisfiable on purpose, and a
+  // schema that refused one would cost a reader the whole data file over a
+  // verdict dsh forms fine.
+  engines: z.string().optional(),
+  // The count of the manifest's runtime `dependencies` (same design, §2). One
+  // bounded integer the registry writes; typed so a hand-edited catalog cannot
+  // put a string where the detail row formats a number.
+  dependencies: z.number().int().nonnegative().optional(),
+  // The command names the manifest's `bin` declares (same design, §2): a fact
+  // about the install surface, never a claim about what the command does. The
+  // registry bounds the list to three of 48 characters; the schema bounds it
+  // again because the strings are rendered as text in the detail row.
+  bin: z.array(z.string()).optional(),
   // npm's `dist.unpackedSize`, additive and optional for the same reason as
   // `publisher` — this schema strips a key it does not know, so old and new
   // hosts share one catalog, while bumping the version NUMBER would make

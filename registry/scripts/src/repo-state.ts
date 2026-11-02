@@ -23,8 +23,9 @@ import type { RepoCandidate, StoredIconRead } from './types.ts'
 
 /**
  * The version of the rule that writes a repository candidate's declaration
- * fields (`peers`, `compatibility`, `dshPeers`, `manifestVersion` and `icon`),
- * stamped beside them as {@link RepoCandidate.declarationsRule}.
+ * fields (`peers`, `compatibility`, `dshPeers`, `manifestVersion`, `icon`,
+ * `engines`, `dependencies` and `bin`), stamped beside them as
+ * {@link RepoCandidate.declarationsRule}.
  *
  * Bump it whenever `peerNamesOf`, `compatibilityOf` or `dshPeersOf`
  * (npm-client.ts), or `readIconDeclaration` or `fileListIncludes`
@@ -61,8 +62,14 @@ import type { RepoCandidate, StoredIconRead } from './types.ts'
  * 3 (2026-10-23): `icon` as well (design 2026-10-23-shop-plugin-icons §4);
  * every listable carried candidate stamped 2 is re-read once to gain it, and
  * until it is, it carries none.
+ * 4 (2026-11-02): `engines`, `dependencies` and `bin` as well (design
+ * 2026-11-02-market-borrowings §1–§2); every listable carried candidate
+ * stamped 3 is re-read once to gain them, and until it is, it carries none.
+ * `engines` is the one that changes a verdict rather than a label: dsh 0.2.1
+ * reads it in place of the peers, so a stale candidate would keep predicting
+ * a refusal from the half dsh does not read.
  */
-export const DECLARATIONS_RULE = 3
+export const DECLARATIONS_RULE = 4
 
 /** One repository's recorded state. Exactly one of the outcome fields is
  * present: candidates for a usable fetch, or a failure reason. */
@@ -262,13 +269,16 @@ function checkCarriedDeclarations(repo: string, candidate: unknown): RepoCandida
   if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
     throw new Error(`repo-state.json: ${repo} has a candidate that is not an object`)
   }
-  const { peers, compatibility, declarationsRule, dshPeers, manifestVersion, icon, subdir, repo: recordedRepo } = candidate as {
+  const { peers, compatibility, declarationsRule, dshPeers, manifestVersion, icon, engines, dependencies, bin, subdir, repo: recordedRepo } = candidate as {
     peers?: unknown
     compatibility?: unknown
     declarationsRule?: unknown
     dshPeers?: unknown
     manifestVersion?: unknown
     icon?: unknown
+    engines?: unknown
+    dependencies?: unknown
+    bin?: unknown
     subdir?: unknown
     repo?: unknown
   }
@@ -301,6 +311,20 @@ function checkCarriedDeclarations(repo: string, candidate: unknown): RepoCandida
   }
   if (icon !== undefined && !isIconRecord(icon)) {
     throw new Error(`repo-state.json: ${repo} has a candidate with a malformed icon record`)
+  }
+  // Shapes only, never the readers' own bounds: a bound tightened later must
+  // not turn every record written under the old one into a build that cannot
+  // start (the rule this file's `isDshPeersRecord` already records). A blank
+  // `engines` is a shape dsh's rule reads on purpose — it means unsatisfiable
+  // — so it is not refused here either.
+  if (engines !== undefined && typeof engines !== 'string') {
+    throw new Error(`repo-state.json: ${repo} has a candidate with a malformed engines range`)
+  }
+  if (dependencies !== undefined && !(typeof dependencies === 'number' && Number.isSafeInteger(dependencies) && dependencies > 0)) {
+    throw new Error(`repo-state.json: ${repo} has a candidate with a malformed dependencies count`)
+  }
+  if (bin !== undefined && !isStringArray(bin)) {
+    throw new Error(`repo-state.json: ${repo} has a candidate with a malformed bin record`)
   }
   // The state key is the repository, so the candidate's `repo` is the key, and
   // the key is then the shape a repository's full name has.

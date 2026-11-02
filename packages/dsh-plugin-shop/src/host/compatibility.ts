@@ -286,7 +286,7 @@ function unmetProfile(
  * throw does in `incompatibilityMap`.
  */
 export function peerVerdictsOf(
-  entries: readonly (EntryIdentity & { version: string; dshPeers?: Record<string, string>; manifestVersion?: string })[],
+  entries: readonly (EntryIdentity & { version: string; dshPeers?: Record<string, string>; manifestVersion?: string; engines?: string })[],
   check: PeerCheck,
   exemptions: Record<string, string[]>,
   profile: string,
@@ -326,18 +326,38 @@ export function peerVerdictsOf(
 
 /**
  * The manifest dsh judges an entry's install by, as `peerVerdictsOf` hands it
- * to the rule, or null when none can be formed: the entry declares no
- * harness peers, or it is a github entry with no `manifestVersion`. An npm
- * entry's catalog `version` is its manifest's; a github entry's is a commit
- * or a tag, so its manifest's own version is the one recorded beside its
- * peers, and the key is read on github entries only.
+ * to the rule, or null when none can be formed: the entry declares neither
+ * harness peers nor an `engines.dsh` range, or it is a github entry with no
+ * `manifestVersion`. An npm entry's catalog `version` is its manifest's; a
+ * github entry's is a commit or a tag, so its manifest's own version is the one
+ * recorded beside its declarations, and the key is read on github entries
+ * only.
+ *
+ * Both declarations are handed over together, because dsh's own rule applies
+ * its own precedence: `unmetRequirements` returns on `engines.dsh` and never
+ * reads `peerDependencies` when it is present (design
+ * 2026-11-02-market-borrowings §1). Judging the peers without it — what this
+ * function did before the catalog carried `engines` — answered a question dsh
+ * does not ask. An entry with engines and no peers still forms a manifest: the
+ * empty peer map is what dsh would see in that manifest anyway.
  */
-function ownManifest(entry: { source: EntryIdentity['source']; name: string; version: string; dshPeers?: Record<string, string>; manifestVersion?: string }):
-  { name: string; version: string; peerDependencies: Record<string, string> } | null {
-  if (entry.dshPeers === undefined) return null
-  if (entry.source === 'npm') return { name: entry.name, version: entry.version, peerDependencies: entry.dshPeers }
-  if (entry.manifestVersion === undefined) return null
-  return { name: entry.name, version: entry.manifestVersion, peerDependencies: entry.dshPeers }
+function ownManifest(entry: {
+  source: EntryIdentity['source']
+  name: string
+  version: string
+  dshPeers?: Record<string, string>
+  manifestVersion?: string
+  engines?: string
+}): { name: string; version: string; peerDependencies: Record<string, string>; engines?: { dsh: string } } | null {
+  if (entry.dshPeers === undefined && entry.engines === undefined) return null
+  const version = entry.source === 'npm' ? entry.version : entry.manifestVersion
+  if (version === undefined) return null
+  return {
+    name: entry.name,
+    version,
+    peerDependencies: entry.dshPeers ?? {},
+    ...(entry.engines !== undefined ? { engines: { dsh: entry.engines } } : {}),
+  }
 }
 
 /** npm's package-name grammar as dsh's exemption records accept it, verbatim

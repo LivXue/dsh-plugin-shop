@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, type PublisherState } from '../src/publisher-state.ts'
-import { accountForDepartures, type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPATIBILITY_RANGE_MAX_LENGTH, CoverageCheckError, DSH_PEER_RANGE_MAX_LENGTH, dshPeersOf, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, PROFILE_NAME_MAX_LENGTH, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, readDeparture, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { accountForDepartures, BIN_MAX_COUNT, BIN_NAME_MAX_LENGTH, binNamesOf, type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPATIBILITY_RANGE_MAX_LENGTH, CoverageCheckError, DEPENDENCIES_MAX_COUNT, dependencyCountOf, DSH_PEER_RANGE_MAX_LENGTH, dshPeersOf, enginesDshOf, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, PROFILE_NAME_MAX_LENGTH, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, readDeparture, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { iconDetail, shownPath } from '../src/icon-declaration.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
@@ -919,6 +919,105 @@ describe('dshPeersOf', () => {
     expect(toCandidate(doc)?.dshPeers).toEqual({ '@deepseek-ai/dsh': '^0.1.7-0' })
     const bare = { ...doc, versions: { '1.0.0': { dist: { integrity: 'sha512-x' } } } }
     expect(toCandidate(bare) !== null && 'dshPeers' in toCandidate(bare)!).toBe(false)
+  })
+})
+
+describe('enginesDshOf', () => {
+  // dsh 0.2.1 reads an own `engines.dsh` BEFORE the peers and never reads them
+  // when it is present (design 2026-11-02-market-borrowings §1), so this field
+  // is what makes the shop's compatibility verdict agree with the install.
+
+  it('keeps the declared range verbatim', () => {
+    expect(enginesDshOf({ engines: { dsh: '>=0.2.1-rc.2' } })).toBe('>=0.2.1-rc.2')
+    expect(enginesDshOf({ engines: { node: '>=20', dsh: '^0.3.0' } })).toBe('^0.3.0')
+  })
+
+  it('keeps the empty range, which dsh reads as unsatisfiable, rather than dropping the deciding field', () => {
+    expect(enginesDshOf({ engines: { dsh: '' } })).toBe('')
+    expect(enginesDshOf({ engines: { dsh: '   ' } })).toBe('   ')
+  })
+
+  it('is absent for no declaration, a foreign engines object, or a value that is not a string', () => {
+    for (const engines of [undefined, null, 'x', [], {}, { node: '>=20' }, { dsh: 1 }, { dsh: null }]) {
+      expect(enginesDshOf({ engines }), JSON.stringify(engines)).toBeUndefined()
+    }
+  })
+
+  it('drops a range past DSH_PEER_RANGE_MAX_LENGTH, the bound a peer range gets', () => {
+    expect(enginesDshOf({ engines: { dsh: 'x'.repeat(DSH_PEER_RANGE_MAX_LENGTH + 1) } })).toBeUndefined()
+    expect(enginesDshOf({ engines: { dsh: 'x'.repeat(DSH_PEER_RANGE_MAX_LENGTH) } })).toHaveLength(DSH_PEER_RANGE_MAX_LENGTH)
+  })
+
+  it('does not read an inherited key as a declaration', () => {
+    const inherited = Object.create({ dsh: '^1.0.0' }) as Record<string, unknown>
+    expect(enginesDshOf({ engines: inherited })).toBeUndefined()
+  })
+})
+
+describe('dependencyCountOf', () => {
+  it('counts the runtime dependencies and nothing else', () => {
+    expect(dependencyCountOf({ dependencies: { a: '1', b: '2' }, devDependencies: { c: '3', d: '4' } } as { dependencies?: unknown })).toBe(2)
+  })
+
+  it('is absent for none, for a malformed map, and past the bound', () => {
+    for (const dependencies of [undefined, null, 'x', [], {}, 3]) {
+      expect(dependencyCountOf({ dependencies }), JSON.stringify(dependencies)).toBeUndefined()
+    }
+    const many = Object.fromEntries(Array.from({ length: DEPENDENCIES_MAX_COUNT + 1 }, (_, i) => [`d${i}`, '1']))
+    expect(dependencyCountOf({ dependencies: many })).toBeUndefined()
+  })
+})
+
+describe('binNamesOf', () => {
+  it('takes the keys of an object bin, in declaration order', () => {
+    expect(binNamesOf({ bin: { 'dsh-a': './a.js', 'dsh-b': './b.js' } }, 'dsh-a')).toEqual(['dsh-a', 'dsh-b'])
+  })
+
+  it('links a string bin under the package name', () => {
+    expect(binNamesOf({ bin: './cli.js' }, '@scope/tool')).toEqual(['@scope/tool'])
+    expect(binNamesOf({ bin: './cli.js' }, undefined)).toBeUndefined()
+  })
+
+  it('dedupes, bounds the count and drops a blank or over-long name', () => {
+    const long = 'x'.repeat(BIN_NAME_MAX_LENGTH + 1)
+    const bin = { 'dsh-a': '1', 'dsh-a2': '2', 'dsh-a3': '3', 'dsh-a4': '4', [long]: '5', '  ': '6', 'dsh-b': '7' }
+    expect(binNamesOf({ bin }, 'p')).toEqual(['dsh-a', 'dsh-a2', 'dsh-a3'])
+    expect(binNamesOf({ bin }, 'p')).toHaveLength(BIN_MAX_COUNT)
+    expect(binNamesOf({ bin: { 'dsh-a': '1', 'dsh-a  ': '2' } }, 'p')).toEqual(['dsh-a', 'dsh-a  '])
+  })
+
+  it('is absent for no bin and for a malformed one', () => {
+    for (const bin of [undefined, null, 3, [], '', '   ']) {
+      expect(binNamesOf({ bin }, 'p'), JSON.stringify(bin)).toBeUndefined()
+    }
+  })
+})
+
+describe('the prepurchase facts reach the candidate', () => {
+  it('writes engines, dependencies and bin, and omits each when undeclared', () => {
+    const doc = {
+      name: 'dsh-facts',
+      'dist-tags': { latest: '1.0.0' },
+      time: { '1.0.0': '2026-11-02T00:00:00.000Z' },
+      versions: {
+        '1.0.0': {
+          dist: { integrity: 'sha512-x' },
+          engines: { dsh: '>=0.2.0' },
+          dependencies: { a: '1' },
+          bin: { 'dsh-facts': './cli.js' },
+        },
+      },
+    }
+    expect(toCandidate(doc)).toMatchObject({
+      engines: '>=0.2.0',
+      dependencies: 1,
+      bin: ['dsh-facts'],
+    })
+    const bare = { ...doc, versions: { '1.0.0': { dist: { integrity: 'sha512-x' } } } }
+    const candidate = toCandidate(bare)
+    expect(candidate !== null && 'engines' in candidate).toBe(false)
+    expect(candidate !== null && 'dependencies' in candidate).toBe(false)
+    expect(candidate !== null && 'bin' in candidate).toBe(false)
   })
 })
 

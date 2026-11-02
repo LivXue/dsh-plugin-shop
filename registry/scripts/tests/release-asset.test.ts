@@ -154,7 +154,16 @@ describe('verifyReleaseAsset', () => {
     // declares neither, and `toStrictEqual` counts an undefined key.
     if (verdict.ok) {
       expect(verdict.declarations).toStrictEqual({
-        peerDependencies, peerDependenciesMeta, dsh, version: '1.0.0', icon: undefined, exports: undefined,
+        name: 'dsh-foo',
+        peerDependencies,
+        peerDependenciesMeta,
+        dsh,
+        version: '1.0.0',
+        engines: undefined,
+        dependencies: undefined,
+        bin: undefined,
+        icon: undefined,
+        exports: undefined,
       })
     }
   })
@@ -190,8 +199,16 @@ describe('verifyReleaseAsset', () => {
     expect(read).toStrictEqual({
       ok: true,
       declarations: {
-        peerDependencies: { a: '*' }, peerDependenciesMeta: undefined, dsh: { bundle: { patch: './missing.yml' } },
-        version: undefined, icon: undefined, exports: undefined,
+        name: 'dsh-foo',
+        peerDependencies: { a: '*' },
+        peerDependenciesMeta: undefined,
+        dsh: { bundle: { patch: './missing.yml' } },
+        version: undefined,
+        engines: undefined,
+        dependencies: undefined,
+        bin: undefined,
+        icon: undefined,
+        exports: undefined,
       },
     })
   })
