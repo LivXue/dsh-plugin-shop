@@ -49,10 +49,11 @@ function gapOf(list: Element | null): number {
 
 /**
  * Where the reader is on the shelf: the first card whose bottom lies below
- * the page's top edge, and its top relative to that edge. The cards stand one
- * per row in document order, so their bottoms rise with their index, and a
- * binary search reads a handful of their rects on each scroll event, never
- * one per card.
+ * the page's top edge, and its top relative to that edge. The cards are laid
+ * out row-major in document order — one per row before 2026-11-02, two per
+ * row since — so their bottoms never fall with their index, and a binary
+ * search reads a handful of their rects on each scroll event, never one per
+ * card.
  *
  * A card whose top lies below the edge counts only while it lies no further
  * below than the shelf's gap between cards, as when the edge falls in that

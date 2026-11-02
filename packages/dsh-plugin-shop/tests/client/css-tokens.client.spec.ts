@@ -117,10 +117,12 @@ describe('class references', () => {
     expect([...used].filter(name => name !== undefined && !defined.has(name))).toEqual([])
   })
 
-  it('frames the page as dsh\'s Plugins page does: one centred column of at most 960px', () => {
+  it('frames the page as dsh\'s Plugins page does: one centred column of at most 1280px', () => {
     // Read from dsh 0.2.0-rc.2's Plugins page stylesheet (design
     // 2026-10-16-shop-sidebar-page §3.2): the page scrolls, its children
-    // share one column, and the head clears the desktop title bar.
+    // share one column, and the head clears the desktop title bar. The cap
+    // rose from 960 on 2026-11-02 so the head and the shelf share one wide
+    // column (design 2026-11-02-shop-widescreen-layout §3).
     expect(declarationsOf(rules.get('.page') ?? '')).toEqual([
       { prop: 'box-sizing', value: 'border-box' },
       { prop: 'height', value: '100%' },
@@ -134,12 +136,123 @@ describe('class references', () => {
     ])
     expect(declarationsOf(rules.get('.page > *') ?? '')).toEqual([
       { prop: 'width', value: '100%' },
-      { prop: 'max-width', value: '960px' },
+      { prop: 'max-width', value: 'min(1280px, 100%)' },
     ])
     expect(rules.get('.pageHead') ?? '').toMatch(/padding-top:\s*calc\(28px \+ var\(--dsh-frame-top-clearance, 0px\)\)/)
     expect(rules.get('.pageTitle') ?? '').toMatch(/font-size:\s*20px/)
     expect(rules.get('.pageTitle') ?? '').toMatch(/font-weight:\s*500/)
     expect(rules.get('.pageIntro') ?? '').toMatch(/color:\s*var\(--dsw-alias-label-secondary\)/)
+  })
+
+  it('lays the shelf out as a rail beside the results on a wide tab', () => {
+    // The container is the tab root, not the shelf body: a container query
+    // cannot style its own container, and the grid rule below is exactly
+    // that rule. The shelf body is an unpadded block child of the panel, so
+    // the two inline sizes agree (design 2026-11-02-shop-widescreen-layout
+    // §3). 1140 is arithmetic: two 430px tracks and the 12px gap need 872,
+    // the rail and its gap add 256, and 12px of margin makes 1140.
+    expect(declarationsOf((rules.get('.panel') ?? '').replace(/\/\*[\s\S]*?\*\//g, '')))
+      .toContainEqual({ prop: 'container-type', value: 'inline-size' })
+    expect(declarationsOf(rules.get('.shelfBody') ?? '')).toEqual([
+      { prop: 'display', value: 'flex' },
+      { prop: 'flex-direction', value: 'column' },
+      { prop: 'gap', value: '14px' },
+    ])
+    expect(declarationsOf(rules.get('.results') ?? '')).toEqual([
+      { prop: 'display', value: 'flex' },
+      { prop: 'flex-direction', value: 'column' },
+      { prop: 'gap', value: '14px' },
+    ])
+    const wide = everyRule(css).find(rule => rule.selector === '.shelfBody'
+      && rule.at.some(at => at.startsWith('@container') && at.includes('min-width: 1140px')))
+    expect(declarationsOf(wide?.body ?? '')).toEqual([
+      { prop: 'display', value: 'grid' },
+      { prop: 'grid-template-columns', value: '232px minmax(0, 1fr)' },
+      { prop: 'column-gap', value: '24px' },
+      { prop: 'row-gap', value: '14px' },
+    ])
+  })
+
+  it('turns the controls into a sticky rail on a wide tab', () => {
+    // Narrow: one wrapping row, the bar shrinking so the switch keeps its
+    // right edge (design 2026-11-02-shop-widescreen-layout §4). Wide: the
+    // same nodes as a column that sticks under the frame's top clearance.
+    // No wrap at either width: a wrapping row puts the switch on a line of
+    // its own as soon as the chips' max-content exceeds the container, which
+    // is the whole narrow case (measured 84px tall vs 52px, 2026-11-02). The
+    // bar shrinks and wraps its own chips instead.
+    expect(declarationsOf(rules.get('.controls') ?? '')).toEqual([
+      { prop: 'display', value: 'flex' },
+      { prop: 'flex-wrap', value: 'nowrap' },
+      { prop: 'align-items', value: 'flex-end' },
+      { prop: 'gap', value: '6px' },
+    ])
+    // The rule carries a comment between two declarations, and
+    // `declarationsOf` splits on `;` — strip it the way `everyRule` does.
+    const bar = (rules.get('.categoryBar') ?? '').replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(declarationsOf(bar)).toContainEqual({ prop: 'flex', value: '0 1 auto' })
+    expect(declarationsOf(bar)).toContainEqual({ prop: 'min-width', value: '0' })
+    expect(rules.get('.railHeading') ?? '').toMatch(/display:\s*none/)
+    const wide = (selector: string) => everyRule(css).find(rule => rule.selector === selector
+      && rule.at.some(at => at.startsWith('@container') && at.includes('min-width: 1140px')))
+    expect(declarationsOf(wide('.controls')?.body ?? '')).toEqual([
+      { prop: 'flex-direction', value: 'column' },
+      { prop: 'align-items', value: 'stretch' },
+      { prop: 'gap', value: '8px' },
+      { prop: 'position', value: 'sticky' },
+      { prop: 'top', value: 'calc(16px + var(--dsh-frame-top-clearance, 0px))' },
+      { prop: 'align-self', value: 'start' },
+      { prop: 'max-height', value: 'calc(100vh - 32px)' },
+      { prop: 'overflow', value: 'auto' },
+    ])
+    expect(wide('.railHeading')?.body ?? '').toMatch(/display:\s*block/)
+    expect(declarationsOf(wide('.categoryButton')?.body ?? '')).toContainEqual({ prop: 'display', value: 'flex' })
+    expect(declarationsOf(wide('.categoryButton')?.body ?? '')).toContainEqual({ prop: 'justify-content', value: 'space-between' })
+    expect(declarationsOf(wide('.incompatibleFilter')?.body ?? '')).toContainEqual({ prop: 'margin-left', value: '0' })
+    // The rail is a scroll container (`overflow: auto`) and its controls are
+    // flush with its padding box, so a ring drawn OUTSIDE them loses both
+    // vertical segments to the clip. The inset ring keeps all four sides.
+    expect(declarationsOf(wide('.categoryButton:focus-visible')?.body ?? ''))
+      .toContainEqual({ prop: 'outline-offset', value: '-2px' })
+    expect(declarationsOf(wide('.incompatibleFilter:focus-visible')?.body ?? ''))
+      .toContainEqual({ prop: 'outline-offset', value: '-2px' })
+    // The bar's own top margin belonged to the wrapping row; in the rail the
+    // controls' 8px gap is the whole rhythm.
+    expect(declarationsOf(wide('.categoryBar')?.body ?? '')).toContainEqual({ prop: 'margin-top', value: '0' })
+  })
+
+  it('hangs a card\'s badge row under its name and pins its actions to the cell', () => {
+    // The two-line header: the icon and the chevron align with the name,
+    // the badge row sits under it in the same column (design
+    // 2026-11-02-shop-widescreen-layout §5). The action row's auto top
+    // margin is what lines the buttons of two cards in one grid row up.
+    expect(declarationsOf(rules.get('.entryHeading') ?? '')).toEqual([
+      { prop: 'display', value: 'flex' },
+      { prop: 'flex-direction', value: 'column' },
+      { prop: 'gap', value: '3px' },
+      { prop: 'min-width', value: '0' },
+      { prop: 'flex', value: '1 1 auto' },
+    ])
+    expect(rules.get('.entryHeader') ?? '').toMatch(/align-items:\s*flex-start/)
+    expect(declarationsOf((rules.get('.cardActions') ?? '').replace(/\/\*[\s\S]*?\*\//g, '')))
+      .toContainEqual({ prop: 'margin-top', value: 'auto' })
+  })
+
+  it('lays the shelf as two columns when the results column has room', () => {
+    // `auto-fill` with a 430px minimum: two tracks and the 12px gap need 872,
+    // which is the design's lower bound for two columns; below it the same
+    // rule yields one. The vertical gap stays today's 8px (design
+    // 2026-11-02-shop-widescreen-layout §5).
+    expect(declarationsOf(rules.get('.cards') ?? '')).toEqual([
+      { prop: 'display', value: 'grid' },
+      { prop: 'grid-template-columns', value: 'repeat(auto-fill, minmax(min(430px, 100%), 1fr))' },
+      { prop: 'max-width', value: '100%' },
+      { prop: 'gap', value: '8px 12px' },
+      { prop: 'list-style', value: 'none' },
+      { prop: 'margin', value: '0' },
+      { prop: 'padding', value: '0' },
+      { prop: 'animation', value: 'dshShopCardsIn 220ms ease' },
+    ])
   })
 
   it('draws the Plugins page buttons at the size of that page\'s own small outline buttons', () => {
@@ -211,6 +324,15 @@ describe('class references', () => {
     // (measured on dsh 0.2.1-rc.2, 0.2.0-rc.2 and 0.1.7-rc.2, 2026-10-22).
     // The e2e measures the clipping itself; this pins where the fix lives.
     expect(declarationsOf(rules.get('.cards > li') ?? '')).toContainEqual({ prop: 'min-width', value: '0' })
+  })
+
+  it('makes each card fill its grid cell, so the action rows line up', () => {
+    // The grid item is the <li>; the card is its child, and a content-height
+    // card leaves the cell's extra height unused, so the action row's
+    // `margin-top: auto` has nothing to absorb. `display: grid` on the item
+    // stretches the card to the cell. Measured live before it: the shortest
+    // card stopped 65px short of its cell at a 1280px tab (e2e, 2026-11-02).
+    expect(declarationsOf(rules.get('.cards > li') ?? '')).toContainEqual({ prop: 'display', value: 'grid' })
   })
 
   it('keeps the fold toggle in the Refresh pill\'s shape rather than stretched across the card', () => {
@@ -787,11 +909,14 @@ describe('the icon tile (design 2026-10-23 §8.3)', () => {
     expect(rule).toMatch(/object-fit:\s*contain/)
   })
 
-  it('centres the card header on the tile', () => {
-    // The tile is taller than the title text, so the row is aligned on it and
-    // padded 2px more above (§8.3).
+  it('aligns the card header on the name\'s line', () => {
+    // §8.3 centred a one-line header on the taller tile. Since 2026-11-02 the
+    // header is two lines — the name, then the badge row — so the tile and
+    // the chevron hang from the name's line instead of splitting the
+    // difference between the two (design 2026-11-02-shop-widescreen-layout
+    // §5). The padding is unchanged.
     const header = cssRules.get('.entryHeader') ?? ''
-    expect(header).toMatch(/align-items:\s*center/)
+    expect(header).toMatch(/align-items:\s*flex-start/)
     expect(header).toMatch(/padding:\s*10px 12px 2px/)
   })
 })

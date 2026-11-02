@@ -31,6 +31,12 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* The shop's own width decides the shelf's arrangement (design
+   * 2026-11-02-shop-widescreen-layout §3). The container is this tab root,
+   * not `.shelfBody`: a container query cannot style its own container, and
+   * the rule that turns the shelf body into the rail's grid is exactly that.
+   * Inline size only — the panel's height still follows its content. */
+  container-type: inline-size;
   /* The two reds every red text in this tab is painted with. dsh's error red
    * is #ec1313 in the light theme, which measures 4.498:1 as text on white —
    * a miss of two thousandths — and 3.57:1 on the badge's own 14% red fill
@@ -91,8 +97,8 @@
 /* The shop's own page in dsh's main column (design
  * 2026-10-16-shop-sidebar-page §4.2), framed as dsh 0.2.0-rc.2 frames its
  * Plugins page — read from that page's stylesheet: the page is the scroll
- * container, its children one centred column of at most 960px, and the head
- * clears the desktop title bar. One declaration is the shop's own, `color`:
+ * container, its children one centred column (960px then; 1280 since the
+ * 2026-11-02 wide layout), and the head clears the desktop title bar. One declaration is the shop's own, `color`:
  * dsh's `.page` inherits its colour from the shell around it, and the shop's
  * root is not inside dsh's panel stylesheet, so the shop's page states it. */
 .page {
@@ -107,9 +113,13 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* The head and the shelf share one column, and on 2026-11-02 that column
+ * widened from 960 to 1280 so the wide arrangement has room for a rail
+ * beside two cards (design 2026-11-02-shop-widescreen-layout §3). A head at
+ * 960 over a body at 1280 would read as misaligned. */
 .page > * {
   width: 100%;
-  max-width: 960px;
+  max-width: min(1280px, 100%);
 }
 
 .pageHead {
@@ -130,6 +140,116 @@
   font-size: 13px;
   line-height: 20px;
   color: var(--dsw-alias-label-secondary);
+}
+
+/* The shelf's two arrangements (design 2026-11-02-shop-widescreen-layout
+ * §4). Base: today's column — the controls, then the results — with the
+ * same 14px the panel used to put between them. The container is `.panel`,
+ * so these rules are queried from above, not from here. */
+.shelfBody {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Narrow: the category chips and the switch are one row, as they are today.
+ * `nowrap` is load-bearing — flex line-breaking uses the chips' MAX-content
+ * width, so a wrapping row sends the switch to a line of its own the moment
+ * the chips do not fit, which is every narrow panel. The bar shrinks and
+ * wraps its own chips instead. The bar is a sibling of the switch now, not
+ * its parent, so `align-items: flex-end` is what keeps the switch level with
+ * the bar's last line rather than floating beside the middle of a two-line
+ * block. */
+.controls {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+/* The rail's headings. Hidden below the threshold, where the controls are one
+ * wrapping bar and these words would label nothing; the wide rule reveals
+ * them (design 2026-11-02-shop-widescreen-layout §4). */
+.railHeading {
+  display: none;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* The rail. Two 430px tracks and their 12px gap need 872; the rail and its
+ * 24px gap add 256; 12px of margin makes the threshold 1140. Below 872 the
+ * grid's own `auto-fill` leaves one column. */
+@container (min-width: 1140px) {
+  .shelfBody {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    column-gap: 24px;
+    row-gap: 14px;
+  }
+
+  /* The rail sticks under dsh's frame top rather than scrolling away with
+   * the results. `.panel`'s `overflow: clip` is not a scroll container, so
+   * the page stays the scrollport; the e2e proves it (design
+   * 2026-11-02-shop-widescreen-layout §4). */
+  .controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    position: sticky;
+    top: calc(16px + var(--dsh-frame-top-clearance, 0px));
+    align-self: start;
+    max-height: calc(100vh - 32px);
+    overflow: auto;
+  }
+
+  .railHeading {
+    display: block;
+  }
+
+  .categoryBar {
+    flex: none;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    /* The 6px belongs to the wrapping row; in the rail the controls' 8px gap
+     * is the whole rhythm above the first button. */
+    margin-top: 0;
+  }
+
+  /* Label left, count right: the two spans the buttons carry. */
+  .categoryButton {
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* The rail is a column with `align-items: stretch`, where an auto left
+   * margin would shrink the switch to its content and push it right. */
+  .incompatibleFilter {
+    margin-left: 0;
+  }
+
+  /* The rail is a scroll container (`overflow: auto`) and its controls are
+   * flush with its padding box, so a ring drawn OUTSIDE them loses both
+   * vertical segments to the clip — measured: red on the top edge and
+   * corners, nothing on the sides. The inset ring, the idiom
+   * `.entryHeader:focus-visible` already uses, keeps all four sides. */
+  .categoryButton:focus-visible {
+    outline-offset: -2px;
+  }
+
+  .incompatibleFilter:focus-visible {
+    outline-offset: -2px;
+  }
 }
 
 /* The two buttons on dsh's Plugins page (design 2026-10-16-shop-sidebar-page
@@ -437,6 +557,13 @@
   align-items: center;
   gap: 6px;
   margin-top: 6px;
+  /* A flex item of `.controls` at narrow widths: it may shrink below its
+   * content, so the chips wrap instead of pushing the switch off the line.
+   * It must NOT grow — a growing bar takes the whole line and pushes the
+   * switch to a line of its own, where today the two share one. The wide
+   * rail restores its natural height. */
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .categoryButton {
@@ -506,12 +633,13 @@
   outline-offset: 1px;
 }
 
-/* The incompatible filter, at the right edge of the category bar: `margin-left:
- * auto` pushes it past the pills, and the bar wraps, so on a narrow panel it
- * drops to its own line rather than squeezing them. It is a MODIFIER, not a
- * ninth category — the categories select what to show and this one subtracts
- * from whatever they selected — so it takes the error hue it filters on rather
- * than joining the hue table.
+/* The incompatible filter, at the right edge of the controls row at narrow
+ * widths: `margin-left: auto` pushes it past the bar, which shrinks and wraps
+ * its own chips (`flex: 0 1 auto`) rather than squeezing the switch. Under
+ * the wide layout it is a full-width row under the rail's "Filter" heading.
+ * It is a MODIFIER, not a ninth category — the categories select what to show
+ * and this one subtracts from whatever they selected — so it takes the error
+ * hue it filters on rather than joining the hue table.
  *
  * And it is a SWITCH, which is the difference the shape now carries. It used
  * to wear `.categoryButton`: same pill, same row, same size as the eight tabs,
@@ -661,13 +789,15 @@
   font-size: 13px;
 }
 
-/* The shelf: a responsive grid of cards. */
-/* Single-line rows: one full-width column, one plugin per line. */
+/* The shelf: a responsive grid of cards. `auto-fill` with a 430px minimum
+ * gives the two columns the wide layout buys — two tracks and their 12px gap
+ * need 872px of results column — and one column below that (design
+ * 2026-11-02-shop-widescreen-layout §5). The vertical gap is today's 8px. */
 .cards {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(auto-fill, minmax(min(430px, 100%), 1fr));
   max-width: 100%;
-  gap: 8px;
+  gap: 8px 12px;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -693,8 +823,14 @@
  * right side clipped by the panel (measured on dsh 0.2.1-rc.2, 0.2.0-rc.2 and
  * 0.1.7-rc.2, 2026-10-22). Until the page took the main column the panel was
  * as wide as Settings made it, and a window resize did not move it. */
+/* The card is this item's child. Without a grid here the item stretches to
+ * the row but the card keeps its content height, so the action row's
+ * `margin-top: auto` has no free space to absorb and two cards in a row end
+ * their buttons on different lines — measured 65px short at a 1280px tab
+ * (2026-11-02). A one-row grid stretches the card to the cell. */
 .cards > li {
   min-width: 0;
+  display: grid;
 }
 
 .card {
@@ -804,7 +940,7 @@
 .entryHeader {
   display: flex;
   flex-direction: row;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   min-width: 0;
   padding: 10px 12px 2px;
@@ -821,8 +957,20 @@
   outline-offset: -2px;
 }
 
+/* The name and the badge row, one column inside the header button. The
+ * badges used to share the name's row, which at a 430px grid track left the
+ * name about 120px; under it they get the full width and the name keeps its
+ * line (design 2026-11-02-shop-widescreen-layout §5). */
+.entryHeading {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 /* The name fills the row and truncates rather than wraps; the badges stay
- * intact beside it. */
+ * intact on the row under it. */
 .name {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
@@ -851,6 +999,11 @@
   align-items: center;
   gap: 8px;
   padding: 8px 12px 10px;
+  /* Grid rows stretch every card to the tallest one, and the card is a flex
+   * column: this takes the leftover height above the buttons, so two cards
+   * in one row end their action rows on the same line (design
+   * 2026-11-02-shop-widescreen-layout §5). */
+  margin-top: auto;
 }
 
 .cardActions > .gate,
