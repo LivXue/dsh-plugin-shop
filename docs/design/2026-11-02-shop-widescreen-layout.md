@@ -305,6 +305,13 @@ specified, with these builder calls:
   the `.entryHeader` idiom): the rail is a scroll container and its controls
   are flush with its padding box, so an outside ring lost both vertical
   segments to the clip.
+- **The card edge is `border-l2`** (2026-11-02, after the beta hand-check
+  asked for a slightly deeper edge). The page and the card are both
+  `bg-layer-1` — the light theme resolves every layer token to white — so
+  the border is the card's only edge, and `border-l1` (4% black on white,
+  #f5f5f5) read as no edge. `border-l2` is 10% (#e5e5e5), lifting the edge's
+  contrast against white from 1.08:1 to 1.19:1, and in dark from 6% to 12%
+  white on #232324. The hover mix follows the same base.
 - The e2e derives its three windows from the chrome it measures once (at
   1024, below every breakpoint): tab widths of 1180, 1000 and 804. A fixed
   window pair would assert the host's sidebar width, and the 0.1.5 leg's

@@ -354,6 +354,19 @@ describe('class references', () => {
     expect(declarationsOf(rules.get('.cards > li') ?? '')).toContainEqual({ prop: 'display', value: 'grid' })
   })
 
+  it('draws the card edge one step above the page, not the faintest line', () => {
+    // The page and the card are both bg-layer-1 (the light theme resolves
+    // every layer token to white), so the border is the card's only edge.
+    // border-l1 is 4% black on white (#f5f5f5) and reads as no edge at all;
+    // border-l2 is 10% (#e5e5e5), which lifts the edge's contrast against
+    // white from 1.08:1 to 1.19:1. Dark goes from 6% to 12% white on
+    // #232324 (2026-11-02, after the beta hand-check asked for a deeper
+    // edge).
+    expect(rules.get('.card') ?? '').toMatch(/border:\s*1px solid var\(--dsw-alias-border-l2\)/)
+    expect(rules.get('.card:hover') ?? '')
+      .toMatch(/border-color:\s*color-mix\(in srgb, var\(--dsw-alias-brand-primary\) 45%, var\(--dsw-alias-border-l2\)\)/)
+  })
+
   it('keeps the fold toggle in the Refresh pill\'s shape rather than stretched across the card', () => {
     // The shop design's 2026-10-14 amendment: "the toggle sits under the block
     // in the Refresh pill's shape". It is a flex item of the card body, a

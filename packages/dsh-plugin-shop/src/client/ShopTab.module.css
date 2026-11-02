@@ -772,7 +772,12 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--dsw-alias-border-l1);
+  /* The page and the card are both bg-layer-1 — the light theme resolves
+   * every layer token to white — so this border is the card's only edge.
+   * border-l1 is 4% black on white (#f5f5f5), which reads as no edge; l2 is
+   * 10% (#e5e5e5, 1.19:1 against white where l1 was 1.08:1), and in dark it
+   * goes from 6% to 12% white on #232324. */
+  border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 10px;
   background: var(--dsw-alias-bg-layer-1);
   overflow: hidden;
@@ -798,7 +803,7 @@
 }
 
 .card:hover {
-  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, var(--dsw-alias-border-l1));
+  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, var(--dsw-alias-border-l2));
   transform: translateY(-1px);
   box-shadow: 0 2px 8px color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
 }
