@@ -1,6 +1,7 @@
 # Market borrowings, third review — design
 
-Status: **specified 2026-11-02, being built.** A review of the three dsh
+Status: **built 2026-11-02** (PR #124), not yet released: the catalog fields
+and the three new RPC methods ship through `beta` first. A review of the three dsh
 plugin markets — [dsh-market/dsh-market](https://github.com/dsh-market/dsh-market),
 [2BingLing/dsh-market](https://github.com/2BingLing/dsh-market) and
 [bradeGithub/DSH-Plugins-Marketplace](https://github.com/bradeGithub/DSH-Plugins-Marketplace) —
