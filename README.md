@@ -35,9 +35,9 @@ are available with `dsh --version` and `pnpm --version`.
 # Specify the version: pnpm 11 restricts newly published releases by default,
 # so omitting the version may install an older release. The current version
 # is shown below; check for updates with `npm view dsh-plugin-shop version`.
-dsh plugin --profile web add dsh-plugin-shop@0.9.0
+dsh plugin --profile web add dsh-plugin-shop@0.9.1
 # Alternatively, run the installation command through npx:
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.9.0
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.9.1
 ```
 
 Replace `web` with your profile name if you use a different one. Restart `dsh` after
@@ -57,7 +57,7 @@ ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 
 # 2. Specify the version to bypass pnpm's release cooldown and ensure
 #    that the expected version is installed.
-dsh plugin --profile <profile> add dsh-plugin-shop@0.9.0
+dsh plugin --profile <profile> add dsh-plugin-shop@0.9.1
 
 # 3. Verify the installation; exit code 0 above only means pnpm resolved the package.
 dsh plugin --profile <profile> list --depth 0   # The output should include dsh-plugin-shop.
@@ -107,6 +107,11 @@ see the [package README](packages/dsh-plugin-shop/README.md#failure-modes).
   whose repositories are no longer available are removed during the same process.
 - **🗂️ Seven categories** — authors can choose a category through `dsh.catalog`.
   Otherwise, the build assigns one automatically.
+- **🎨 Icons from the package** — every card and installed row draws the plugin's
+  own icon, with the shop's default artwork when a package declares none.
+- **🖥️ A layout that uses the width** — on a wide tab the controls become a
+  sticky filter rail beside a two-column card grid; narrower tabs keep the
+  wrapping category chips and gain two columns as soon as they fit.
 
 <a id="-how-it-fits-together"></a>
 

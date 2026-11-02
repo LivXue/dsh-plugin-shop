@@ -33,9 +33,9 @@
 # 已全局安装 dsh 时，直接运行以下命令。
 # 请明确指定版本号：pnpm 11 默认限制安装刚发布的版本，省略版本号可能会装到旧版。
 # 下方使用当前版本，可用 `npm view dsh-plugin-shop version` 查询最新版本。
-dsh plugin --profile web add dsh-plugin-shop@0.9.0
+dsh plugin --profile web add dsh-plugin-shop@0.9.1
 # 也可以通过 npx 执行安装命令：
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.9.0
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.9.1
 ```
 
 如果你使用的配置不是 `web`，请将命令中的 `web` 换成对应的 profile 名称。安装后需要重启 `dsh`，
@@ -53,7 +53,7 @@ npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.9.0
 ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 
 # 2. 指定版本安装，避免 pnpm 的发布冷却期影响结果，确保安装的是预期版本
-dsh plugin --profile <profile> add dsh-plugin-shop@0.9.0
+dsh plugin --profile <profile> add dsh-plugin-shop@0.9.1
 
 # 3. 确认安装结果；上一步退出码为 0 只说明 pnpm 成功解析了包
 dsh plugin --profile <profile> list --depth 0   # 列表中应包含 dsh-plugin-shop
@@ -96,6 +96,8 @@ dsh --profile <profile>
 - **🗓️ 每日更新** —— 插件目录每天重建，变更会提交到 Git，方便逐项查看。
   符合条件的新插件会在次日早上上架，仓库已不存在的插件也会在更新时下架。
 - **🗂️ 七个分类** —— 作者可以通过 `dsh.catalog` 指定分类，未指定的由构建流程自动归类。
+- **🎨 使用插件自己的图标** —— 每张卡片和已安装列表都绘制插件包里的图标；包没有声明图标时使用商店的默认图案。
+- **🖥️ 宽屏下更舒展的布局** —— 宽屏时控件收进左侧常驻的筛选栏，卡片改为两列网格；窄屏保留横向分类条，空间足够时同样变成两列。
 
 <a id="-整体是怎么串起来的"></a>
 
