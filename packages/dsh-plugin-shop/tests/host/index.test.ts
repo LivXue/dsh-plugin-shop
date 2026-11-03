@@ -4392,8 +4392,12 @@ describe("installs and updates through dsh's pluginManager", () => {
       log: ["via dsh's plugin manager: install dsh-managed@1.0.0", bridgeTo('dsh-managed@1.0.0'), 'installing...'],
       detail: 'pnpm failed in the profile. Run: dsh plugin --profile web install — installing...',
       // The retry line the failure now carries (design 2026-11-02-market-borrowings
-      // §5), single-quoted for a POSIX shell: this suite's platform.
-      command: "dsh plugin --profile 'web' add 'dsh-managed@1.0.0'",
+      // §5). The executor builds it from `process.platform`, so the expectation
+      // is platform-branched like the neighbouring Windows cases: POSIX
+      // single-quotes, Windows leaves an `&`-free operand bare.
+      command: process.platform === 'win32'
+        ? 'dsh plugin --profile web add dsh-managed@1.0.0'
+        : "dsh plugin --profile 'web' add 'dsh-managed@1.0.0'",
     })
     expect(cliCalls(cliDir)).toEqual(['plugin --profile web add dsh-managed@1.0.0'])
   })
@@ -4913,7 +4917,7 @@ describe("dsh's pluginManager events, through a real cordis Context", () => {
 describe('the profile state RPCs (design 2026-11-02-market-borrowings §6-§7)', () => {
   /** A gateway whose state file is the shared in-memory fs, and a fixture dsh
    * that records what it was asked to run. */
-  function stateGateway(dir: string, seeded?: { favorites?: string[]; previous?: Record<string, { source: 'npm' | 'github'; name: string; repo?: string; subdir?: string; version: string }> }) {
+  function stateGateway(dir: string, seeded?: { favorites?: string[]; previous?: Record<string, { source: 'npm' | 'github'; name: string; repo?: string; subdir?: string; version: string }>; entries?: CatalogEntry[] }) {
     const state = memHotFs()
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-state-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dependencies: {}, dsh: { profile: { bundles: [] } } }))
@@ -4926,7 +4930,7 @@ describe('the profile state RPCs (design 2026-11-02-market-borrowings §6-§7)',
       cacheDir: join(dir, 'cache'),
       profile: 'web',
       profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: seeded?.entries ?? [], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
       prefetcher: fixturePrefetcher(),
       stateFs: state,
@@ -4975,6 +4979,12 @@ describe('the profile state RPCs (design 2026-11-02-market-borrowings §6-§7)',
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-state-rollback-'))
     const { gateway } = stateGateway(dir, {
       previous: { 'npm:a': { source: 'npm', name: 'a', version: '1.0.0' } },
+      // The identity must still be listed: a rollback for a delisted entry is
+      // refused before anything spawns.
+      entries: [{
+        name: 'a', version: '2.0.0', integrity: null, publishedAt: null, repository: null,
+        license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-11-01',
+      }],
     })
     const started = await gateway.rollbackStart({ key: 'npm:a' })
     expect(started.ok).toBe(true)
@@ -4987,9 +4997,16 @@ describe('the profile state RPCs (design 2026-11-02-market-borrowings §6-§7)',
 
   it('refuses a rollback with no record, and one whose record no spec can spell', async () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-state-no-record-'))
+    const commit = 'a'.repeat(40)
     const { gateway } = stateGateway(dir, {
       previous: { 'github:o/r#': { source: 'github', name: 'r', repo: 'o/r', version: 'v1.0.0' } },
+      entries: [{
+        name: 'r', version: commit, integrity: commit, publishedAt: null,
+        repository: 'https://github.com/o/r', license: 'MIT', tier: 'community',
+        metadata: 'derived', source: 'github', repo: 'o/r', added: '2026-11-01',
+      }],
     })
+    // No record for this identity, and a record no spec form can spell.
     expect((await gateway.rollbackStart({ key: 'npm:missing' })).ok).toBe(false)
     expect((await gateway.rollbackStart({ key: 'github:o/r#' })).ok).toBe(false)
   })

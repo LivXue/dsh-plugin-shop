@@ -176,9 +176,13 @@ export function readShopState(fs: ShopStateFs, profileDir: string): ShopState {
   let text: string
   try {
     text = fs.read(statePath(profileDir))
-  } catch {
-    // Absent or unreadable. Nothing else can reach this catch, and both mean
-    // the same thing: no state yet.
+  } catch (error) {
+    // ABSENT is empty state; a file that is there and could not be read is a
+    // different answer, and it is thrown rather than swallowed: on Windows an
+    // antivirus or a second dsh can make the read fail with EACCES/EBUSY, and
+    // a caller that took that for "no state yet" would write the empty base
+    // over an intact file — every star and every rollback record gone.
+    if ((error as { code?: unknown }).code !== 'ENOENT') throw error
     return emptyShopState()
   }
   let parsed: unknown

@@ -169,8 +169,16 @@ where it was. One entry per identity.
 
 The record lives in `<profile>/.dsh-shop/state.json`, beside the hot-mount
 inputs but not among them: `cleanHotDir` wipes `hot-<n>.yml` only. The write
-is the profile manifest's own pattern — temp file, then rename — so an
-interrupted write leaves the previous state rather than half of a new one.
+is the profile manifest's own pattern — a temp file unique to the write, then
+rename — so an interrupted write leaves the previous state rather than half of
+a new one. On Windows a rename over a target another handle holds open throws
+`EPERM`; that and `EBUSY` are retried a few times, and the scratch file is
+removed if every try fails.
+
+A read failure that is not "absent" (an antivirus or a second dsh holding the
+file) is thrown, not read as empty: both writers mutate what they are handed,
+so taking that for empty state would write the empty base over an intact file
+and lose every star and every record. The RPCs answer the failure instead.
 
 ### 6.2 What it offers
 
@@ -185,10 +193,17 @@ A spec this host did not write cannot be run, which is the same invariant
 `shop/installStart` holds by building its spec from the snapshot.
 
 The rollback then runs through the CLI path, so the records, the activation
-verdict and the notices are the install's own: the control shows the same
-`ActivationOffer` an install gets, and a github rollback rewrites the pin to
-the commit it restored — without that, the card kept reporting the version the
-rollback had just left, and the offer pointed at what was already installed.
+verdict and the notices are the install's own: the control hands the card the
+same `ActivationOffer` an install gets, and the card keeps that receipt after
+the record it came from is gone.
+
+Both the github pin and the record move only when the flow reports done. The
+pin is what `installed()` reports a github entry by, so a rollback that did not
+move it left the card naming the version it had just left, `outdated` false and
+the offer pointing at what was installed. The record is DELETED on success:
+that is what clears the offer, rather than comparing it with the installed row
+— an npm row carries a dependency spec (`^1.0.0`), which never equals the exact
+recorded version, and a github row's pin equals it only until the re-read.
 
 It does NOT ride the install flow registry on the client. That registry's
 Retry re-sends the panel's target — the catalog's LATEST version — so a failed

@@ -6069,13 +6069,30 @@ describe('the prepurchase facts, favorites and recovery (design 2026-11-02-marke
     expect(rollback).toHaveBeenCalledWith({ key: 'npm:dsh-hello-plugin' })
   })
 
-  it('offers no rollback when the record names what is already installed', async () => {
+  it('keeps the offer on an OUTDATED card, where Update would otherwise overwrite the record', async () => {
     const { injected } = withFeatures(
-      bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }]).injected,
-      { rollback: { 'npm:dsh-hello-plugin': '1.2.0' } },
+      bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }]).injected,
+      { rollback: { 'npm:dsh-hello-plugin': '0.9.0' } },
     )
     const { container } = renderTab(injected)
+    // The name appears twice once the card is outdated — on the card and on
+    // its Updatable row — so the card itself is what to wait for.
+    await waitFor(() => expect(container.querySelector(CARD)).toBeTruthy())
+    expect(nodeAt(container, `${CARD} [data-shop-rollback]`).textContent).toContain('v0.9.0')
+  })
+
+  it('keeps the rollback receipt after the record that drew it disappears', async () => {
+    // The host deletes the record once the rollback lands, so the control is
+    // drawn from a prop that vanishes; the receipt belongs to the card.
+    const base = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+    const { injected, readState, rollback } = withFeatures(base.injected, { rollback: { 'npm:dsh-hello-plugin': '1.0.0' } })
+    readState.mockResolvedValueOnce({ favorites: [], rollback: { 'npm:dsh-hello-plugin': '1.0.0' } })
+      .mockResolvedValue({ favorites: [], rollback: {} })
+    const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    await act(async () => { fireEvent.click(nodeAt(container, `${CARD} [data-shop-rollback]`)) })
+    expect(rollback).toHaveBeenCalledWith({ key: 'npm:dsh-hello-plugin' })
+    await waitFor(() => expect(container.querySelector('[data-shop-rollback-done]')).toBeTruthy())
     expect(container.querySelector('[data-shop-rollback]')).toBeNull()
   })
 

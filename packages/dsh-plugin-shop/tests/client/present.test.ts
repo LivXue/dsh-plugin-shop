@@ -513,12 +513,17 @@ describe('whatChangedUrl', () => {
       .toBe(`https://github.com/owner/r/compare/${from}...${to}`)
   })
 
-  it('links a github update that is not two commits to the releases page', () => {
-    // A release-rescued entry's version is a tag, and a tag is not a commit a
-    // compare view can rely on. `/releases` always exists.
+  it('links a github update that is not two commits to the tag or commit it targets', () => {
+    // Design §4: a release tag has its tag page, a commit target its own page.
     expect(whatChangedUrl({ source: 'github', name: 'r', repo: 'owner/r', installed: 'v1.0.0', latest: 'v2.0.0' }))
-      .toBe('https://github.com/owner/r/releases')
-    expect(whatChangedUrl({ source: 'github', name: 'r', repo: 'owner/r', installed: 'a'.repeat(40), latest: 'v2.0.0' }))
+      .toBe('https://github.com/owner/r/releases/tag/v2.0.0')
+    expect(whatChangedUrl({ source: 'github', name: 'r', repo: 'owner/r', installed: 'a'.repeat(40), latest: 'b'.repeat(40) }))
+      .toBe(`https://github.com/owner/r/compare/${'a'.repeat(40)}...${'b'.repeat(40)}`)
+    const to = 'b'.repeat(40)
+    expect(whatChangedUrl({ source: 'github', name: 'r', repo: 'owner/r', installed: 'v1.0.0', latest: to }))
+      .toBe(`https://github.com/owner/r/commit/${to}`)
+    // A tag outside the path-segment grammar falls back to the releases page.
+    expect(whatChangedUrl({ source: 'github', name: 'r', repo: 'owner/r', installed: 'a'.repeat(40), latest: 'release/2.0' }))
       .toBe('https://github.com/owner/r/releases')
   })
 

@@ -222,6 +222,9 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
   }
 }): ReactNode {
   const key = entryKey(entry)
+  // A rollback's receipt, held here rather than in the control: the control is
+  // drawn from a record the host deletes when the rollback lands.
+  const [rollbackReceipt, setRollbackReceipt] = useState<Activation | null>(null)
   // Whether the card is expanded: the page store's, so it outlives the card
   // (design 2026-10-16-shop-sidebar-page §5.2), on a channel of its own, so
   // opening it re-renders this card and never the shelf.
@@ -541,7 +544,7 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
               * date, so as soon as the catalog listed a newer version the
               * offer vanished and Update overwrote the record — the one
               * moment a reader is most likely to want the way back. */}
-            {rollback !== undefined && (
+            {rollback !== undefined ? (
               <RollbackControl
                 identity={key}
                 version={versionLabel(entry.source, rollback.version).text}
@@ -549,11 +552,31 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
                 start={rollback.start}
                 status={rollback.status}
                 onSettled={rollback.onSettled}
+                onDone={setRollbackReceipt}
                 restart={restart}
                 restartBlocked={restartBlocked}
                 reload={reload}
               />
-            )}
+            ) : rollbackReceipt !== null ? (
+              // The record is deleted host-side once the rollback lands, so
+              // the offer above unmounts; the receipt it produced is kept
+              // here, where the record's disappearance cannot take it.
+              <div className={css.rollbackGroup} data-shop-rollback-done>
+                <ActivationOffer
+                  activation={rollbackReceipt}
+                  t={t}
+                  restart={restart}
+                  restartBlocked={restartBlocked}
+                  reload={reload}
+                  where="install"
+                  trailing={(
+                    <button type="button" className={css.cancelButton} data-shop-rollback-dismiss onClick={() => { setRollbackReceipt(null) }}>
+                      {t('dismiss')}
+                    </button>
+                  )}
+                />
+              </div>
+            ) : null}
             {/* The hot enable/disable switch (§8) sits on every installed
              * row — current or outdated — and reads the inventory state. */}
             {!removed && (
@@ -806,7 +829,7 @@ function CommandLine({ command, t }: { command: string; t: ShopTabProps['t'] }):
  * button it cannot honour, so it polls its own record instead and asks the tab
  * to re-read the installed list once the host says done.
  */
-function RollbackControl({ identity, version, t, start, status, onSettled, restart, restartBlocked, reload }: {
+function RollbackControl({ identity, version, t, start, status, onSettled, onDone, restart, restartBlocked, reload }: {
   identity: string
   /** The version the record names, already formatted for display. */
   version: string
@@ -816,17 +839,14 @@ function RollbackControl({ identity, version, t, start, status, onSettled, resta
   /** Called once a rollback settles done, so the installed list and the
    * records are read again. */
   onSettled: () => void
+  /** Handed the activation the rollback reported, so the card can keep the
+   * offer up after the record that drew this control is gone. */
+  onDone: (activation: Activation) => void
   restart: ShopTabInjected['restart']
   restartBlocked: RestartBlockedReason | null
   reload: () => void
 }): ReactNode {
-  const [state, setState] = useState<'idle' | 'running' | 'failed' | 'done'>('idle')
-  // The activation the host reported for the rollback's install, shown with
-  // the same offer an install gets: a rollback replaces an already-imported
-  // package, so it always reports `restart`, and a card that said "1.0.0" over
-  // a process still running 1.2.0 would be the very defect the activation
-  // model exists to prevent (design 2026-11-02-market-borrowings §6.2).
-  const [activation, setActivation] = useState<Activation>('restart')
+  const [state, setState] = useState<'idle' | 'running' | 'failed'>('idle')
   const [detail, setDetail] = useState('')
   const alive = useRef(true)
   useEffect(() => () => { alive.current = false }, [])
@@ -863,33 +883,18 @@ function RollbackControl({ identity, version, t, start, status, onSettled, resta
       if (!answer.found) { setState('failed'); setDetail(answer.detail ?? ''); return }
       if (answer.state === 'failed') { setState('failed'); setDetail(answer.detail ?? ''); return }
       if (answer.state === 'done') {
-        setActivation(answer.activation ?? 'restart')
-        setState('done')
+        // The card takes over from here: the record this control was drawn
+        // from is deleted host-side once the rollback lands, so a receipt
+        // owned by the control would unmount with it (design
+        // 2026-11-02-market-borrowings §6.2).
+        setState('idle')
+        onDone(answer.activation ?? 'restart')
         onSettled()
         return
       }
     }
   }
   if (state === 'running') return <span className={css.rollbackNote} data-shop-rollback-running>{t('rollingBack')}</span>
-  if (state === 'done') {
-    return (
-      <div className={css.rollbackGroup} data-shop-rollback-done>
-        <ActivationOffer
-          activation={activation}
-          t={t}
-          restart={restart}
-          restartBlocked={restartBlocked}
-          reload={reload}
-          where="install"
-          trailing={(
-            <button type="button" className={css.cancelButton} data-shop-rollback-dismiss onClick={() => { setState('idle') }}>
-              {t('dismiss')}
-            </button>
-          )}
-        />
-      </div>
-    )
-  }
   return (
     <span className={css.rollbackGroup} data-shop-rollback-group>
       <button
@@ -2379,12 +2384,15 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   // there is nothing to offer: no record, or a record naming what is already
   // installed (a failed update leaves exactly that).
   const rollbackOffer = useCallback((key: string): string | undefined => {
-    const previous = rollbackVersions[key]
-    if (previous === undefined) return undefined
-    const row = installedByKey.get(key)
-    if (row === undefined || row.installed === previous) return undefined
-    return previous
-  }, [rollbackVersions, installedByKey])
+    // No comparison against what is installed, deliberately. An npm row's
+    // `installed` is the profile's DEPENDENCY SPEC (`^1.0.0`), never the exact
+    // version the record holds, so an equality test never matched and the
+    // offer never cleared; on github the pin IS that version, so it cleared
+    // the instant the re-read landed and took the receipt with it. The record
+    // exists only while a successful update's previous version is worth
+    // restoring, and the host deletes it when a rollback lands.
+    return rollbackVersions[key]
+  }, [rollbackVersions])
 
   // Re-read the installed list and the records after a rollback settles. The
   // same counter the refresh button bumps, so there is one re-read path.
@@ -2951,7 +2959,15 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
               ) : null
             ) : (
               <p className={css.emptyLine} data-shop-empty>
-                {matched.length > 0 ? t('emptyIncompatibleFiltered') : t('emptySearch')}
+                {/* Each modifier that emptied the shelf names itself: with
+                  * `favoritesOnly` applied inside `matched`, a favorites-only
+                  * empty shelf read "No matching plugins", the defect this
+                  * message was introduced to fix for the incompatible filter. */}
+                {matched.length === 0
+                  ? t('emptySearch')
+                  : favoritesOnly && !matched.some(entry => favorites.has(entryKey(entry)))
+                    ? t('emptyFavoritesFiltered')
+                    : t('emptyIncompatibleFiltered')}
               </p>
             )
           ) : (

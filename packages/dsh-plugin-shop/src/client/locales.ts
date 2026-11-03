@@ -132,6 +132,7 @@ export const zh = {
    * the same reason `hideIncompatible` is: the switch carries the state. */
   favoritesFilter: '只看收藏',
   favoritesFilterTitle: '只显示已收藏的插件',
+  emptyFavoritesFiltered: '匹配的插件都没有收藏。关闭“只看收藏”即可查看。',
   /** What the filter takes away is every card whose badge reads 不兼容 —
    * missing components OR an author's declaration this dsh does not meet —
    * so these three name the badge, not one of its reasons. */
@@ -341,6 +342,7 @@ export const en = {
   hideIncompatible: 'Hide incompatible {count}',
   favoritesFilter: 'Favorites only',
   favoritesFilterTitle: 'Show only plugins you starred',
+  emptyFavoritesFiltered: 'None of the matching plugins are starred. Turn off "Favorites only" to see them.',
   incompatibleFilterTitle: 'Hide plugins marked as incompatible',
   showIncompatibleTitle: 'Show plugins marked as incompatible',
   emptyIncompatibleFiltered: 'All matching plugins are marked as incompatible. Turn off "Hide incompatible" to see them.',
