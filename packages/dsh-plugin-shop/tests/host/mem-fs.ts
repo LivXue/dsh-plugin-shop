@@ -88,7 +88,10 @@ export function memCatalogFs(failWrite?: (path: string) => string | null): MemCa
     exists: path => files.has(memKey(path)),
     read: path => {
       const value = files.get(memKey(path))
-      if (value === undefined) throw new Error(`ENOENT: no such file or directory, open '${path}'`)
+      // `code`, not just the message: `state.ts` distinguishes "absent" from
+      // "could not be read", and the way a real `readFileSync` says the first
+      // is an errno code.
+      if (value === undefined) throw Object.assign(new Error(`ENOENT: no such file or directory, open '${path}'`), { code: 'ENOENT' })
       return value
     },
     write: (path, data) => {
@@ -124,7 +127,10 @@ export function memHotFs(): MemHotFs {
     exists: path => files.has(memKey(path)),
     read: path => {
       const value = files.get(memKey(path))
-      if (value === undefined) throw new Error(`ENOENT: no such file or directory, open '${path}'`)
+      // `code`, not just the message: `state.ts` distinguishes "absent" from
+      // "could not be read", and the way a real `readFileSync` says the first
+      // is an errno code.
+      if (value === undefined) throw Object.assign(new Error(`ENOENT: no such file or directory, open '${path}'`), { code: 'ENOENT' })
       return value
     },
     write: (path, data) => {

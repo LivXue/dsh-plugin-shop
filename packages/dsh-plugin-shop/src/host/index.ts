@@ -18,7 +18,7 @@ import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
 import { gateOperand, INSTALL_TIMEOUT_MS, startInstall, startUninstall, type InstallStatus, type RunningInstall } from './executor.ts'
 import { cleanHotDir, hotMount, hotUnmount, nodeHotFs, type HotFs } from './hot.ts'
-import { nodeShopStateFs, readShopState, rollbackSpec, writeShopState, type ShopRollbackRecord, type ShopStateFs } from './state.ts'
+import { FAVORITES_MAX, nodeShopStateFs, readShopState, rollbackSpec, writeShopState, type ShopRollbackRecord, type ShopStateFs } from './state.ts'
 import { activationOf, type Activation } from './activation.ts'
 import { hasClientHalf } from './client-half.ts'
 import { restartCommand, startRestart, type RestartOutcome } from './restart.ts'
@@ -1823,6 +1823,10 @@ export class ShopGateway extends TypertRemoteService {
    */
   private rememberOnDone(running: RunningInstall, entry: CatalogEntry, name: string, version: string | undefined): void {
     if (version === undefined) return
+    // A `.catch` on the derived promise, not only on the status: `finished`
+    // can reject when the spawn setup throws, and a bare `.then` would turn
+    // that into an unhandled rejection — process death by default, with an
+    // update in flight.
     void running.finished.then(status => {
       if (status.state !== 'done') return
       try {
@@ -1839,6 +1843,9 @@ export class ShopGateway extends TypertRemoteService {
         // Swallows an unwritable state file: the install stands, and there is
         // simply no rollback offer for this one.
       }
+    }).catch(() => {
+      // Swallows the derived promise's rejection (see above): the record is a
+      // convenience, and the install it describes is already tracked.
     })
   }
 
@@ -1929,7 +1936,14 @@ export class ShopGateway extends TypertRemoteService {
    */
   @Remote('state')
   async shopState(): Promise<ShopStateResult> {
-    const state = readShopState(this.stateFs, this.profileDirResolved())
+    let state
+    try {
+      state = readShopState(this.stateFs, this.profileDirResolved())
+    } catch {
+      // A read-only call: a file that exists but cannot be read is shown as
+      // no state rather than failing the page. Nothing is written from it.
+      return { favorites: [], rollback: {} }
+    }
     const rollback: Record<string, string> = {}
     for (const [key, record] of Object.entries(state.previous)) {
       // Only a record `rollbackSpec` can turn into a spec is offered. A
@@ -1957,8 +1971,21 @@ export class ShopGateway extends TypertRemoteService {
     if (!isStorableKey(args.key)) {
       return { ok: false, detail: 'dsh-plugin-shop: that plugin cannot be starred in this profile.' }
     }
-    const state = readShopState(this.stateFs, this.profileDirResolved())
+    let state
+    try {
+      state = readShopState(this.stateFs, this.profileDirResolved())
+    } catch {
+      // The file is there but could not be read. Writing the empty base over
+      // it would lose every star and every rollback record, so the save is
+      // refused instead.
+      return { ok: false, detail: 'dsh-plugin-shop: the favorites file could not be read, so nothing was saved.' }
+    }
     const has = state.favorites.includes(args.key)
+    if (args.favorite && !has && state.favorites.length >= FAVORITES_MAX) {
+      // The store would drop the new key (`writeShopState` slices), so an ok
+      // here would show a star that is gone next visit.
+      return { ok: false, detail: 'dsh-plugin-shop: this profile holds the maximum number of favorites.' }
+    }
     if (args.favorite && !has) state.favorites.push(args.key)
     if (!args.favorite && has) state.favorites = state.favorites.filter(key => key !== args.key)
     try {
@@ -1981,10 +2008,18 @@ export class ShopGateway extends TypertRemoteService {
    */
   @Remote('rollbackStart')
   async rollbackStart(args: { key: string }): Promise<ShopInstallResult> {
-    const manager = this.pluginManager()
-    if (isDesktopProfile(this.profile) && manager === null) return { ok: false, code: 'desktop-profile', detail: DESKTOP_PROFILE_DETAIL }
-    const state = readShopState(this.stateFs, this.profileDirResolved())
-    const record = Object.hasOwn(state.previous, args.key) ? state.previous[args.key] : undefined
+    // The desktop profile refuses the CLI this path spawns, manager or no
+    // manager: the install path's `isDesktopProfile && manager === null` test
+    // exists because a manager can serve it, and a rollback never goes
+    // through one.
+    if (isDesktopProfile(this.profile)) return { ok: false, code: 'desktop-profile', detail: DESKTOP_PROFILE_DETAIL }
+    let record: ShopRollbackRecord | undefined
+    try {
+      const state = readShopState(this.stateFs, this.profileDirResolved())
+      record = Object.hasOwn(state.previous, args.key) ? state.previous[args.key] : undefined
+    } catch {
+      return { ok: false, code: 'not-in-catalog', detail: 'dsh-plugin-shop: the profile\'s rollback records could not be read, so there is nothing to roll back to.' }
+    }
     if (record === undefined) {
       return { ok: false, code: 'not-in-catalog', detail: 'dsh-plugin-shop: there is no earlier version recorded for this plugin.' }
     }
@@ -1992,25 +2027,47 @@ export class ShopGateway extends TypertRemoteService {
     if (spec === undefined) {
       return { ok: false, code: 'version-mismatch', detail: `dsh-plugin-shop: the recorded earlier version of ${record.name} cannot be installed.` }
     }
+    // The name may have changed hands since the record was written: the
+    // profile's dependency for it must still be THIS identity, or the
+    // rollback would replace a different plugin (the rule `installStart`s
+    // gate holds through `validateInstall`).
+    const snapshot = await this.snapshotNow()
+    const current = snapshot.entries.find(entry => identityKey(entry) === args.key)
+    if (current === undefined) {
+      return { ok: false, code: 'not-in-catalog', detail: `dsh-plugin-shop: ${record.name} is no longer listed, so its earlier version cannot be restored.` }
+    }
+    const holder = this.installedSpecOf(record.name)
+    if (holder !== undefined && !installedSpecMatches(current, holder)) {
+      return { ok: false, code: 'name-taken', detail: `dsh-plugin-shop: ${record.name} is now installed from a different source, so rolling back would replace it.` }
+    }
     const harness = await this.runningHarness()
     const running = this.startCliInstall(record.name, spec, harness, true)
     this.track(running)
-    // The pin is what `installed()` reports a github entry by, so a rollback
-    // that did not move it would leave the card naming the version it just
-    // left, `outdated` false, and the offer pointing at what is installed —
-    // the same install, forever. Written before the start returns, like the
-    // install path's, and swallowed for the same reason: the install stands
-    // even if the cache file cannot take it.
-    try {
-      if (record.source === 'github' && record.repo !== undefined) {
-        const pins = readRepoPins(this.pinFs, this.pinsPath())
-        const key = identityKey({ source: 'github', name: record.name, repo: record.repo, subdir: record.subdir })
-        writeRepoPins(this.pinFs, this.pinsPath(), { ...pins, [key]: record.version })
+    // Both the pin and the record move only once the host says done. Writing
+    // the pin before that left a failed rollback reporting the version it
+    // never restored; keeping the record left the offer pointing at what is
+    // already installed, for npm whose row carries a spec and never the exact
+    // version it was compared against.
+    void running.finished.then(status => {
+      if (status.state !== 'done') return
+      try {
+        if (record.source === 'github' && record.repo !== undefined) {
+          const pins = readRepoPins(this.pinFs, this.pinsPath())
+          const key = identityKey({ source: 'github', name: record.name, repo: record.repo, subdir: record.subdir })
+          writeRepoPins(this.pinFs, this.pinsPath(), { ...pins, [key]: record.version })
+        }
+        const state = readShopState(this.stateFs, this.profileDirResolved())
+        if (Object.hasOwn(state.previous, args.key)) {
+          delete state.previous[args.key]
+          writeShopState(this.stateFs, this.profileDirResolved(), state)
+        }
+      } catch {
+        // Swallows an unreadable or unwritable cache file: the rollback itself
+        // landed, and the worst case is an offer that outlives its record.
       }
-    } catch {
-      // Swallows an unwritable pins file: the version is on disk either way,
-      // and the next ordinary install rewrites the pin.
-    }
+    }).catch(() => {
+      // Swallows the derived promise's rejection, as `rememberOnDone` does.
+    })
     return { ok: true, installId: running.installId, state: running.status().state }
   }
 

@@ -736,6 +736,12 @@ export function whatChangedUrl(row: {
   if (COMMIT_PIN.test(row.installed) && COMMIT_PIN.test(row.latest)) {
     return `https://github.com/${row.repo}/compare/${row.installed}...${row.latest}`
   }
+  // Design §4: a commit target has its own page even when the installed side
+  // is a tag; a release tag has its tag page. `/releases` is the fallback for
+  // a value that is neither — and for a tag this grammar does not accept in a
+  // path segment, since GitHub tags may carry `/`.
+  if (COMMIT_PIN.test(row.latest)) return `https://github.com/${row.repo}/commit/${row.latest}`
+  if (URL_VERSION.test(row.latest)) return `https://github.com/${row.repo}/releases/tag/${row.latest}`
   return `https://github.com/${row.repo}/releases`
 }
 
