@@ -384,7 +384,9 @@ export function createPageStore(deps: () => PageStoreDeps, options: FlowRegistry
       // re-renders that card, never the shelf. The anchor goes whatever the
       // view says: the reader asked for this plugin, not for where they were.
       scrollAnchor = null
-      showView({ query: name, category: null, hideIncompatible: false, visibleCount: SHOP_VISIBLE_BATCH })
+      // Every modifier is cleared, `favoritesOnly` included: "View in plugin
+      // shop" on an unstarred plugin used to land on "No matching plugins".
+      showView({ query: name, category: null, hideIncompatible: false, favoritesOnly: false, visibleCount: SHOP_VISIBLE_BATCH })
       if (card !== null) openCard(card)
     },
     getOwed: key => owed.get(key),

@@ -4392,8 +4392,8 @@ describe("installs and updates through dsh's pluginManager", () => {
       log: ["via dsh's plugin manager: install dsh-managed@1.0.0", bridgeTo('dsh-managed@1.0.0'), 'installing...'],
       detail: 'pnpm failed in the profile. Run: dsh plugin --profile web install — installing...',
       // The retry line the failure now carries (design 2026-11-02-market-borrowings
-      // §5), quoted because a github operand contains `&`.
-      command: 'dsh plugin --profile web add "dsh-managed@1.0.0"',
+      // §5), single-quoted for a POSIX shell: this suite's platform.
+      command: "dsh plugin --profile 'web' add 'dsh-managed@1.0.0'",
     })
     expect(cliCalls(cliDir)).toEqual(['plugin --profile web add dsh-managed@1.0.0'])
   })
@@ -4907,5 +4907,90 @@ describe("dsh's pluginManager events, through a real cordis Context", () => {
     emitter.emit('plugin-manager/changed', { reason: 'install' })
     writeFileSync(manifestPath, JSON.stringify(manifest))
     expect(await settle('dsh-cordis-b')).toMatchObject({ state: 'done', activation: 'restart', restartReason: 'already-loaded' })
+  })
+})
+
+describe('the profile state RPCs (design 2026-11-02-market-borrowings §6-§7)', () => {
+  /** A gateway whose state file is the shared in-memory fs, and a fixture dsh
+   * that records what it was asked to run. */
+  function stateGateway(dir: string, seeded?: { favorites?: string[]; previous?: Record<string, { source: 'npm' | 'github'; name: string; repo?: string; subdir?: string; version: string }> }) {
+    const state = memHotFs()
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-state-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dependencies: {}, dsh: { profile: { bundles: [] } } }))
+    if (seeded !== undefined) {
+      state.write(join(profileDir, '.dsh-shop', 'state.json'), JSON.stringify({ favorites: seeded.favorites ?? [], previous: seeded.previous ?? {} }))
+    }
+    const bin = fakeDshRecording(dir, 0, { silent: true })
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/',
+      cacheDir: join(dir, 'cache'),
+      profile: 'web',
+      profileDir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
+      dshBin: bin,
+      prefetcher: fixturePrefetcher(),
+      stateFs: state,
+    })
+    return { gateway, state, profileDir }
+  }
+
+  const recorded = (dir: string): string[] => {
+    try {
+      return readFileSync(join(dir, 'calls.log'), 'utf8').trim().split('\n').filter(Boolean)
+    } catch {
+      return []
+    }
+  }
+
+  it('reports the favorites and only the rollback records a spec can be built from', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-state-filters-'))
+    const { gateway } = stateGateway(dir, {
+      favorites: ['npm:a'],
+      previous: {
+        'npm:a': { source: 'npm', name: 'a', version: '1.0.0' },
+        // A release-rescued entry records its TAG, and no spec form installs a
+        // tag: offering it drew a button that answered version-mismatch.
+        'github:o/r#': { source: 'github', name: 'r', repo: 'o/r', version: 'v1.0.0' },
+      },
+    })
+    expect(await gateway.shopState()).toEqual({ favorites: ['npm:a'], rollback: { 'npm:a': '1.0.0' } })
+  })
+
+  it('saves a star, and refuses one the store would silently drop', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-state-favorite-'))
+    const { gateway } = stateGateway(dir)
+    expect(await gateway.setFavorite({ key: 'npm:a', favorite: true })).toEqual({ ok: true })
+    expect((await gateway.shopState()).favorites).toEqual(['npm:a'])
+    expect(await gateway.setFavorite({ key: 'npm:a', favorite: false })).toEqual({ ok: true })
+    expect((await gateway.shopState()).favorites).toEqual([])
+    // `state.ts` filters a key past 300 characters; answering ok would show a
+    // star that is gone on the next visit.
+    const long = `npm:${'x'.repeat(400)}`
+    const refused = await gateway.setFavorite({ key: long, favorite: true })
+    expect(refused.ok).toBe(false)
+    expect((await gateway.shopState()).favorites).toEqual([])
+  })
+
+  it('rolls back by identity, building the spec from its own record', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-state-rollback-'))
+    const { gateway } = stateGateway(dir, {
+      previous: { 'npm:a': { source: 'npm', name: 'a', version: '1.0.0' } },
+    })
+    const started = await gateway.rollbackStart({ key: 'npm:a' })
+    expect(started.ok).toBe(true)
+    // The fake dsh confirms nothing, so the record settles failed; the point
+    // here is the SPEC it was asked to run, which the client never named.
+    const deadline = Date.now() + 5000
+    while (recorded(dir).length === 0 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25))
+    expect(recorded(dir)).toEqual(['plugin --profile web add a@1.0.0'])
+  })
+
+  it('refuses a rollback with no record, and one whose record no spec can spell', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-state-no-record-'))
+    const { gateway } = stateGateway(dir, {
+      previous: { 'github:o/r#': { source: 'github', name: 'r', repo: 'o/r', version: 'v1.0.0' } },
+    })
+    expect((await gateway.rollbackStart({ key: 'npm:missing' })).ok).toBe(false)
+    expect((await gateway.rollbackStart({ key: 'github:o/r#' })).ok).toBe(false)
   })
 })

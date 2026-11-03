@@ -18,7 +18,7 @@ import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
 import { gateOperand, INSTALL_TIMEOUT_MS, startInstall, startUninstall, type InstallStatus, type RunningInstall } from './executor.ts'
 import { cleanHotDir, hotMount, hotUnmount, nodeHotFs, type HotFs } from './hot.ts'
-import { nodeShopStateFs, readShopState, rollbackSpec, writeShopState, type ShopStateFs } from './state.ts'
+import { nodeShopStateFs, readShopState, rollbackSpec, writeShopState, type ShopRollbackRecord, type ShopStateFs } from './state.ts'
 import { activationOf, type Activation } from './activation.ts'
 import { hasClientHalf } from './client-half.ts'
 import { restartCommand, startRestart, type RestartOutcome } from './restart.ts'
@@ -358,6 +358,13 @@ export interface ShopInstalledEntry {
 export interface ShopStateResult {
   favorites: string[]
   rollback: Record<string, string>
+}
+
+/** Whether one install identity survives `state.ts`'s bounds (`KEY_MAX_LENGTH`
+ * there). The RPC and the file must agree, or a star is answered saved and
+ * then filtered away. */
+function isStorableKey(key: string): boolean {
+  return key.length > 0 && key.length <= 300
 }
 
 /** One row of the row config the bundle patch (§cordis.patch.yml) supplies. */
@@ -1528,12 +1535,13 @@ export class ShopGateway extends TypertRemoteService {
     // this session, whose module is still in the cache.
     const isUpdate = installedSpec !== undefined
     const alreadyImported = isUpdate || this.imported.has(args.name)
-    // Remember what this update replaces BEFORE it runs, so the rollback
-    // offer exists the moment the new version lands (design
-    // 2026-11-02-market-borrowings §6). A failed install leaves the record
-    // naming the version still installed, which the client hides — the offer
-    // is shown only when the record differs from what is installed.
-    if (isUpdate) this.rememberPrevious(entry, args.name)
+    // What this update would replace, read BEFORE anything spawns — after it,
+    // the profile holds the new version. The record is written only once the
+    // flow reports done, so a FAILED update leaves the older rollback point
+    // where it was instead of replacing it with the version still installed
+    // (design 2026-11-02-market-borrowings §6.1).
+    const previous = isUpdate ? this.installedVersionOf(entry) : undefined
+    const replaced = previous !== undefined && previous !== entry.version ? previous : undefined
     // Read before the spawn: the post-install check below is synchronous, and
     // which dsh runs cannot change while it runs (see `harnessRead`).
     const harness = await this.runningHarness()
@@ -1575,11 +1583,13 @@ export class ShopGateway extends TypertRemoteService {
       // throws must not leave it running where no poll or restart gate sees it.
       this.track(running)
       this.recordGithubPin(entry)
+      this.rememberOnDone(running, entry, args.name, replaced)
       return { ok: true, installId: running.installId, state: running.status().state }
     }
     const running = this.startCliInstall(args.name, spec, harness, alreadyImported)
     this.recordGithubPin(entry)
     this.track(running)
+    this.rememberOnDone(running, entry, args.name, replaced)
     return { ok: true, installId: running.installId, state: running.status().state }
   }
 
@@ -1799,36 +1809,37 @@ export class ShopGateway extends TypertRemoteService {
   }
 
   /**
-   * Record the version an update is about to replace, so a rollback can
-   * restore it (design 2026-11-02-market-borrowings §6).
+   * Write the rollback record once `running` reports done.
    *
-   * Called only for an update, before the spawn. A fresh install has nothing
-   * to go back to, and a record naming the version already installed is
-   * harmless: the client offers a rollback only when the record differs from
-   * what is installed, so a failed update leaves no offer.
+   * The version was captured before the spawn by the caller; this only
+   * decides WHEN it lands. A failed update therefore leaves the previous
+   * record alone — it used to replace it with the version still installed,
+   * silently losing the older rollback point (design
+   * 2026-11-02-market-borrowings §6.1 says "after the flow reports success").
    *
    * Every failure here is swallowed. A rollback point is a convenience; an
    * install that would succeed must not fail because the profile directory
-   * could not take a bookmark, and the same unwritable directory is about to
-   * fail the install on its own with a message worth reading.
+   * could not take a bookmark.
    */
-  private rememberPrevious(entry: CatalogEntry, name: string): void {
-    const current = this.installedVersionOf(entry)
-    if (current === undefined || current === entry.version) return
-    try {
-      const state = readShopState(this.stateFs, this.profileDirResolved())
-      state.previous[identityKey(entry)] = {
-        source: entry.source,
-        name,
-        ...(entry.repo !== undefined ? { repo: entry.repo } : {}),
-        ...(entry.subdir !== undefined ? { subdir: entry.subdir } : {}),
-        version: current,
+  private rememberOnDone(running: RunningInstall, entry: CatalogEntry, name: string, version: string | undefined): void {
+    if (version === undefined) return
+    void running.finished.then(status => {
+      if (status.state !== 'done') return
+      try {
+        const state = readShopState(this.stateFs, this.profileDirResolved())
+        state.previous[identityKey(entry)] = {
+          source: entry.source,
+          name,
+          ...(entry.repo !== undefined ? { repo: entry.repo } : {}),
+          ...(entry.subdir !== undefined ? { subdir: entry.subdir } : {}),
+          version,
+        }
+        writeShopState(this.stateFs, this.profileDirResolved(), state)
+      } catch {
+        // Swallows an unwritable state file: the install stands, and there is
+        // simply no rollback offer for this one.
       }
-      writeShopState(this.stateFs, this.profileDirResolved(), state)
-    } catch {
-      // Swallows an unwritable state file. See the note above: the install
-      // proceeds, and there is simply no rollback offer for this one.
-    }
+    })
   }
 
   /**
@@ -1920,7 +1931,13 @@ export class ShopGateway extends TypertRemoteService {
   async shopState(): Promise<ShopStateResult> {
     const state = readShopState(this.stateFs, this.profileDirResolved())
     const rollback: Record<string, string> = {}
-    for (const [key, record] of Object.entries(state.previous)) rollback[key] = record.version
+    for (const [key, record] of Object.entries(state.previous)) {
+      // Only a record `rollbackSpec` can turn into a spec is offered. A
+      // release-rescued entry's version is a tag, which no spec form installs:
+      // forwarding it drew "Roll back to v1.0.0" and then answered
+      // `version-mismatch` — an offer the host could not honour.
+      if (rollbackSpec(record) !== undefined) rollback[key] = record.version
+    }
     return { favorites: state.favorites, rollback }
   }
 
@@ -1934,6 +1951,12 @@ export class ShopGateway extends TypertRemoteService {
    */
   @Remote('setFavorite')
   async setFavorite(args: { key: string; favorite: boolean }): Promise<{ ok: boolean; detail?: string }> {
+    // The store bounds what it keeps (`state.ts`), so a key it would filter
+    // away must not be answered as saved: the star would show until the next
+    // visit and then be gone.
+    if (!isStorableKey(args.key)) {
+      return { ok: false, detail: 'dsh-plugin-shop: that plugin cannot be starred in this profile.' }
+    }
     const state = readShopState(this.stateFs, this.profileDirResolved())
     const has = state.favorites.includes(args.key)
     if (args.favorite && !has) state.favorites.push(args.key)
@@ -1972,6 +1995,22 @@ export class ShopGateway extends TypertRemoteService {
     const harness = await this.runningHarness()
     const running = this.startCliInstall(record.name, spec, harness, true)
     this.track(running)
+    // The pin is what `installed()` reports a github entry by, so a rollback
+    // that did not move it would leave the card naming the version it just
+    // left, `outdated` false, and the offer pointing at what is installed —
+    // the same install, forever. Written before the start returns, like the
+    // install path's, and swallowed for the same reason: the install stands
+    // even if the cache file cannot take it.
+    try {
+      if (record.source === 'github' && record.repo !== undefined) {
+        const pins = readRepoPins(this.pinFs, this.pinsPath())
+        const key = identityKey({ source: 'github', name: record.name, repo: record.repo, subdir: record.subdir })
+        writeRepoPins(this.pinFs, this.pinsPath(), { ...pins, [key]: record.version })
+      }
+    } catch {
+      // Swallows an unwritable pins file: the version is on disk either way,
+      // and the next ordinary install rewrites the pin.
+    }
     return { ok: true, installId: running.installId, state: running.status().state }
   }
 

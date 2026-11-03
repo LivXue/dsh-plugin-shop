@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { EMPTY_SHOP_STATE, FAVORITES_MAX, PREVIOUS_MAX, readShopState, rollbackSpec, statePath, writeShopState, type ShopState } from '../../src/host/state.ts'
+import { emptyShopState, FAVORITES_MAX, PREVIOUS_MAX, readShopState, rollbackSpec, statePath, writeShopState, type ShopState } from '../../src/host/state.ts'
 import { memHotFs } from './mem-fs.ts'
 
 /**
@@ -26,15 +26,15 @@ describe('the profile state file', () => {
   })
 
   it('reads a missing file as empty state', () => {
-    expect(readShopState(bench(), PROFILE)).toEqual(EMPTY_SHOP_STATE)
+    expect(readShopState(bench(), PROFILE)).toEqual(emptyShopState())
   })
 
   it('reads an unparseable file as empty state rather than throwing', () => {
-    expect(readShopState(bench('{not json'), PROFILE)).toEqual(EMPTY_SHOP_STATE)
+    expect(readShopState(bench('{not json'), PROFILE)).toEqual(emptyShopState())
   })
 
   it('reads a non-object document as empty state', () => {
-    expect(readShopState(bench('[]'), PROFILE)).toEqual(EMPTY_SHOP_STATE)
+    expect(readShopState(bench('[]'), PROFILE)).toEqual(emptyShopState())
   })
 
   it('keeps the favorites a corrupt previous map cannot cost', () => {
@@ -94,6 +94,17 @@ describe('the profile state file', () => {
       favorites: ['npm:a'],
       previous: { 'npm:a': { source: 'npm', name: 'a', version: '1.0.0' } },
     })
+  })
+
+  it("hands out a fresh empty state, so one caller's mutation is not the next one's", () => {
+    // Both writers mutate what they are handed. A shared constant made a
+    // failed save visible to the next reader — and a test comparing against
+    // that same constant could not see it.
+    const first = readShopState(bench(), PROFILE)
+    first.favorites.push('npm:leaked')
+    const second = readShopState(bench(), PROFILE)
+    expect(second.favorites).toEqual([])
+    expect(first).not.toBe(second)
   })
 
   it('replaces a malformed file with a valid one on the next write', () => {

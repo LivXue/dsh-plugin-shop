@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { activationFailureDetail, shellSafeTarget, installFailureDetail, installTimeoutDetail, killTree, lineSink, spawnFailureDetail, startInstall, startUninstall, createBoundedLog, inProfileQueue, requestDownloadPhase, type InstallStatus } from '../../src/host/executor.ts'
+import { activationFailureDetail, shellSafeTarget, installFailureDetail, installTimeoutDetail, killTree, lineSink, spawnFailureDetail, startInstall, startUninstall, createBoundedLog, inProfileQueue, requestDownloadPhase, type InstallStatus, retryCommand } from '../../src/host/executor.ts'
 import type { HotRestartReason } from '../../src/host/hot.ts'
 import type { Activation } from '../../src/host/activation.ts'
 import { createPrefetcher, type Prefetcher } from '../../src/host/prefetch.ts'
@@ -1680,5 +1680,28 @@ describe('requestDownloadPhase', () => {
       .toBeNull()
     expect(lines[0]).toMatch(/the download phase could not start/)
     expect(lines[0]).toContain('cannot build')
+  })
+})
+
+describe('the retry line (design 2026-11-02-market-borrowings §5)', () => {
+  it('single-quotes the profile and the operand for a POSIX shell', () => {
+    // `&` is a control operator in sh too: unquoted, `path:sub` would run as
+    // its own command.
+    expect(retryCommand('linux', 'web', 'add', 'github:o/r#abc&path:sub'))
+      .toBe("dsh plugin --profile 'web' add 'github:o/r#abc&path:sub'")
+    expect(retryCommand('darwin', 'web', 'remove', 'dsh-a'))
+      .toBe("dsh plugin --profile 'web' remove 'dsh-a'")
+  })
+
+  it('offers no line on Windows for an operand carrying &, which cmd would split', () => {
+    // Measured 2026-11-02: cmd consumes the quotes, dsh re-joins unquoted, and
+    // the install lands on the repository ROOT with exit 0. No line is better.
+    expect(retryCommand('win32', 'web', 'add', 'github:o/r#abc&path:sub')).toBeUndefined()
+    expect(retryCommand('win32', 'web', 'add', 'dsh-a@1.0.0')).toBe('dsh plugin --profile web add dsh-a@1.0.0')
+  })
+
+  it('offers no line for a profile a shell would split, on any platform', () => {
+    expect(retryCommand('linux', 'my profile', 'add', 'dsh-a@1.0.0')).toBeUndefined()
+    expect(retryCommand('linux', 'web', 'add', "dsh-a'; rm -rf /")).toBeUndefined()
   })
 })
