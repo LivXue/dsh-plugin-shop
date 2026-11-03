@@ -610,6 +610,39 @@ export function shellSafeTarget(target: string, platform: NodeJS.Platform): stri
   return `"${target}"`
 }
 
+/** A profile name safe to put in a line a person pastes: no whitespace, no
+ * quote, no shell punctuation. A profile outside this gets no line at all —
+ * it is the reader's own name, and refusing to guess beats publishing a
+ * command that would split at the first space. */
+const SAFE_PROFILE = /^[A-Za-z0-9._:-]+$/
+
+/**
+ * The command that would retry this operation by hand, or undefined when no
+ * shell can carry it (design 2026-11-02-market-borrowings §5).
+ *
+ * POSIX: single-quoted. `&` is a control operator there too, so
+ * `github:owner/slug#sha&path:dir` unquoted would run `path:dir` as its own
+ * command; `gateOperand` refuses `'`, so the quoting cannot be broken out of.
+ *
+ * Windows: offered only for an operand with no `&`. The quotes a reader types
+ * are consumed by cmd and never reach dsh, which then joins argv UNQUOTED
+ * into its own shell (the defect `shellSafeTarget` exists for on our own
+ * spawn) — so a quoted `&path:` still splits, and the measured outcome is an
+ * install of the repository ROOT that exits 0. A line that installs
+ * something else is worse than no line, so that case reports none.
+ */
+export function retryCommand(platform: NodeJS.Platform, profile: string, verb: string | undefined, target: string): string | undefined {
+  if (verb === undefined || !SAFE_PROFILE.test(profile)) return undefined
+  if (platform === 'win32') {
+    return target.includes('&') ? undefined : `dsh plugin --profile ${profile} ${verb} ${target}`
+  }
+  // `gateOperand` refuses a quote, so this cannot hold for an operand that
+  // reached the executor; the guard is here because this function's contract
+  // is the line it returns, and one it cannot quote is one it must not print.
+  if (target.includes("'")) return undefined
+  return `dsh plugin --profile '${profile}' ${verb} '${target}'`
+}
+
 const DOWNLOAD_PHASE_FAILED_PREFIX = 'dsh-plugin-shop: the download phase could not start — '
 const DOWNLOAD_PHASE_NO_PNPM = 'dsh-plugin-shop: no download phase — pnpm not found on PATH'
 const DOWNLOAD_PHASE_UNSUPPORTED = 'dsh-plugin-shop: no download phase for this spec form; the install fetches it directly'
@@ -723,14 +756,11 @@ function spawnPluginCli(options: {
   // Argv smuggling and shell punctuation, refused before anything spawns or
   // queues (see `gateOperand`).
   const target = gateOperand(argv[1])
-  // The line a reader can retry by hand, built from the value BEFORE the
-  // Windows quoting below (that one exists for `spawn`, not for a shell a
-  // person types into) and from the gated verb. Double-quoted because a
-  // `github:owner/slug#sha&path:dir` operand contains `&` and `#`: unquoted,
-  // a shell would split the command or start a comment. Neither the verb nor
-  // the profile can carry a `"` (the verb is one of two literals, the profile
-  // is dsh's own name), so the quoting cannot be broken out of.
-  const command = `dsh plugin --profile ${profile} ${argv[0]} "${target}"`
+  // The line a reader can retry by hand, or undefined where no shell can
+  // carry it (see `retryCommand`). Built from the value BEFORE the Windows
+  // quoting below: that one exists for `spawn`, not for a shell a person
+  // types into.
+  const command = retryCommand(platform, profile, argv[0], target)
   // Only now, once the operand has passed the gate above, is it quoted for
   // the shell dsh puts it through on Windows. See `shellSafeTarget`.
   const spawnArgv = [...argv]
@@ -757,7 +787,7 @@ function spawnPluginCli(options: {
     // A failure carries the line that failed, so the page can offer it for a
     // manual retry (design 2026-11-02-market-borrowings §5). Never on a
     // success or while running: it would read as an instruction.
-    ...(state === 'failed' ? { command } : {}),
+    ...(state === 'failed' && command !== undefined ? { command } : {}),
   })
 
   // lineSink holds a trailing partial until the next chunk completes it, then

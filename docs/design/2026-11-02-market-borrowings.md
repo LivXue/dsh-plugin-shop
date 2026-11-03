@@ -137,20 +137,35 @@ dsh plugin --profile <profile> add <spec>
 ```
 
 The profile is the reader's own name, as `allowVersionCommand` already spells
-it; the spec is the one the Host built from catalog fields, which for npm and
-github carries no whitespace or shell metacharacter the grammars do not admit.
+it; the spec is the one the Host built from catalog fields. `gateOperand`
+refuses whitespace, quotes and every other shell metacharacter, so `&` is the
+only one an operand can carry — and it is a control operator in POSIX shells
+too, which is why the operand is single-quoted there.
+
+**On Windows the line is offered only for an operand with no `&`.** The quotes
+a reader types are consumed by cmd and never reach dsh, which then joins argv
+unquoted into its own shell — the defect `shellSafeTarget` exists for on the
+shop's own spawn — so a quoted `&path:` still splits, and the measured outcome
+is an install of the repository ROOT that exits 0. A line that installs
+something else is worse than no line. A profile name outside
+`[A-Za-z0-9._:-]` yields no line on any platform: it is the reader's own name,
+and refusing to guess beats publishing a command that splits at the first
+space.
+
 The client renders it in the failure block with a copy button, beside the
 existing detail, and only where the executor reported one — a spawn failure
-before the command was formed reports none.
+before the command was formed reports none, and so does a Windows operand a
+shell cannot carry.
 
 ## 6. Rollback
 
 ### 6.1 What is recorded
 
-The host records, per install identity, the spec and version last **replaced**
-by a successful install of a different version. That is one entry per update:
-the row is written from the spec the executor just ran, after the flow reports
-success, and only when the version changed.
+The host records, per install identity, the version last **replaced** by a
+successful install of a different version. The version is captured BEFORE the
+spawn (after it, the profile holds the new one) and the row is written only
+when the flow reports done, so a failed update leaves the older rollback point
+where it was. One entry per identity.
 
 The record lives in `<profile>/.dsh-shop/state.json`, beside the hot-mount
 inputs but not among them: `cleanHotDir` wipes `hot-<n>.yml` only. The write
@@ -160,7 +175,9 @@ interrupted write leaves the previous state rather than half of a new one.
 ### 6.2 What it offers
 
 An installed entry whose record names a different version shows "Roll back to
-<version>". The RPC is `shop/rollbackStart({ key })` — the install identity,
+<version>" — in its current AND its outdated state. The offer used to render
+only while the card was up to date, so the moment the catalog listed a newer
+version it vanished and Update overwrote the record. The RPC is `shop/rollbackStart({ key })` — the install identity,
 never the name alone, because two entries can share a name — and takes **no
 version from the client**: the host looks the spec up in its own record and
 runs that.
@@ -168,7 +185,10 @@ A spec this host did not write cannot be run, which is the same invariant
 `shop/installStart` holds by building its spec from the snapshot.
 
 The rollback then runs through the CLI path, so the records, the activation
-verdict and the notices are the install's own.
+verdict and the notices are the install's own: the control shows the same
+`ActivationOffer` an install gets, and a github rollback rewrites the pin to
+the commit it restored — without that, the card kept reporting the version the
+rollback had just left, and the offer pointed at what was already installed.
 
 It does NOT ride the install flow registry on the client. That registry's
 Retry re-sends the panel's target — the catalog's LATEST version — so a failed
@@ -215,15 +235,21 @@ counts what the catalog holds, so a delisted favorite simply does not show.
   `manifestVersion` still forms none.
 - `repo-state.test.ts`: the new fields round-trip; a malformed one throws; the
   rule bump re-reads.
-- `gate.test.ts`: the payload probe counts `engines` and `bin`, and not
-  `dependencies`.
+- `repo-gate.test.ts`: the payload probe counts `engines` and `bin`, and not
+  `dependencies` (the npm gate has the twin rule but no github entry carries
+  the fields in its fixtures).
 - `catalog-parity.test.ts`: green without an exemption.
 - `present.test.ts` and `ShopTab.client.spec.tsx`: the link's three forms, the
   large-size mark, the rollback button, the favorite toggle and filter.
 - `state` unit tests: a missing file is empty state; a malformed file reads as
   empty state rather than throwing, and the next write replaces it; each half
   is validated apart, so a corrupt rollback map never costs the stars; the
-  bounds; `rollbackSpec` refusing a range and a non-commit.
+  bounds; `rollbackSpec` refusing a range and a non-commit; two reads never
+  share one object (both writers mutate what they get, and a shared constant
+  made one profile's failed save visible to the next caller).
+- `executor.test.ts`: `retryCommand` — POSIX single-quoting, a Windows
+  operand with `&` getting no line at all, an unsafe profile getting none, and
+  the assembled status carrying it only on a failure.
 - `ShopTab.client.spec.tsx`: the star and its revert on a refused save, the
   favorites switch in both directions, the absence of both against a host with
   no `shop/state`, the three detail rows and their absence, the large-size

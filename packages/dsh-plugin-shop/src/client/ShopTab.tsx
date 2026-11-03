@@ -534,17 +534,25 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
               <Fragment key="installed">
                 <p className={css.installedLabel} data-shop-installed>{t('installed')}</p>
                 <BlockerBadge blockers={blockers} t={t} />
-                {rollback !== undefined && (
-                  <RollbackControl
-                    identity={key}
-                    version={versionLabel(entry.source, rollback.version).text}
-                    t={t}
-                    start={rollback.start}
-                    status={rollback.status}
-                    onSettled={rollback.onSettled}
-                  />
-                )}
               </Fragment>
+            )}
+            {/* The rollback offer BELONGS to the installed branch, not to its
+              * current half. It used to render only when the card was up to
+              * date, so as soon as the catalog listed a newer version the
+              * offer vanished and Update overwrote the record — the one
+              * moment a reader is most likely to want the way back. */}
+            {rollback !== undefined && (
+              <RollbackControl
+                identity={key}
+                version={versionLabel(entry.source, rollback.version).text}
+                t={t}
+                start={rollback.start}
+                status={rollback.status}
+                onSettled={rollback.onSettled}
+                restart={restart}
+                restartBlocked={restartBlocked}
+                reload={reload}
+              />
             )}
             {/* The hot enable/disable switch (§8) sits on every installed
              * row — current or outdated — and reads the inventory state. */}
@@ -798,7 +806,7 @@ function CommandLine({ command, t }: { command: string; t: ShopTabProps['t'] }):
  * button it cannot honour, so it polls its own record instead and asks the tab
  * to re-read the installed list once the host says done.
  */
-function RollbackControl({ identity, version, t, start, status, onSettled }: {
+function RollbackControl({ identity, version, t, start, status, onSettled, restart, restartBlocked, reload }: {
   identity: string
   /** The version the record names, already formatted for display. */
   version: string
@@ -808,8 +816,17 @@ function RollbackControl({ identity, version, t, start, status, onSettled }: {
   /** Called once a rollback settles done, so the installed list and the
    * records are read again. */
   onSettled: () => void
+  restart: ShopTabInjected['restart']
+  restartBlocked: RestartBlockedReason | null
+  reload: () => void
 }): ReactNode {
-  const [state, setState] = useState<'idle' | 'running' | 'failed'>('idle')
+  const [state, setState] = useState<'idle' | 'running' | 'failed' | 'done'>('idle')
+  // The activation the host reported for the rollback's install, shown with
+  // the same offer an install gets: a rollback replaces an already-imported
+  // package, so it always reports `restart`, and a card that said "1.0.0" over
+  // a process still running 1.2.0 would be the very defect the activation
+  // model exists to prevent (design 2026-11-02-market-borrowings §6.2).
+  const [activation, setActivation] = useState<Activation>('restart')
   const [detail, setDetail] = useState('')
   const alive = useRef(true)
   useEffect(() => () => { alive.current = false }, [])
@@ -845,10 +862,34 @@ function RollbackControl({ identity, version, t, start, status, onSettled }: {
       if (!alive.current) return
       if (!answer.found) { setState('failed'); setDetail(answer.detail ?? ''); return }
       if (answer.state === 'failed') { setState('failed'); setDetail(answer.detail ?? ''); return }
-      if (answer.state === 'done') { setState('idle'); onSettled(); return }
+      if (answer.state === 'done') {
+        setActivation(answer.activation ?? 'restart')
+        setState('done')
+        onSettled()
+        return
+      }
     }
   }
   if (state === 'running') return <span className={css.rollbackNote} data-shop-rollback-running>{t('rollingBack')}</span>
+  if (state === 'done') {
+    return (
+      <div className={css.rollbackGroup} data-shop-rollback-done>
+        <ActivationOffer
+          activation={activation}
+          t={t}
+          restart={restart}
+          restartBlocked={restartBlocked}
+          reload={reload}
+          where="install"
+          trailing={(
+            <button type="button" className={css.cancelButton} data-shop-rollback-dismiss onClick={() => { setState('idle') }}>
+              {t('dismiss')}
+            </button>
+          )}
+        />
+      </div>
+    )
+  }
   return (
     <span className={css.rollbackGroup} data-shop-rollback-group>
       <button
@@ -2162,7 +2203,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
       }
     })()
     return () => { cancelled = true }
-  }, [readState, versionReload])
+  }, [readState, versionReload, settled])
 
   // Each shelf card looks its installed state up by install identity; the
   // Installed filter below selects on the same map.

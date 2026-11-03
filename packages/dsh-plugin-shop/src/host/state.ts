@@ -15,7 +15,7 @@
  * than throwing. The next write replaces it with a valid one.
  */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 /** The filesystem this module needs, injected so tests never touch disk. The
@@ -27,14 +27,57 @@ export interface ShopStateFs {
   write: (path: string, data: string) => void
 }
 
+/**
+ * How many times a rename is retried when Windows refuses it, and how long
+ * between tries.
+ *
+ * Measured 2026-11-02 on Windows 11: `renameSync` over a target another
+ * handle holds open throws `EPERM`, and so does one over a read-only target —
+ * an antivirus scan, a backup agent or a second dsh on the same profile is
+ * enough. Five tries at 20 ms covers a scanner's open/close window without
+ * making a click wait on a wedged file.
+ */
+const RENAME_TRIES = 5
+const RENAME_RETRY_MS = 20
+
+/** A temp name unique to this write: two dsh processes on one profile must
+ * not share a scratch file, and a fixed `.tmp` did. */
+let tempCounter = 0
+
 export const nodeShopStateFs: ShopStateFs = {
   read: path => readFileSync(path, 'utf8'),
   write: (path, data) => {
     mkdirSync(dirname(path), { recursive: true })
-    const tmp = `${path}.tmp`
+    tempCounter += 1
+    const tmp = `${path}.${process.pid}.${tempCounter}.tmp`
     writeFileSync(tmp, data)
-    renameSync(tmp, path)
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        renameSync(tmp, path)
+        return
+      } catch (error) {
+        const code = (error as { code?: unknown }).code
+        // Only the two codes a held or read-only target produces are retried.
+        // Anything else — a missing directory, a full disk — is the caller's
+        // to report, and retrying it five times would only delay the news.
+        if ((code !== 'EPERM' && code !== 'EBUSY') || attempt >= RENAME_TRIES) {
+          // The scratch file must not be left behind on the way out.
+          try { rmSync(tmp, { force: true }) } catch { /* already gone, or unwritable: nothing left to tidy */ }
+          throw error
+        }
+        busyWait(RENAME_RETRY_MS)
+      }
+    }
   },
+}
+
+/** A short synchronous pause. The write is called from a request handler, and
+ * a promise here would change the seam's shape for a few milliseconds. */
+function busyWait(ms: number): void {
+  const until = Date.now() + ms
+  while (Date.now() < until) {
+    // Spin. The wait is 20 ms and only on Windows' retry path.
+  }
 }
 
 /**
@@ -66,7 +109,17 @@ export interface ShopState {
   previous: Record<string, ShopRollbackRecord>
 }
 
-export const EMPTY_SHOP_STATE: ShopState = { favorites: [], previous: {} }
+/**
+ * A fresh empty state.
+ *
+ * A function, never a shared constant: both writers mutate what
+ * `readShopState` returns, so handing every missing file the same object made
+ * one profile's failed save visible to the next caller — and a test that
+ * compared against the constant could not see it.
+ */
+export function emptyShopState(): ShopState {
+  return { favorites: [], previous: {} }
+}
 
 /** A path walk cannot climb out of: identities and names are catalog or
  * manifest text, and the record is only ever used to build a spec. */
@@ -126,16 +179,16 @@ export function readShopState(fs: ShopStateFs, profileDir: string): ShopState {
   } catch {
     // Absent or unreadable. Nothing else can reach this catch, and both mean
     // the same thing: no state yet.
-    return EMPTY_SHOP_STATE
+    return emptyShopState()
   }
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
   } catch {
     // A hand-edited or truncated file. Empty state, replaced on next write.
-    return EMPTY_SHOP_STATE
+    return emptyShopState()
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return EMPTY_SHOP_STATE
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return emptyShopState()
   const document = parsed as { favorites?: unknown; previous?: unknown }
 
   const favorites: string[] = []
