@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { emptyShopState, FAVORITES_MAX, PREVIOUS_MAX, readShopState, rollbackSpec, statePath, writeShopState, type ShopState } from '../../src/host/state.ts'
+import { emptyShopState, FAVORITES_MAX, PREVIOUS_MAX, readShopState, rollbackSpec, shopStateFsFor, statePath, writeShopState, type ShopState } from '../../src/host/state.ts'
 import { memHotFs } from './mem-fs.ts'
 
 /**
@@ -135,5 +135,71 @@ describe('the rollback spec', () => {
 
   it('refuses a github record whose version is not a commit', () => {
     expect(rollbackSpec({ source: 'github', name: 'r', repo: 'o/r', version: 'v1.0.0' })).toBeUndefined()
+  })
+})
+
+describe('the writer (the Windows path every state test used to skip)', () => {
+  /** IO whose rename can be scripted, so the EPERM retry runs on any host. */
+  function ioWith(renames: Array<string | Error>): { io: Parameters<typeof shopStateFsFor>[0]; removed: string[]; written: string[]; waits: number[] } {
+    const removed: string[] = []
+    const written: string[] = []
+    const waits: number[] = []
+    let attempt = 0
+    const io = {
+      read: () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) },
+      mkdir: () => {},
+      writeFile: (path: string) => { written.push(path) },
+      rename: (_from: string, to: string) => {
+        const step = renames[Math.min(attempt, renames.length - 1)]
+        attempt += 1
+        if (step instanceof Error) throw step
+        void to
+      },
+      remove: (path: string) => { removed.push(path) },
+      wait: (ms: number) => { waits.push(ms) },
+      processId: 4242,
+    }
+    return { io, removed, written, waits }
+  }
+
+  const eperm = (): Error => Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' })
+
+  it('retries a rename Windows refused, and succeeds without touching the scratch cleanup', () => {
+    const { io, removed, waits } = ioWith([eperm(), eperm(), 'ok'])
+    shopStateFsFor(io).write('/p/.dsh-shop/state.json', '{}')
+    expect(waits).toEqual([20, 20])
+    expect(removed).toEqual([])
+  })
+
+  it('gives up after five tries and removes the scratch file', () => {
+    const { io, removed, written } = ioWith([eperm()])
+    expect(() => shopStateFsFor(io).write('/p/.dsh-shop/state.json', '{}')).toThrow(/EPERM/)
+    expect(removed).toEqual(written)
+  })
+
+  it('does not retry a code Windows only reports once, and cleans up', () => {
+    const { io, removed, waits } = ioWith([Object.assign(new Error('EACCES'), { code: 'EACCES' })])
+    expect(() => shopStateFsFor(io).write('/p/.dsh-shop/state.json', '{}')).toThrow(/EACCES/)
+    expect(waits).toEqual([])
+    expect(removed).toHaveLength(1)
+  })
+
+  it('names each scratch file for its process and its write, never one fixed .tmp', () => {
+    const { io, written } = ioWith(['ok'])
+    const fs = shopStateFsFor(io)
+    fs.write('/p/.dsh-shop/state.json', '{}')
+    fs.write('/p/.dsh-shop/state.json', '{}')
+    expect(written).toHaveLength(2)
+    expect(written[0]).not.toBe(written[1])
+    expect(written.every(path => path.includes('.4242.'))).toBe(true)
+  })
+})
+
+describe('a read that failed is not an absent file', () => {
+  it('rethrows a non-ENOENT read error instead of answering empty state', () => {
+    // Both callers write what they are handed: reading EACCES as "no state
+    // yet" is what let a failed save overwrite an intact file.
+    const fs = { read: () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }) }, write: () => {} }
+    expect(() => readShopState(fs, '/profile')).toThrow(/EACCES/)
   })
 })

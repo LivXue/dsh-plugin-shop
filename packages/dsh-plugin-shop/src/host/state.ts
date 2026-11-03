@@ -40,45 +40,76 @@ export interface ShopStateFs {
 const RENAME_TRIES = 5
 const RENAME_RETRY_MS = 20
 
-/** A temp name unique to this write: two dsh processes on one profile must
- * not share a scratch file, and a fixed `.tmp` did. */
-let tempCounter = 0
-
-export const nodeShopStateFs: ShopStateFs = {
-  read: path => readFileSync(path, 'utf8'),
-  write: (path, data) => {
-    mkdirSync(dirname(path), { recursive: true })
-    tempCounter += 1
-    const tmp = `${path}.${process.pid}.${tempCounter}.tmp`
-    writeFileSync(tmp, data)
-    for (let attempt = 1; ; attempt += 1) {
-      try {
-        renameSync(tmp, path)
-        return
-      } catch (error) {
-        const code = (error as { code?: unknown }).code
-        // Only the two codes a held or read-only target produces are retried.
-        // Anything else — a missing directory, a full disk — is the caller's
-        // to report, and retrying it five times would only delay the news.
-        if ((code !== 'EPERM' && code !== 'EBUSY') || attempt >= RENAME_TRIES) {
-          // The scratch file must not be left behind on the way out.
-          try { rmSync(tmp, { force: true }) } catch { /* already gone, or unwritable: nothing left to tidy */ }
-          throw error
-        }
-        busyWait(RENAME_RETRY_MS)
-      }
-    }
-  },
+/** The operations the writer needs, injected so the Windows-only retry can be
+ * driven on any platform: `renameSync` over a held-open target throws `EPERM`
+ * there and succeeds on POSIX, and every state test injects `memHotFs`, so the
+ * production path had no coverage at all. */
+export interface ShopStateIo {
+  read: (path: string) => string
+  mkdir: (path: string) => void
+  writeFile: (path: string, data: string) => void
+  rename: (from: string, to: string) => void
+  remove: (path: string) => void
+  wait: (ms: number) => void
+  processId: number
 }
 
-/** A short synchronous pause. The write is called from a request handler, and
- * a promise here would change the seam's shape for a few milliseconds. */
-function busyWait(ms: number): void {
-  const until = Date.now() + ms
-  while (Date.now() < until) {
-    // Spin. The wait is 20 ms and only on Windows' retry path.
+function nodeShopStateIo(): ShopStateIo {
+  return {
+    read: path => readFileSync(path, 'utf8'),
+    mkdir: path => { mkdirSync(path, { recursive: true }) },
+    writeFile: (path, data) => { writeFileSync(path, data) },
+    rename: (from, to) => { renameSync(from, to) },
+    remove: path => { rmSync(path, { force: true }) },
+    wait: ms => {
+      const until = Date.now() + ms
+      while (Date.now() < until) {
+        // Spin. The wait is 20 ms and only on Windows' retry path.
+      }
+    },
+    processId: process.pid,
   }
 }
+
+/**
+ * A writer over `io`, temp-then-rename.
+ *
+ * The temp name carries the process id and a per-write counter: a fixed
+ * `.tmp` gave two dsh processes on one profile the same scratch file.
+ *
+ * `rename` is retried on `EPERM`/`EBUSY`, which is what Windows reports when
+ * another handle (an antivirus scan, a backup agent, a second dsh) holds the
+ * target; measured 2026-11-02, a read-only target throws it too. Any other
+ * code, or the last try, removes the scratch file and rethrows.
+ */
+export function shopStateFsFor(io: ShopStateIo): ShopStateFs {
+  let counter = 0
+  return {
+    read: io.read,
+    write: (path, data) => {
+      io.mkdir(dirname(path))
+      counter += 1
+      const tmp = `${path}.${io.processId}.${counter}.tmp`
+      io.writeFile(tmp, data)
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          io.rename(tmp, path)
+          return
+        } catch (error) {
+          const code = (error as { code?: unknown }).code
+          const retryable = code === 'EPERM' || code === 'EBUSY'
+          if (!retryable || attempt >= RENAME_TRIES) {
+            try { io.remove(tmp) } catch { /* already gone, or unwritable: nothing left to tidy */ }
+            throw error
+          }
+          io.wait(RENAME_RETRY_MS)
+        }
+      }
+    },
+  }
+}
+
+export const nodeShopStateFs: ShopStateFs = shopStateFsFor(nodeShopStateIo())
 
 /**
  * What is known about one installed plugin's previous version, enough to
