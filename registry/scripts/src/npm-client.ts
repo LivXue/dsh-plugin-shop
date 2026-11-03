@@ -2375,12 +2375,19 @@ export function binNamesOf(manifest: { bin?: unknown }, packageName: string | un
   const declared = manifest.bin
   const candidates: string[] = []
   if (typeof declared === 'string') {
-    // A string `bin` names its target, and npm links the command under the
-    // package's own name; a blank string names no target and links nothing.
-    if (declared.trim() !== '' && packageName !== undefined && isPublishableBin(packageName)) candidates.push(packageName)
+    // A string `bin` names its target, and `npm-normalize-package-bin` keys it
+    // by the package name's BASENAME: `@scope/tool` installs `tool`, not
+    // `@scope/tool`. Publishing the full name named a command that never
+    // appears on PATH — on exactly the scoped packages worth printing.
+    if (declared.trim() !== '' && packageName !== undefined) {
+      const command = packageName.slice(packageName.lastIndexOf('/') + 1)
+      if (isPublishableBin(command)) candidates.push(command)
+    }
   } else if (declared !== null && typeof declared === 'object' && !Array.isArray(declared)) {
-    for (const name of Object.keys(declared)) {
-      if (isPublishableBin(name)) candidates.push(name)
+    // The object form's keys are the command names, and a non-string target is
+    // a link npm never makes, so it is not a command either.
+    for (const [name, target] of Object.entries(declared)) {
+      if (typeof target === 'string' && isPublishableBin(name)) candidates.push(name)
     }
   }
   const kept: string[] = []
