@@ -2387,7 +2387,9 @@ export function binNamesOf(manifest: { bin?: unknown }, packageName: string | un
     // The object form's keys are the command names, and a non-string target is
     // a link npm never makes, so it is not a command either.
     for (const [name, target] of Object.entries(declared)) {
-      if (typeof target === 'string' && isPublishableBin(name)) candidates.push(name)
+      // Basenamed, as the string form is: a key like `cli/tool` links `tool`.
+      const command = name.slice(name.lastIndexOf('/') + 1)
+      if (typeof target === 'string' && isPublishableBin(command)) candidates.push(command)
     }
   }
   const kept: string[] = []

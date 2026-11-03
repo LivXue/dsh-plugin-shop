@@ -882,8 +882,9 @@ describe('a carried declarations record is checked on the way in', () => {
   })
 
   it.each([
-    ['dshPeers without manifestVersion', { dshPeers: { '@deepseek-ai/dsh': '*' } }, 'dshPeers and manifestVersion recorded apart'],
-    ['manifestVersion without dshPeers', { manifestVersion: '1.0.0' }, 'dshPeers and manifestVersion recorded apart'],
+    ['dshPeers without manifestVersion', { dshPeers: { '@deepseek-ai/dsh': '*' } }, 'declarations and manifestVersion recorded apart'],
+    ['manifestVersion without a declaration', { manifestVersion: '1.0.0' }, 'declarations and manifestVersion recorded apart'],
+    ['engines without manifestVersion', { engines: '^1.0.0' }, 'declarations and manifestVersion recorded apart'],
     ['a dshPeers key outside the harness scope', { dshPeers: { react: '*' }, manifestVersion: '1.0.0' }, 'a malformed dshPeers record'],
     ['an empty dshPeers', { dshPeers: {}, manifestVersion: '1.0.0' }, 'a malformed dshPeers record'],
     ['a dshPeers that is an array', { dshPeers: ['@deepseek-ai/dsh'], manifestVersion: '1.0.0' }, 'a malformed dshPeers record'],
@@ -905,20 +906,30 @@ describe('a carried declarations record is checked on the way in', () => {
       const engines = enginesDshOf({ engines: { dsh: '>=0.2.1-rc.2' } })
       const dependencies = dependencyCountOf({ dependencies: { a: '1', b: '2' } })
       const bin = binNamesOf({ bin: { 'dsh-a': './a.js' } }, 'dsh-a')
-      const parsed = parseRepoState(rowWith({ engines, dependencies, bin }))['a/one']?.candidates[0]
+      const parsed = parseRepoState(rowWith({ engines, dependencies, bin, manifestVersion: '1.0.0' }))['a/one']?.candidates[0]
       expect(parsed?.engines).toBe('>=0.2.1-rc.2')
       expect(parsed?.dependencies).toBe(2)
       expect(parsed?.bin).toEqual(['dsh-a'])
     })
 
+    it('round-trips an ENGINES-ONLY record, the shape rule 4 writes for a manifest with no peers', () => {
+      // The case the field exists for, and the one the old pairing rule called
+      // corrupt — which would have made the build after the next one refuse to
+      // start.
+      const parsed = parseRepoState(rowWith({ engines: '>=0.2.1-rc.2', manifestVersion: '1.0.0' }))['a/one']?.candidates[0]
+      expect(parsed?.engines).toBe('>=0.2.1-rc.2')
+      expect(parsed?.dshPeers).toBeUndefined()
+      expect(parsed?.manifestVersion).toBe('1.0.0')
+    })
+
     it('keeps an empty engines range, which dsh reads as unsatisfiable on purpose', () => {
-      const parsed = parseRepoState(rowWith({ engines: '' }))['a/one']?.candidates[0]
+      const parsed = parseRepoState(rowWith({ engines: '', manifestVersion: '1.0.0' }))['a/one']?.candidates[0]
       expect(parsed?.engines).toBe('')
     })
 
     it.each([
-      ['a non-string engines range', { engines: 1 }, 'a malformed engines range'],
-      ['an array engines range', { engines: ['>=1'] }, 'a malformed engines range'],
+      ['a non-string engines range', { engines: 1, manifestVersion: '1.0.0' }, 'a malformed engines range'],
+      ['an array engines range', { engines: ['>=1'], manifestVersion: '1.0.0' }, 'a malformed engines range'],
       ['a zero dependency count', { dependencies: 0 }, 'a malformed dependencies count'],
       ['a fractional dependency count', { dependencies: 1.5 }, 'a malformed dependencies count'],
       ['a string dependency count', { dependencies: '1' }, 'a malformed dependencies count'],
