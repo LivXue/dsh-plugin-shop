@@ -985,6 +985,10 @@ describe('binNamesOf', () => {
     expect(binNamesOf({ bin: { 'dsh-a': './a.js', 'dsh-b': 1 } }, 'p')).toEqual(['dsh-a'])
   })
 
+  it('basenames an object-form key too, as npm does', () => {
+    expect(binNamesOf({ bin: { 'cli/tool': './tool.js' } }, 'p')).toEqual(['tool'])
+  })
+
   it('dedupes, bounds the count and drops a blank or over-long name', () => {
     const long = 'x'.repeat(BIN_NAME_MAX_LENGTH + 1)
     const bin = { 'dsh-a': '1', 'dsh-a2': '2', 'dsh-a3': '3', 'dsh-a4': '4', [long]: '5', '  ': '6', 'dsh-b': '7' }

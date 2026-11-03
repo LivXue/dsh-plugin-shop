@@ -304,10 +304,14 @@ function checkCarriedDeclarations(repo: string, candidate: unknown): RepoCandida
   if (manifestVersion !== undefined && (typeof manifestVersion !== 'string' || manifestVersion.trim() === '')) {
     throw new Error(`repo-state.json: ${repo} has a candidate with a malformed manifestVersion`)
   }
-  // Written together or not at all (`writeDeclarations`), so one without the
-  // other is a record no build wrote.
-  if ((dshPeers === undefined) !== (manifestVersion === undefined)) {
-    throw new Error(`repo-state.json: ${repo} has a candidate with dshPeers and manifestVersion recorded apart`)
+  // `manifestVersion` rides with EITHER declaration since rule 4: an
+  // engines-only manifest has no peers to write, and dsh still needs the
+  // installed version to name an exemption. The old pairing rule refused that
+  // shape, which made the first rule-4 build write records the next build's
+  // parse would throw on — the build would not start. What remains true is
+  // that a version is written whenever a declaration is, and never alone.
+  if (((dshPeers !== undefined || engines !== undefined)) !== (manifestVersion !== undefined)) {
+    throw new Error(`repo-state.json: ${repo} has a candidate with declarations and manifestVersion recorded apart`)
   }
   if (icon !== undefined && !isIconRecord(icon)) {
     throw new Error(`repo-state.json: ${repo} has a candidate with a malformed icon record`)
