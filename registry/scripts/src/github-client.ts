@@ -1303,9 +1303,19 @@ function writeDeclarations(
   if (compatibility === undefined) delete candidate.compatibility
   else candidate.compatibility = compatibility
   const dshPeers = dshPeersOf(declarations)
+  const engines = enginesDshOf(declarations)
   const { version } = declarations
-  if (dshPeers !== undefined && typeof version === 'string' && version.trim() !== '' && version.length <= VERSION_MAX_LENGTH) {
-    candidate.dshPeers = dshPeers
+  // The version rides with EITHER declaration, not only the peers: dsh's rule
+  // needs the installed manifest's `name@version` to name an exemption
+  // whenever it refuses, and an entry that declares `engines.dsh` alone is
+  // refused the same way (design 2026-11-02-market-borrowings §1). Writing it
+  // only beside `dshPeers` left exactly that entry unjudgeable — `ownManifest`
+  // answers null for a github entry with no version — which is the defect this
+  // field exists to close, still live on this channel.
+  const usableVersion = typeof version === 'string' && version.trim() !== '' && version.length <= VERSION_MAX_LENGTH
+  if ((dshPeers !== undefined || engines !== undefined) && usableVersion) {
+    if (dshPeers !== undefined) candidate.dshPeers = dshPeers
+    else delete candidate.dshPeers
     candidate.manifestVersion = version
   } else {
     delete candidate.dshPeers
@@ -1315,7 +1325,6 @@ function writeDeclarations(
   // Removed, never left stale, when this manifest declares none: absent beside
   // the current stamp means "declares none", and keeping the previous
   // declaration would publish one this manifest never made.
-  const engines = enginesDshOf(declarations)
   if (engines === undefined) delete candidate.engines
   else candidate.engines = engines
   const dependencies = dependencyCountOf(declarations)

@@ -973,9 +973,16 @@ describe('binNamesOf', () => {
     expect(binNamesOf({ bin: { 'dsh-a': './a.js', 'dsh-b': './b.js' } }, 'dsh-a')).toEqual(['dsh-a', 'dsh-b'])
   })
 
-  it('links a string bin under the package name', () => {
-    expect(binNamesOf({ bin: './cli.js' }, '@scope/tool')).toEqual(['@scope/tool'])
+  it('links a string bin under the package name\'s basename, as npm does', () => {
+    // `npm-normalize-package-bin` keys it by the basename: a scoped package's
+    // command is `tool`, never `@scope/tool`.
+    expect(binNamesOf({ bin: './cli.js' }, '@scope/tool')).toEqual(['tool'])
+    expect(binNamesOf({ bin: './cli.js' }, 'dsh-plain')).toEqual(['dsh-plain'])
     expect(binNamesOf({ bin: './cli.js' }, undefined)).toBeUndefined()
+  })
+
+  it('drops an object-form entry whose target is not a string, which npm never links', () => {
+    expect(binNamesOf({ bin: { 'dsh-a': './a.js', 'dsh-b': 1 } }, 'p')).toEqual(['dsh-a'])
   })
 
   it('dedupes, bounds the count and drops a blank or over-long name', () => {
