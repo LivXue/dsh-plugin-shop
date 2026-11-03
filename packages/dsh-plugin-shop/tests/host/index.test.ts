@@ -4917,10 +4917,10 @@ describe("dsh's pluginManager events, through a real cordis Context", () => {
 describe('the profile state RPCs (design 2026-11-02-market-borrowings §6-§7)', () => {
   /** A gateway whose state file is the shared in-memory fs, and a fixture dsh
    * that records what it was asked to run. */
-  function stateGateway(dir: string, seeded?: { favorites?: string[]; previous?: Record<string, { source: 'npm' | 'github'; name: string; repo?: string; subdir?: string; version: string }>; entries?: CatalogEntry[] }) {
+  function stateGateway(dir: string, seeded?: { favorites?: string[]; previous?: Record<string, { source: 'npm' | 'github'; name: string; repo?: string; subdir?: string; version: string }>; entries?: CatalogEntry[]; dependencies?: Record<string, string> }) {
     const state = memHotFs()
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-state-profile-'))
-    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dependencies: {}, dsh: { profile: { bundles: [] } } }))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dependencies: seeded?.dependencies ?? {}, dsh: { profile: { bundles: [] } } }))
     if (seeded !== undefined) {
       state.write(join(profileDir, '.dsh-shop', 'state.json'), JSON.stringify({ favorites: seeded.favorites ?? [], previous: seeded.previous ?? {} }))
     }
@@ -5009,5 +5009,33 @@ describe('the profile state RPCs (design 2026-11-02-market-borrowings §6-§7)',
     // No record for this identity, and a record no spec form can spell.
     expect((await gateway.rollbackStart({ key: 'npm:missing' })).ok).toBe(false)
     expect((await gateway.rollbackStart({ key: 'github:o/r#' })).ok).toBe(false)
+  })
+
+  it('refuses a rollback whose entry left the catalog, before anything spawns', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-state-delisted-'))
+    const { gateway } = stateGateway(dir, {
+      previous: { 'npm:a': { source: 'npm', name: 'a', version: '1.0.0' } },
+      entries: [],
+    })
+    const result = await gateway.rollbackStart({ key: 'npm:a' })
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.code).toBe('not-in-catalog')
+  })
+
+  it('refuses a rollback when the name now holds a different install', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-state-taken-'))
+    const { gateway } = stateGateway(dir, {
+      previous: { 'npm:a': { source: 'npm', name: 'a', version: '1.0.0' } },
+      entries: [{
+        name: 'a', version: '2.0.0', integrity: null, publishedAt: null, repository: null,
+        license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-11-01',
+      }],
+      // The profile's dependency for `a` is a GITHUB install now: the same
+      // check `installStart` refuses a replacement with.
+      dependencies: { a: 'github:other/a' },
+    })
+    const result = await gateway.rollbackStart({ key: 'npm:a' })
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.code).toBe('name-taken')
   })
 })

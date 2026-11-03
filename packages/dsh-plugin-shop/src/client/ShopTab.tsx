@@ -544,7 +544,7 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
               * date, so as soon as the catalog listed a newer version the
               * offer vanished and Update overwrote the record — the one
               * moment a reader is most likely to want the way back. */}
-            {rollback !== undefined ? (
+            {rollback !== undefined && !removed && !uninstalling ? (
               <RollbackControl
                 identity={key}
                 version={versionLabel(entry.source, rollback.version).text}
@@ -557,10 +557,13 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
                 restartBlocked={restartBlocked}
                 reload={reload}
               />
-            ) : rollbackReceipt !== null ? (
+            ) : rollbackReceipt !== null && !removed && !uninstalling ? (
               // The record is deleted host-side once the rollback lands, so
               // the offer above unmounts; the receipt it produced is kept
-              // here, where the record's disappearance cannot take it.
+              // here, where the record's disappearance cannot take it. Both
+              // are suppressed under an uninstall, like every other action on
+              // this card: the removal is the operation in flight, and a
+              // receipt for a rollback would sit beside it.
               <div className={css.rollbackGroup} data-shop-rollback-done>
                 <ActivationOffer
                   activation={rollbackReceipt}

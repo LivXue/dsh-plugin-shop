@@ -6096,6 +6096,22 @@ describe('the prepurchase facts, favorites and recovery (design 2026-11-02-marke
     expect(container.querySelector('[data-shop-rollback]')).toBeNull()
   })
 
+  it('takes the rollback offer away while an uninstall is running', async () => {
+    // The offer is the one action on this card that survives an outdated
+    // state; it must not survive the removal. A click during the queue would
+    // reinstall the plugin the reader just removed, behind the uninstall.
+    const base = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+    const { injected } = withFeatures(base.injected, { rollback: { 'npm:dsh-hello-plugin': '1.0.0' } })
+    // A done uninstall settles before the first poll, so the flow stays
+    // `running` only if the status answer is withheld.
+    base.installStatus.mockImplementation(() => new Promise<never>(() => {}))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector(CARD)).toBeTruthy())
+    expect(container.querySelector(`${CARD} [data-shop-rollback]`)).toBeTruthy()
+    fireEvent.click(container.querySelector(`${CARD} [data-shop-uninstall]`) as HTMLElement)
+    await waitFor(() => expect(container.querySelector(`${CARD} [data-shop-rollback]`)).toBeNull())
+  })
+
   it('links an outdated row to what the new version changed', async () => {
     const { injected } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     const { container } = renderTab(injected)

@@ -262,14 +262,22 @@ counts what the catalog holds, so a delisted favorite simply does not show.
   bounds; `rollbackSpec` refusing a range and a non-commit; two reads never
   share one object (both writers mutate what they get, and a shared constant
   made one profile's failed save visible to the next caller).
+- `state.test.ts` drives the WRITER through `shopStateFsFor` and a scripted
+  IO, so the Windows-only path runs on any host: the `EPERM` retry, the
+  give-up after five tries with the scratch file removed, a non-retryable code
+  failing immediately, and one temp name per process per write. A read that
+  fails with anything but `ENOENT` is its own case: it throws rather than
+  reading as empty, because both writers would otherwise persist that
+  emptiness over an intact file.
 - `executor.test.ts`: `retryCommand` — POSIX single-quoting, a Windows
   operand with `&` getting no line at all, an unsafe profile getting none, and
   the assembled status carrying it only on a failure.
 - `ShopTab.client.spec.tsx`: the star and its revert on a refused save, the
   favorites switch in both directions, the absence of both against a host with
   no `shop/state`, the three detail rows and their absence, the large-size
-  mark, the failed install's command line, the rollback offer and its absence
-  when the record names what is installed, and the what-changed link.
+  mark, the failed install's command line, the rollback offer (including on an
+  outdated card, and its suppression while an uninstall runs), the receipt
+  that outlives the record, and the what-changed link.
 - **No e2e case is added for these two.** The live lane already covers an
   install, an update and a reload of the shipped UI (`web-full-flow.e2e.ts`),
   and the fixture it drives has one version per package — a rollback needs a
