@@ -18,6 +18,7 @@ import { existsSync } from 'node:fs'
 import { join, posix, win32 } from 'node:path'
 import { jsEntryCommand } from './dsh-cli.ts'
 import { killTree, shellSafeTarget, type KillFns } from './executor.ts'
+import { installEnv } from './child-env.ts'
 
 /** How long one batch may run before it is killed. Far below
  * `INSTALL_TIMEOUT_MS`: a batch still running after this is no longer hiding
@@ -362,9 +363,10 @@ export function createPrefetcher(options: {
     try {
       child = spawn(routed?.command ?? pnpmBin, args, {
         cwd: current.cwd,
-        env: current.env,
+        env: installEnv(current.env),
         stdio: 'ignore',
         detached: platform !== 'win32',
+        windowsHide: true,
         shell,
       })
     } catch (error) {

@@ -11,6 +11,7 @@ import type { Readable } from 'node:stream'
 import { StringDecoder } from 'node:string_decoder'
 import { readProfileManifest, resolveProfileDir } from '@deepseek-ai/dsh-app-boot'
 import { allowVersionCommand } from './compatibility.ts'
+import { installEnv } from './child-env.ts'
 import { dshCommand, resolveDshScript, DSH_PACKAGE, type DshCliFs } from './dsh-cli.ts'
 import type { HotRestartReason } from './hot.ts'
 import type { Activation } from './activation.ts'
@@ -835,8 +836,15 @@ function spawnPluginCli(options: {
         // PATH, HOME, proxies, and npm/pnpm configuration. Callers may pass a
         // narrower env explicitly; guessing an allowlist here would break
         // valid installs and process.env carries no variable provenance.
-        env: env ?? process.env,
+        // `installEnv` adds the one variable a headless spawn needs (see
+        // `child-env.ts`).
+        env: installEnv(env),
         detached: platform !== 'win32',
+        // No console window: dsh can be started from a GUI or the desktop app,
+        // where a console child otherwise flashes a window over it. Measured
+        // class on the competitor (their #1094), whose backup child did the
+        // same on Windows.
+        windowsHide: true,
       })
     } catch (error) {
       resolve(failToStart(error as NodeJS.ErrnoException))
