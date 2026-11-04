@@ -65,6 +65,12 @@
   --shop-warn: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 60%, var(--dsw-alias-label-primary));
   --shop-warn-on-tint: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 50%, var(--dsw-alias-label-primary));
   --shop-success: color-mix(in srgb, var(--dsw-alias-state-success-primary) 60%, var(--dsw-alias-label-primary));
+  /* The favorite star's set colour. Deliberately NOT `--shop-warn`: that mix
+   * is tuned for text on a tint and reads as dark amber, while a 15 px glyph
+   * is a mark rather than a sentence — it wants the hue, kept bright. 70% is
+   * the brightest mix that still darkens with the light theme instead of
+   * glowing on white (a raw warn token is one value in both palettes). */
+  --shop-star: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 70%, var(--dsw-alias-label-primary));
   /* The shelf never scrolls sideways: a card too wide for its track wraps
    * its badges rather than widening the panel.
    *
@@ -958,21 +964,34 @@
   border-radius: 8px;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--dsw-alias-label-secondary);
+  /* Unstarred: a light grey, dimmer than body text. Mixed toward transparent
+   * rather than named, so it stays "light" on the dark theme too — the palette
+   * has no tertiary label token, and `label-secondary` alone reads as body
+   * text rather than as an inactive control. */
+  color: color-mix(in srgb, var(--dsw-alias-label-secondary) 60%, transparent);
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
 }
 
+/* The hover only darkens an UNSTARRED star. On a starred one it must not:
+ * this rule outranks `.favoriteButtonOn` by specificity, so a plain `:hover`
+ * turned a yellow star grey under the pointer. */
 .favoriteButton:hover {
   border-color: var(--dsw-alias-border-l2);
-  color: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-label-secondary);
 }
 
-/* The starred state: the brand colour, which every palette defines, and the
- * same colour the "what changed" link rides. */
+/* The starred state: yellow (design: the reader's two states are grey and
+ * yellow). Declared after the hover rule — this rule and `.favoriteButton`
+ * have the same specificity, so source order decides — and repeated on
+ * `:hover` because the hover selector outranks it. */
 .favoriteButtonOn {
-  color: var(--dsw-alias-brand-primary);
+  color: var(--shop-star);
+}
+
+.favoriteButtonOn:hover {
+  color: var(--shop-star);
 }
 
 /* The rollback offer (same design, §6): one button and, on failure, the

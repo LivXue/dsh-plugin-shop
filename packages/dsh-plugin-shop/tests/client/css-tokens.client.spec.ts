@@ -879,6 +879,28 @@ describe('warn and success text clear 4.5:1', () => {
   })
 })
 
+describe('the favorite star is grey until it is set, then yellow', () => {
+  // Colour is the state here (the glyph is the same ★, and `aria-pressed`
+  // carries it for assistive tech), so the token choice is the whole
+  // affordance — invisible to jsdom, which composites no colours.
+  it('draws an unstarred star as a light grey, not as body text', () => {
+    const off = rules.get('.favoriteButton') ?? ''
+    expect(off).toMatch(/color:\s*color-mix\(in srgb, var\(--dsw-alias-label-secondary\) 60%, transparent\)/)
+  })
+
+  it('derives the starred yellow on the tab root, from the warm hue', () => {
+    const panel = rules.get('.panel') ?? ''
+    expect(panel).toContain('--shop-star: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 70%, var(--dsw-alias-label-primary));')
+  })
+
+  it('draws a starred star from that yellow, and lets no hover rule outrank it', () => {
+    expect(rules.get('.favoriteButtonOn') ?? '').toMatch(/color:\s*var\(--shop-star\)/)
+    // `.favoriteButton:hover` is more specific than `.favoriteButtonOn`, so a
+    // plain hover rule turned a yellow star grey under the pointer.
+    expect(rules.get('.favoriteButtonOn:hover') ?? '').toMatch(/color:\s*var\(--shop-star\)/)
+  })
+})
+
 describe('incompatibility reads as an error, not a warning', () => {
   // The shop already spends the warn token on things a user can live with: a
   // stale catalog, an unreviewed tier, the restart gate. A plugin whose
