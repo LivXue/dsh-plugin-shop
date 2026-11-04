@@ -89,10 +89,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 777
   },
-  "github:111xjyuan/dsh-taffy-pet@04d698e3a96d4a574e8bc4a32560001bd63ebf4e:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:11zz-prog/dsh-delivery-box@79ddc46c6eec3509f943432ad80f3fc5c83cb4aa:icon.svg": {
     "outcome": "published",
     "sha256": "bafad8b0327ec868b79c505fc57e5f121f72cfa270c85ff5e3d9ad4ce8ad1500",
@@ -146,10 +142,6 @@
     "sha256": "3b07eb3038c6859ea42a9ffe1f7d584fee1a5b1b5dd01bd18b1ca89c5018e0ad",
     "mediaType": "image/svg+xml",
     "bytes": 558
-  },
-  "github:13478790948abc/Claude-and-DeepSeek-Pet-LiKe@d8f914f2bc51df26d816338e4760971d709a4005:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:13520rygvv/dsh-sovits-tts@39e34b76bd508db01bda5cc8953cfecfd57c63ba:icon.svg": {
     "outcome": "published",
@@ -217,14 +209,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 548
   },
-  "github:203-11/dsh-fat-fish@21a63e42f0f5d6ea3b597498b33bfc6abe74b993:icon.webp": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.webp\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "github:208c/dsh-mica@72bea1d403ee18af2cfd9f0833068efc0f0db60b:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:2095945715a-source/dsh-basketball-pet@c5961e46735f4a260cc99de3bcc3596bad33e389:icon.svg": {
     "outcome": "published",
     "sha256": "5416c640eb6af4788a29e47ddfe926ae2da8c31b3898de6e43f1e55ba80170f7",
@@ -266,10 +250,6 @@
     "sha256": "e3215d50dd945788593c461d620e1d57e4d4ccfb8bfb9a04433a1dccfee6dfc7",
     "mediaType": "image/svg+xml",
     "bytes": 1140
-  },
-  "github:2486809961-alt/dsh-whale-pig-widget@364e17af9487bafccfec69fa18d1872ed88422c6:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:2540511/dsh-memory@7cc749fb0e023ae3a533571ff17c09c4821ec005:icon.svg": {
     "outcome": "published",
@@ -396,10 +376,6 @@
     "sha256": "d212f34e08418b9ee28eab38c92fc31239a937fef15a82863e3fb8e02342b9a9",
     "mediaType": "image/svg+xml",
     "bytes": 431
-  },
-  "github:576576/dsh-translate@5ab4fb803e5449c464807a7044e5793d24e8f91b:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:643048695/dsh-mt-download@1df0f5d76ee30462a6b6a73442fc96a0b77d8c96:assets/icon.svg": {
     "outcome": "published",
@@ -587,10 +563,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 848
   },
-  "github:AaronOhO/dsh-plugin-wenkai-font@3551c580edb2245ac4c46529f702225166f1b794:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:AbelKeithsun/dsh-mcp-switch@c842db6436a2edfa3d9717e404d6efdda3f36804:icon.svg": {
     "outcome": "published",
     "sha256": "b9d811a1e8a8319aedfafef2f582ceb6d1572e50a1a13cb164ed85e42fbc617e",
@@ -722,10 +694,6 @@
     "sha256": "96ed8a1f5f1bbbea0234eb4c056666a8dcd1d6bf98495da1efb8a887fb3e1896",
     "mediaType": "image/svg+xml",
     "bytes": 476
-  },
-  "github:Algorandius/dsh-disk-janitor@c661f7c814c8a81c9c3d57a092592de8d9f3e1d9:assets/icon-180.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"assets/icon-180.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:Algorandius/dsh-redo@84a3abcf501d7223075ca2f0925c763908e27dca:icon.svg": {
     "outcome": "published",
@@ -1031,10 +999,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 542
   },
-  "github:Biggy1606/dsh-balance-whale-intl@3348c72716dda3fd06c497ec189961bf08934dd9:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:Billwu18/dsh-cache-hit-monitor@46bbe6616c273a4ea2e5dbfde5a26ae25603908a:icon.svg": {
     "outcome": "published",
     "sha256": "0003dc801bcba3eb9d339868aae6ba0ac9110500ba22e205f2c7b52b6577d69c",
@@ -1052,10 +1016,6 @@
     "sha256": "f3e6ceda52a06babaaa349a387efd8c400dc22d8876f072ff247f2abb0558b88",
     "mediaType": "image/svg+xml",
     "bytes": 482
-  },
-  "github:BlackRasion/dsh-chat-avatars@301b38009b6cc98c53e131faf7d69faa75cb1960:icon.webp": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.webp\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:Blake-John/dsh-remote-control@dd1bb644a5959bf4fa25724110af6245566376ed:icon.svg": {
     "outcome": "published",
@@ -1230,10 +1190,6 @@
     "sha256": "4c40703b5fc02eef9b12448261fb2c77b85e4a88b25ebdb4f4e021a97c3a2a91",
     "mediaType": "image/svg+xml",
     "bytes": 1104
-  },
-  "github:Cdkgfp/dsh-whale-pro@459a8c3287b3060e464cd7dff5fce5a0e43b02c3:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:Char0nChengg/dsh-remote-suite@b7673ccd730b2cdd048cb39a9520fa200b2443f7:icon.svg": {
     "outcome": "published",
@@ -1865,10 +1821,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 317
   },
-  "github:Ffwjl010831/dsh-plugin-kassel-boot@c94adb480a18750c33912a75a0827e516e992676:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:Findly-qwb/dsh-model-picker@f5705d9460d1609bad650835cdf1a290197a3a7a:icon.svg": {
     "outcome": "published",
     "sha256": "bdc4355aeceb9b9aa7c3a379cbddb196fbb7d4c0f6fe75dce8823f065d033bfc",
@@ -1910,10 +1862,6 @@
     "sha256": "1d9e03010f4225aa86234498471558eaf4d0647ef01ffbaf1506a4fd883ff7d1",
     "mediaType": "image/svg+xml",
     "bytes": 550
-  },
-  "github:Fr20210478/dsh-whale-chase-rice@838e6259fdadab6e4250c8e8714f15092229509b:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:Fragmented-Chaos/dsh-session-delete@aedb1bd89b28facc14613d0f216a13cd690003ee:icon.svg": {
     "outcome": "published",
@@ -2083,10 +2031,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 313
   },
-  "github:Gusheng-GS/dsh-desktop-alerts@88455893ace735f72f583bbe193d94ca32a3eca3:lib/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"lib/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:Guuu16/dsh-remote@a2cb8cd25a0592632670d05192b825f842dde5e6:public/remote.svg": {
     "outcome": "published",
     "sha256": "e7d67613d170bb11ffa1da6cc6e2c054e8d0733c314f7329a052f945e52ab96d",
@@ -2110,10 +2054,6 @@
     "sha256": "f5cae20be947d5c7bc226315501efa6df0d04ac144bdfbd2e050290af93e9985",
     "mediaType": "image/svg+xml",
     "bytes": 856
-  },
-  "github:HDHKVT/dsh-qq-relay@71fb7a39c00a6f5b0caa10e4f05d0b3fec719d69:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:HHHHHH233333/dsh-session-delete@2a181671e8f7fdf42aeda48e1dbe77da934fd782:icon.svg": {
     "outcome": "published",
@@ -2252,10 +2192,6 @@
     "sha256": "6bbf35e2168dedb8159a8a15de000307e3b48c537f74cfc3090f9ea5e20da757",
     "mediaType": "image/svg+xml",
     "bytes": 640
-  },
-  "github:Hu9956/DSH-model-controls@4076f252f2abad8e59464654952ba5e955a83558:assets/icon.svg": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.svg\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:HuaGyuu/dsh-runner@68b8999f1020d3aa115ada458d398511f636e3c9:icon.svg": {
     "outcome": "published",
@@ -2556,10 +2492,6 @@
     "sha256": "d59d81daafeb5fcec99a2578624e61981910950226db4df9c7865d0408c8a115",
     "mediaType": "image/svg+xml",
     "bytes": 878
-  },
-  "github:Jimesarrice/claude-pet-dsh@3ac847cac8e7fea8a6acc552effcae2d55e6b51e:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:JinShuXuan/dsh-context-budget@4e532ca7d345466ef1cd39a9291a2b2dd8f2ca3f:icon.svg": {
     "outcome": "published",
@@ -3155,10 +3087,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 476
   },
-  "github:Lovepeace-art/dsh-android-phone@d4ff44bfb183c0ae3295a87d13060d3f52bcd6f4:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:Lphehe/dsh-composer-assist@2aef8fcdec18eff85c53893329360f2631b5f575:icon.svg": {
     "outcome": "published",
     "sha256": "03f409534a836b88217ac1a16d54601d072c37fbf76ca575e2f42a9af3a14c86",
@@ -3260,10 +3188,6 @@
     "sha256": "67863ed3f80f585b914e6d527c55deaf44f8f10b82079a390c7bfc1b4deacc30",
     "mediaType": "image/svg+xml",
     "bytes": 356
-  },
-  "github:MJH520/dsh-welcome-boot@a35a088c8daa038e6842d39d4932832c11edbdb2:icon.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.webp\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:MR1ZK/dsh-quick-setup@97821d269c01713a0c48624c990016161225889f:icon.svg": {
     "outcome": "published",
@@ -4127,10 +4051,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 773
   },
-  "github:Qing-Meng716/dsh-memory-vault@34cdfe2883f6197f7aeaaf053a641704f0a7d0bc:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:Qliphoth11/sidebar-balance@4ee1f0956a2134574320a191b7b313d8f72a0f25:icon.svg": {
     "outcome": "published",
     "sha256": "3f461141344752bf00d0a03842d3eced5c4f578e93d917fb990465e88d8961cc",
@@ -4179,10 +4099,6 @@
     "mediaType": "image/png",
     "bytes": 4391
   },
-  "github:Rccccc6/Tongji-AGI-Credit@bc18771cf6872abbbaa73082fcbfa8ba59fff898:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:ReWebaiyu/dsh-qq@8d98eb814efc1f5614df4a6301ec01e09ff477a1:icon.svg": {
     "outcome": "published",
     "sha256": "5f76e393a8c55e52b8bf30b589000fee3a91029ac10e4845bf5c018cbc3da9a7",
@@ -4218,10 +4134,6 @@
     "sha256": "72dec9b5e5d8a4b14f75c12596b636f262a3436e03f0c7a587445c05b5c20368",
     "mediaType": "image/svg+xml",
     "bytes": 499
-  },
-  "github:Rheasilvia/dsh-pretty-extension@ad9e85a067365e85681cbb3e83acbfaadb3ef73f:docs/images/icon-512.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"docs/images/icon-512.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:RicardoYan/dsh-agents-md-only@d0eb7716e788df232582873aaca30d6169eea083:icon.svg": {
     "outcome": "published",
@@ -4378,10 +4290,6 @@
     "sha256": "44a4b7b56e7a3eba60bab0d5c51fcef38e2b3a360137f1b5669199694dce0a86",
     "mediaType": "image/svg+xml",
     "bytes": 566
-  },
-  "github:Salty-Mocha/dsh-ops-mac@baf71374067287a4e350cfaf5f7d5104d3d98131:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:Sama05/dsh-download-progress@0030d323ec6865f71e3738c5ab50de0790fbe314:icon.svg": {
     "outcome": "published",
@@ -4568,10 +4476,6 @@
     "sha256": "ea88a94d0d90e1f38f6c5db68c9995fcfbcabe63fefe12c43a803d1b019849f9",
     "mediaType": "image/svg+xml",
     "bytes": 419
-  },
-  "github:Shinarin/dsh-remielle-pet@daa0c8d1df4fb3decc75c6a6c1eae6e5299f92cb:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:ShokouP/dsh-tea-party-mode@339864cdfe3d88afc9bac481f7568f9e49613b7f:icon.svg": {
     "outcome": "published",
@@ -4789,10 +4693,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 441
   },
-  "github:Starlit-Sky-code/dsh-prompt-starlight@a138e19489aec518f207882ebc252f3bcc8daf6f:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:StarsHarryZhu/dsh-intelligent-UI@50f2a3970c54fdb24294accb4340448bed2095cc:icon.svg": {
     "outcome": "published",
     "sha256": "dc6889e056c5d3634d4a9889d765322c9317cc51872355347757c1768c621436",
@@ -4966,10 +4866,6 @@
     "sha256": "af9897fb28be69da22f0c9e3f11c026fe23ee7b40fb3e954b3f441b8c78c2b2f",
     "mediaType": "image/svg+xml",
     "bytes": 1131
-  },
-  "github:Tests4gptplay/deepseek-servant@b2bd96239712217f7ec18d454317f8d20f7dd959:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:Tests4gptplay/dsh-codex-native@b482bdf600556740e1792d211ef63318f8ed2288:assets/chatgpt-auth.png": {
     "outcome": "published",
@@ -5205,10 +5101,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 1059
   },
-  "github:WXJ-71/dsh-sidebar-balance@7fc50a933a6632be259696eaab23527c6075bdbe:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:Wang-Chuming/dsh-obsidian-file-opener@dcb0340689fbbb0e7a28207f5073605a9e6903d5:icon.svg": {
     "outcome": "published",
     "sha256": "b187298d756364ae72b0397d2ee4479f1965b1e62ea7b3381abf8614f5d8f9e2",
@@ -5316,10 +5208,6 @@
     "sha256": "159989f9d0dc6606c1b2ab1231704f32eefb4ff9624c35bd6c43072967e8c449",
     "mediaType": "image/svg+xml",
     "bytes": 613
-  },
-  "github:Wlaeg/dsh-pet-desktop-linux@8957632938f287ddc3b2f71be1e649028c9e7624:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:Wldeinsamkeit/dsh-quota-hub@591cc8379284cfbd2b821594a39058fba404064c:icon.svg": {
     "outcome": "published",
@@ -5495,10 +5383,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 1360
   },
-  "github:Xun209/dsh-fatfish-usage-xun209@1072163b7eac2bf2208dfd09ab989d9e32a13cb3:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:Xxsttb/dsh-input-optimizer@49bb8bd1fb2d40d29aee07bb778d5c20122ff366:icon.svg": {
     "outcome": "published",
     "sha256": "d4111c2b0f462f5b7e619fa684740cd5df977a2d3c07007c84011251f077cb3d",
@@ -5630,10 +5514,6 @@
     "sha256": "6e32760f916d3d9ddf97a847e7dd339adbc7d70ecd0afadb0f1ea39e6983fb1d",
     "mediaType": "image/svg+xml",
     "bytes": 1771
-  },
-  "github:Ycet/dsh-awesome-hud@63796e956c5569b11dff3ed373c8ca7e8cecce3d:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:Ycet/dsh-signal-field@94a7d25b46da2fb7ef65298bba5612d35b0e8891:icon.svg": {
     "outcome": "published",
@@ -6109,10 +5989,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 328
   },
-  "github:acdsh4869/dsh-deepseek-web-relay@bebd12c9016bdb50fc9dd0ed139ae02222fe7aa7:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:adamcjm/dsh-workspace-visibility@1da388436f0f91944aade02a341c690bd1da44c6:icon.svg": {
     "outcome": "published",
     "sha256": "90ec423cf8c1e7a4d0e4212f29a691a4e81db29f7351723c7d1e34a327190ba6",
@@ -6143,10 +6019,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 816
   },
-  "github:ahian-lee/dsh-attention-notifier@31ad97a8765c9ee2d95a73cb338a6a317a6aff9d:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:ahian-lee/dsh-ssh-workspace@04ba8ef9c3cf08b6ce08211cf7657969a9d81128:icon.svg": {
     "outcome": "published",
     "sha256": "944316e053b6be4d4f32f302a60c097081dafae39f186c61ee492a14fa72b423",
@@ -6164,10 +6036,6 @@
     "sha256": "b742f0e0e412ffba6bdf38a0a8ba792ef1acc61c2ad20af4882e901233a8466b",
     "mediaType": "image/svg+xml",
     "bytes": 340
-  },
-  "github:aigisx/dsh-plugin-whale-girl@07d8a3223fe676487226606cf7ee8a47a078638b:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:ailawu0409/dsh-session-archive@14a2773979c59e03ffeb39c8e78497cd1c590c38:icon.svg": {
     "outcome": "published",
@@ -6535,19 +6403,11 @@
     "mediaType": "image/svg+xml",
     "bytes": 1480
   },
-  "github:baigeiy/dsh-windows-notifications@a5b2c1e0c87f7ee3a0390396555592fb45b48c43:official-whale.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"official-whale.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:baigo8/dsh-session-immersion@24cafbd75c280d3b5cf28b6dd47ab1d0b780e233:icon.svg": {
     "outcome": "published",
     "sha256": "f94e0be24d65d6de7180526619dfac43b773f3e863de250727f2ffc6bf5da024",
     "mediaType": "image/svg+xml",
     "bytes": 308
-  },
-  "github:bailiyyds/dsh-live2dwaifu@ad0faa6902afcbfbd1bb1f612339f543a206576d:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:baixiaoyin666/dsh-long-memory@833c5b4b6913fb5680920e49b027a3aeefa59af0:icon.svg": {
     "outcome": "published",
@@ -6573,23 +6433,11 @@
     "mediaType": "image/svg+xml",
     "bytes": 355
   },
-  "github:bauerelizabeth07139/MDSM@6393d2540d8c4937b5870ce7bdf1711526053c0f:assets/MDSM-mark.jpg": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/MDSM-mark.jpg\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:bauerelizabeth07139/dsh-math-rigor@baae8e589bfc306ced66df4df3f2bda3e3965809:assets/icon.svg": {
     "outcome": "published",
     "sha256": "4ebc43cf15fd861ac97f3f1f95d6b47ef18d1e1bac78e91ef5b3d96e2d532a52",
     "mediaType": "image/svg+xml",
     "bytes": 726
-  },
-  "github:bauerelizabeth07139/dsh-pet-dafeiyu@fc1ad4c0fa29ee29338a469c74ebe7776bf3d66a:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "github:bauerelizabeth07139/dsh-pet-liangzi@d9f44f3555559ce7e644e2081d5ff90737dc1156:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:bauerelizabeth07139/dsh-plugin-dxpdf@078243341def156778109e5cd2ef53c7600b1877:assets/icon.svg": {
     "outcome": "published",
@@ -6656,10 +6504,6 @@
     "sha256": "a0acb8afe95cfd2a88706b6bd9cd26227b8b7c114512eaf20a89b49c317ab3dc",
     "mediaType": "image/svg+xml",
     "bytes": 732
-  },
-  "github:bauerelizabeth07139/tangsan@aea08b49cfe89c411ab8d34acb31cda2371ce926:assets/tangsan-mark.jpg": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/tangsan-mark.jpg\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:bbaz123/dsh-openviking-autostart@cf2392be27173ff4d1ade0787ced9189ed13fc94:icon.svg": {
     "outcome": "published",
@@ -6744,10 +6588,6 @@
     "sha256": "9a4ce974fb29abbf1795bc587ecc9b39829803528cac57f19cce53b1d9a3fc8b",
     "mediaType": "image/svg+xml",
     "bytes": 1266
-  },
-  "github:bilbillm/dsh-steam-startup-animation@a0b9fa9a4840833f5286799ec28e756faf08ac0c:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:bilihave/dsh-whale-panel@0f363dafb3e57be3db6f51bc8b6f924d21e74c70:icon.svg": {
     "outcome": "published",
@@ -6838,10 +6678,6 @@
     "sha256": "93574d4ff228c526f3a807af012c61dfaa2411b3b670155d2dd6a4b2d5e0bd58",
     "mediaType": "image/svg+xml",
     "bytes": 1019
-  },
-  "github:btsd321/dsh-oh-my-terminal@e40df7b16a162b4df57bd9f77001474d347da748:icon.jpg": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.jpg\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:buguoshixc/dsh-discuss-mode@94e8c0e397e149f37639648536224573b9de3198:icon.svg": {
     "outcome": "published",
@@ -7125,14 +6961,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 768
   },
-  "github:cshengyi023-collab/dsh-deepsea-echo@c5599f80cf5a517e220a91524dbdda791406c09d:assets/plugin-icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/plugin-icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "github:cshengyi023-collab/dsh-pet-companion@350f2255da455777d8ff9f2f64a8bf15efa81c48:assets/plugin-icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/plugin-icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:cspyz/dsh-terse-mode@42da6fbe16401b8243f0fd1ebcb870ae7be77398:icon.svg": {
     "outcome": "published",
     "sha256": "6a76045ab16c870cdddb50fff37c9fbfaba3898bf4962cb4dc5823fdf24cf9d7",
@@ -7277,10 +7105,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 431
   },
-  "github:dang13021993/olachill-dsh-plugin@b809aa0b8413340bdf178aa7da33fb63b16205ef:logo.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"logo.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:darkknight2333/dsh-timeline-ui@29c69811c0d4dc2278907e712784a0e2b3def47c:icon.svg": {
     "outcome": "published",
     "sha256": "7e0073efa7fbc4dee99676d9201dd40b59d48146ca1a4361712f46ccc49d2676",
@@ -7406,14 +7230,6 @@
     "sha256": "cc5b2a5b4478754ed21ca216d45cf477248deef94579543d94508f220bc64fa8",
     "mediaType": "image/svg+xml",
     "bytes": 865
-  },
-  "github:dingfz-cyber/dsh-theme-bocchi-meow@bce1d22f76b5dec09320ea68320e02a56ac68169:assets/sidebar.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/sidebar.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "github:dingfz-cyber/dsh-theme-umaru-yeah@4975e45e747bd75f2b880dd98dafc5392dc046f2:assets/icon.jpg": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.jpg\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:dn4hjtcr9s-del/dsh-wait-guard@7119ad1d25f1a045b5671422669e29bca7c91580:icon.svg": {
     "outcome": "published",
@@ -7899,19 +7715,11 @@
     "outcome": "refused",
     "detail": "package.json \"icon\" \"dsh/icon.png\" is not in full-aigc-plugins/artcraft-plugin at commit cdd5822."
   },
-  "github:full-aigc-plugins/blender-design-plugin@691b2702b1fbdb338dd8efd3096e04aa1e49dd96:dsh/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"dsh/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:full-aigc-plugins/cadcraft-plugin@91b01d41d614598bc54e10e5f386b32293ad72cc:dsh/icon.png": {
     "outcome": "published",
     "sha256": "522552718e50e2dd2f0abe2df922498aef713d2e73805d8c8dc9777333df8be0",
     "mediaType": "image/png",
     "bytes": 3788
-  },
-  "github:full-aigc-plugins/comfy-design-plugin@809d67eae8b70b5c0c5d182d085896bea9508522:dsh/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"dsh/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:full-aigc-plugins/deckcraft-plugin@39dee8f906ef8553ce10f7f65c192b8cf2a6d674:dsh/icon.png": {
     "outcome": "published",
@@ -7925,27 +7733,11 @@
     "mediaType": "image/png",
     "bytes": 29729
   },
-  "github:full-aigc-plugins/dreamina-canvas-plugin@b584cd88be5ccb736c7bec56c1f4e16cb498e737:dsh/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"dsh/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:full-aigc-plugins/dreamina-design-plugin@2d7f1691dff553c471e522bdee8c36834019b112:dsh/icon.png": {
     "outcome": "published",
     "sha256": "310dd9e1d6c079c43ab3c86538992d98e95da2ff7f060783057a98f106488d0c",
     "mediaType": "image/png",
     "bytes": 21777
-  },
-  "github:full-aigc-plugins/effectcraft-plugin@a6f4d539045b0069b8c631435691611dd8bca69f:dsh/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"dsh/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "github:full-aigc-plugins/figcraft-plugin@4115104788d8997c230665f0aa1d65176b033639:dsh/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"dsh/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "github:full-aigc-plugins/filmcraft-plugin@6bce5eca3580bc8581519345c829729dae77033c:dsh/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"dsh/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:full-aigc-plugins/gridcraft-plugin@171ce55b9b0e8c67693d8e2fd3f9e589b7e05234:dsh/icon.png": {
     "outcome": "published",
@@ -7959,26 +7751,6 @@
     "mediaType": "image/png",
     "bytes": 17288
   },
-  "github:full-aigc-plugins/lightcraft-plugin@14d660ba10a6206b477b2f48f163bff04f534276:dsh/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"dsh/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "github:full-aigc-plugins/maya-design-plugin@5089e0fccbeeb1afa1642f207c1ac5306a4a7569:dsh/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"dsh/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "github:full-aigc-plugins/minimax-design-plugin@837cf490b61313c45202686440e5f1ce6a07ddfc:dsh/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"dsh/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "github:full-aigc-plugins/pdfcraft-plugin@014e98fa33e171bb124438cb0f44e74e4652f9a2:dsh/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"dsh/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "github:full-aigc-plugins/photocraft-plugin@45c631bb6bb619741d8f1fd90faefc7705e2a905:dsh/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"dsh/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:full-aigc-plugins/soundcraft-plugin@9bbe26f0388102d60c8a79645280307a41f4e056:dsh/icon.png": {
     "outcome": "published",
     "sha256": "f5780e9b7af3f1d624481e72cfe6e5cdd0367458f58c661538c1f67041800673",
@@ -7990,14 +7762,6 @@
     "sha256": "fcc18fe26422fce4d645ba7e40badb760468638920d38940c3f65e100fdbc9b8",
     "mediaType": "image/png",
     "bytes": 31949
-  },
-  "github:full-aigc-plugins/video-factory-plugin@be739aeb910de651f8e0e920d4d8c74e683ff6fe:dsh/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"dsh/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "github:full-aigc-plugins/volcengine-design-plugin@a22a9383b997294019e31c8515a5268045bba4c9:dsh/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"dsh/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:full-aigc-plugins/wordcraft-plugin@7cf9f0f12bce00338dc99936898c6217760ffda8:dsh/icon.png": {
     "outcome": "published",
@@ -8016,10 +7780,6 @@
     "sha256": "7d232c9efcf586f6710bc47a1221f580b21ed0961bd72b6068fe8a8b56118826",
     "mediaType": "image/svg+xml",
     "bytes": 472
-  },
-  "github:g4yzx/dsh-persona-cetacea@d68027f789491fa3d9eb369beea9d0c21dd2335f:icon.webp": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.webp\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:g65tph4ycm-svg/dsh-balance-pill@f073cb9f623723e8c061791437c8d23a6d5cd2c9:icon.svg": {
     "outcome": "published",
@@ -8092,10 +7852,6 @@
     "sha256": "0feadb60d400eb7091225e7846c1b6414d008b11bf26fda22d6d66bf3e9defb7",
     "mediaType": "image/svg+xml",
     "bytes": 766
-  },
-  "github:ggxx001/dsh-whale-widget@633e7580ce088b3cab0e8a8e9e4b5aa6d8eff1cb:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:gh503/dsh-prism-theme@142a3d1d8203889797d89614157c9f975914c2bb:icon.svg": {
     "outcome": "published",
@@ -8427,10 +8183,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 798
   },
-  "github:hongdougao111/dsh-power-switch@7aa94f3b2414a99dda20bbf296a3379eea3041f4:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:hoshino114/dsh-skill-hub@b7c30904411eeef5f56391f4919b5d557a145f6e:icon.svg": {
     "outcome": "published",
     "sha256": "7c2f454ec765d4bbabb2958e7cc535aeea387a7405d8422734faa3b806811fd1",
@@ -8610,10 +8362,6 @@
     "sha256": "e27c7534aa89c02a9323f85a63da6166f711e4782185381d0de8f8fb1086a450",
     "mediaType": "image/svg+xml",
     "bytes": 493
-  },
-  "github:iKode423/dsh-ronova-theme@17331e3e13d41d90c1292eba6bbec31fa9b0476b:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:iStarryDust/dsh-browser@8c4f807e693c4894086b81be30926b4a9f94c96a:icon.svg": {
     "outcome": "published",
@@ -8813,10 +8561,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 713
   },
-  "github:jabingu/dsh-reply-suggestions@f86e96add08384150a1c8ee86c99d4e42e117475:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:jabingu/dsh-selection-group@bdfa0cef47297b0303d243cecf655f1bcf11b1e9:icon.svg": {
     "outcome": "published",
     "sha256": "74e79deea15229f420208fd2470f46ab56b98abd279f27eeb2f2c22e188c8771",
@@ -8949,10 +8693,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 695
   },
-  "github:john-walks-slow/dsh-im-humanize@1fe4b08ce4dc4f2e5601796a90decc3a06d90c3b:assets/logo-plugin-message-link-gradient.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/logo-plugin-message-link-gradient.webp\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:johnsonspirit/ocean-wave-theme@b7da6a0162aaee2c0c2fa36df6f2e36bf508d7d8:icon.svg": {
     "outcome": "published",
     "sha256": "3d1d79c3ed17c1fa3075270a9bad6ef2ad498b416cff2c3509ce213d1a7054c9",
@@ -8982,10 +8722,6 @@
     "sha256": "6a1a65280f7580c87d95105f4636181cca8e5d299fbf9c38463f1d31b6143fdc",
     "mediaType": "image/svg+xml",
     "bytes": 1370
-  },
-  "github:jryang1997/dsh-hold-to-dictate@d74b4724a0158a9442b6812e9b1ae4decb035cde:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:judyding1121-web/dsh-vehicle-watch@2923ec8845ada19baa633db632be5e94fa67771f:icon.svg": {
     "outcome": "published",
@@ -9190,10 +8926,6 @@
     "sha256": "775ecb09df80f11c065624d669486bc80ea08e231a3abdfcba583aa58d779c20",
     "mediaType": "image/svg+xml",
     "bytes": 552
-  },
-  "github:kiranasuka/dsh-exa-search@42cec7f7d0cc96379747c18df3be478a1b499942:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:kirarikaryuu/dsh-gbk-text@8bff6275c7de1a09844663d6d0a5386ca53249a8:icon.svg": {
     "outcome": "published",
@@ -9639,10 +9371,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 279
   },
-  "github:levitate403/dsh-firefly-bg@2a07e0ae528a3b61f3f77d870b5437f5d9b70107:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:lg6169219/dsh-fatfish-level@95005ddec079f5b4eef5fbdbb84bbea1b4d3496d:icon.png": {
     "outcome": "published",
     "sha256": "ae8c81d81086673712cd3f0c5b0e40c151ff83f631c8942f4ae991e534ab259d",
@@ -9883,10 +9611,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 873
   },
-  "github:liuke-zhu/dsh-pet-deepseek-chan@39b6842febd1710839efa536c3c429d8aeb5dc79:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:liuleiyu121520/dsh-mcpserver-manager@3af1701e407eded560016627702364002424eb9c:icon.svg": {
     "outcome": "published",
     "sha256": "e21bb5eff3e9f24282622db824d3591a7909eb7407bac5bed22021a62b3734dd",
@@ -9976,10 +9700,6 @@
     "sha256": "d286d9603069eab99b9763620c6c79a314c36b786c4406a06947ca9610bd9146",
     "mediaType": "image/svg+xml",
     "bytes": 809
-  },
-  "github:lizhijie429/dsh-task-notifier@b0ba17afb958a73003fbc97d11cf8de3cb3f4a88:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"assets/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:lizyoko9/dsh-formula-verify@638cc2d7c8f87eabbbecc242dad14603d50d3cfc:icon.svg": {
     "outcome": "published",
@@ -10220,10 +9940,6 @@
     "sha256": "7023c0bcef397a399f6da57a2bb292b1627832e48c2643a9b2b1244bd6320f1f",
     "mediaType": "image/svg+xml",
     "bytes": 1143
-  },
-  "github:lxj5820/dsh-boot-animation@b7786cd749ef18608340a8f5e2071a3656ebf009:assets/icon/icon-160.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon/icon-160.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:lxl2000927/dsh-memos-panel@9ac200cd41fe791796adcaa6be809562cc0bee6f:icon.svg": {
     "outcome": "published",
@@ -10841,10 +10557,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 583
   },
-  "github:muzapar00/united_nation_skin_deepseek_harness@a73cd0b9ee13716530ab8f2503939096c2191cdb:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:mwk719/dsh-restart@26e0c1889c5539db969389ab7eda467212abcee3:icon.svg": {
     "outcome": "published",
     "sha256": "e483e28015a8dffa8ef4d9b6dcfa83c42ce817c3b79cbc6925504e1acf417811",
@@ -11097,10 +10809,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 676
   },
-  "github:oioiphainon/dsh-widget@5a7295cb045b159a7fa51c3493a0e39d1bcdf43b:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:okku000/dsh-ollama-quota@7739157ed5d39a782f0092f7bb01d83f53b9430a:icon.svg": {
     "outcome": "published",
     "sha256": "352477c0d3456ea5dab8a0d6c1b00ed6a70cec48282c9324a7f7b3c30ef2c4e9",
@@ -11178,10 +10886,6 @@
     "sha256": "d7c1fb0dfe12941314d3bcd09beb3308e4f70ba2c806e1cb1a66345d37ec3ea0",
     "mediaType": "image/svg+xml",
     "bytes": 1363
-  },
-  "github:oumaekumiko0821/dsh-splash-gojo@d1c89a895f1e0000f9081761da82424a08f476cb:assets/icon.jpg": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.jpg\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:ousiqwq/dsh-soul-desk@7f0612223b0a99a82c1981d53326460813d92cb8:icon.svg": {
     "outcome": "published",
@@ -11321,10 +11025,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 410
   },
-  "github:pokerface-1224/deepseek-whale-girl-pet@c7a0a01b80c5826b1a8a7829d943db6adc7d5a4b:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:polychromate/dsh-sidebar-footer-rows@d62683aca76f187243702df4dcebae03acbc8717:icon.svg": {
     "outcome": "published",
     "sha256": "fca6cf8ffd8edc72a0bb2b455d4d54418e49164d7f1ef3d26bea0ac53f53ba66",
@@ -11361,19 +11061,11 @@
     "mediaType": "image/svg+xml",
     "bytes": 546
   },
-  "github:ptb-xiaou/dsh-api3d-pet@619bdb8cb97941d2a6a9fa1104af83847efdcc8b:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:ptilroko/dsh-tool-picker@845ff6e372e8e561677adbc4d238d94b4127cd2e:icon.svg": {
     "outcome": "published",
     "sha256": "f3b8db8f3728ee59b1de6c23f29ea08d86282d121ea64b6922d08e0c0dfdebb2",
     "mediaType": "image/svg+xml",
     "bytes": 490
-  },
-  "github:pucco-OD/dsh-sumika-widget@4d16ced2088b47b7715cfb6480801d934dd72f1f:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:puny-code/dsh-speed-anchor@1ac8e16c267a85e52c5e175b5ceb3b7f59b24d2c:icon.svg": {
     "outcome": "published",
@@ -11458,10 +11150,6 @@
     "sha256": "20cff2da9e3722c7e037937352859a376b4fd77907b4d444ee29ecbf1e890b6d",
     "mediaType": "image/svg+xml",
     "bytes": 528
-  },
-  "github:qingfenganshi/dsh-whale-desktop@cde654d40c1ce734ebdb7fe263b3a2ea616cb360:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:qingxingLi/dsh-deepseek-webchat@ffeda25c5266d8baae3988d846ec42bb4dd1a8a6:icon.svg": {
     "outcome": "published",
@@ -11757,10 +11445,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 327
   },
-  "github:rumpen233/dsh-lion-pet@4dd7e2233e8b273609f1583f65711afc3787abcd:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:running-grass/dsh-nix-dev-shell@90d39a724613d151838faac7972e3a06693df56a:icon.svg": {
     "outcome": "published",
     "sha256": "ab0e80c3187b685edb397c0ce061597b515bce27a79eee365f6ea8870ae0c61a",
@@ -11784,10 +11468,6 @@
     "sha256": "32f19e2abf317ecc579c3596a98ae3a50143cf6ec8ac7927a306ea90ee6c52a9",
     "mediaType": "image/svg+xml",
     "bytes": 1047
-  },
-  "github:sailina-afk/cyrene-balance-widget@40d23a11dd49257a0694dca2852f255717181765:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:saithink/dsh-local-proxy@ee329f3505a9461da0dfb26c4ca4d9fc60bf8596:icon.svg": {
     "outcome": "published",
@@ -12923,10 +12603,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 630
   },
-  "github:vlln/whale-girl@c3f4afb400755062991c7e9991b745b3016abeeb:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:vogtersea/dsh-worklog@dab2a22f270b7eb74d4576f0281d7e39cb728b9e:icon.svg": {
     "outcome": "published",
     "sha256": "a91e423d041090b863806cf5c91950de420d26d4607d28fc4cd75d69b00c523d",
@@ -13017,10 +12693,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 330
   },
-  "github:wct-lab/dsh-docchain@5350cc079b07587fced17b8f0c95832b567a6a71:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:wdx0614/dsh-restart-plugin@00e2d07945c4f53c2abd4d6d15cd331f577c15af:icon.svg": {
     "outcome": "published",
     "sha256": "2422bcbf1f5a672974276137519ff0a5c0983670a73db24ded80adc7006b816c",
@@ -13068,10 +12740,6 @@
     "sha256": "8e231ae94861ad151472700b78e3ba5c2012b3098a4aee59fc759f3e63e2fdc5",
     "mediaType": "image/svg+xml",
     "bytes": 669
-  },
-  "github:whh110112/human-writing-skills@0b5041274639d0da45a4200d07a2bf634c13aecc:assets/icon.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.webp\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:whui5041-cloud/DSH-manjuhub@d3c776c01ac5d60cbb6d35abb02d705ecfc40334:icon.svg": {
     "outcome": "published",
@@ -13264,10 +12932,6 @@
     "sha256": "752a88461f03c47a08f526acbe935aafb7b80e4b5d5e7811b76a09173a7880d4",
     "mediaType": "image/svg+xml",
     "bytes": 1521
-  },
-  "github:wumou-sleep/dsh-xiaojingyu-persona@a5c5bdf6b0aea4f6e1a82a517936d22ba91b113f:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:wuwan911-cell/dsh-relay-reasoning@2f275ffacdb6c083783216a4af65a66dafc7e78b:icon.svg": {
     "outcome": "published",
@@ -13545,10 +13209,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 9646
   },
-  "github:xingyueDanYang/dsh-puppet-memory@58fdfc63df7444f1d0938c7723361227db19e787:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:xintingcui/dsh-sidebar-panels-fold@ee55b3e0c7f54cd35a2d765ef4d4e3c1b66c27ae:icon.svg": {
     "outcome": "published",
     "sha256": "f6cff86c9badeda5762074a01b12e19cf1d004f7ebb03d1578b4f3a98ad48d89",
@@ -13711,10 +13371,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 708
   },
-  "github:xyzYaeMiko/dsh-deepsleep-progress@b6434203d117bc97064605d595507b690cd18ed9:icon.svg": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.svg\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:xyzYaeMiko/dsh-session-groups@5d3d60cd31b7803db21f130ee9b9f1154e4842dd:icon.svg": {
     "outcome": "published",
     "sha256": "4a36fa9019ec199d8f37611011a82fcce2ea0803e0cc60e03fa6a140690deae0",
@@ -13780,10 +13436,6 @@
     "sha256": "528eee112ea1bce6429ca5754441b1f7207e9ff548645666818c1edc3241dcfb",
     "mediaType": "image/svg+xml",
     "bytes": 1130
-  },
-  "github:yanzhuang-h/awesome-dsh-pet@6201a4a03c4d1a9583104ffb9e4f20ee306179e5:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:yashua233/dsh-qq-mail-notify@bc7aee4b3bd480cf9e86777b083b25c1ebbfed68:icon.svg": {
     "outcome": "published",
@@ -13970,10 +13622,6 @@
     "sha256": "5ccb75ca57676d96d3ec7b16c78b1d3b621447f730b66396fb7f2e5e0a2b6663",
     "mediaType": "image/svg+xml",
     "bytes": 664
-  },
-  "github:ytsu-ki/dsh-relink@a27635500163fc556202dca3be20bda845ec4bd0:icon.jpg": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.jpg\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:yu234567/dsh-llamacpp-studio@4837428b7480261727b73bb9d1b22e5489b35915:icon.svg": {
     "outcome": "published",
@@ -14227,10 +13875,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 710
   },
-  "github:zdz6215591/dsh-theme-doubao@d7543b2bcc8c56953dc8dbbacad40065aa2b07ac:assets/doubao-mark@2x.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/doubao-mark@2x.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
-  },
   "github:zeheng723/dsh-medic-pet@b3c9c841123daa7b0c6846d65005ee1b9f6a97fd:icon.svg": {
     "outcome": "published",
     "sha256": "a0a64ca90c8a3d791b1d3c72782104645e31a1734cb7961d536e780262599230",
@@ -14260,10 +13904,6 @@
     "sha256": "2165165bef02f4c00ac758705d4d3ee5be2e15ccfd6ba100935b1b8131df8016",
     "mediaType": "image/svg+xml",
     "bytes": 454
-  },
-  "github:zero360-TYN/dsh-sage-mode@38afef0cb75943ef450ec3fee8e19953a848f260:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is larger than 32 KiB; the shop shows icons of at most 32 KiB."
   },
   "github:zerofancy/dsh-startup-skip@cb1701e3767fe11eefd909126d783d001bab00e4:icon.svg": {
     "outcome": "published",
@@ -14787,10 +14427,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 264
   },
-  "npm:@ak-103u/cline-upstream-provider@0.1.7:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 78.4 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:@albert-wu/dsh-memory-manager@0.1.0:icon.svg": {
     "outcome": "published",
     "sha256": "765f262a136fba1f40c6c198e9703649f20742ed306d1ea229523e2990b1a473",
@@ -14863,10 +14499,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 1012
   },
-  "npm:@astervolans/dsh-literature-search@0.4.1:icon.svg": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.svg\" is 112.0 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:@autumnpizazz/dsh-config-manager@0.1.73:icon.svg": {
     "outcome": "published",
     "sha256": "508b5054cef429d3a4226ecd9efc83da1e8702e86b7c6daadf38062b125d7c4c",
@@ -14878,10 +14510,6 @@
     "sha256": "6b35e8e7edce6fb053a9053a7c2279bc5a1827c897e7ad568467a69e773c9497",
     "mediaType": "image/svg+xml",
     "bytes": 690
-  },
-  "npm:@ayanehana/dsh-reasoning-effort@0.9.1:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 64.6 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@ayui124/dsh-openai-image-tools@1.1.2:icon.svg": {
     "outcome": "published",
@@ -14955,10 +14583,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 284
   },
-  "npm:@botharness/im-provider@4.32.0-botharness.24:assets/logo-plugin-message-link-gradient.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/logo-plugin-message-link-gradient.webp\" is 191.8 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:@bpicori/dsh-peak-hours@1.0.0:icon.svg": {
     "outcome": "published",
     "sha256": "ec9865b1c12481d22ca90552fbe179a9afae54b62f146e3c867005cf8f38e13a",
@@ -15006,10 +14630,6 @@
     "sha256": "82a6e43cb6b74a10ac07084c4a7c593ae0ea8453737627f7cd1728e7752ce1aa",
     "mediaType": "image/svg+xml",
     "bytes": 1160
-  },
-  "npm:@caozeal/dsh-next-git@0.1.10:icon.svg": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.svg\" is 146.6 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@cdredfox/dsh-prompt-shortcuts@1.1.2:icon.svg": {
     "outcome": "published",
@@ -15071,10 +14691,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 477
   },
-  "npm:@cliven/dsh-dafeiyu-notice@1.0.2:icon.svg": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.svg\" is 92.7 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:@cliven/dsh-ofd-viewer@0.1.0:icon.svg": {
     "outcome": "published",
     "sha256": "0ec33eda39de5358c276ef9b95a0fdbb1485a0b9d472526ae914dacfa93874be",
@@ -15098,10 +14714,6 @@
     "sha256": "770dadfe6e0453536f213bcef1c7b83b0c5eb1d15f50730386f9e8c087eb712e",
     "mediaType": "image/svg+xml",
     "bytes": 493
-  },
-  "npm:@code_tin/dsh-sync@0.2.4:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is 210.4 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@coder02lq/dsh-plugin-session-delete@1.0.2:icon.svg": {
     "outcome": "published",
@@ -15132,10 +14744,6 @@
     "sha256": "bf10ca275378c98decaf6f4edc42f7b96e37b153447af5f4611339579e6e2aca",
     "mediaType": "image/svg+xml",
     "bytes": 613
-  },
-  "npm:@crosery/dsh-viewer@0.3.3:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 78.8 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@cs-qyzhang/dsh-llm-quota@1.1.0:icon.svg": {
     "outcome": "published",
@@ -15238,10 +14846,6 @@
     "sha256": "ceb1fa50bbf378050984e14f0215a30cdb2b0a3474d92c2b23d400437a290419",
     "mediaType": "image/svg+xml",
     "bytes": 534
-  },
-  "npm:@dfy-plugins/dsh-bundle@0.1.3:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 126.6 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@dingcang/dsh-tailnet-ingress@1.2.2:icon.svg": {
     "outcome": "published",
@@ -15363,10 +14967,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 823
   },
-  "npm:@dyikai/dsh-hogwarts-loop@1.0.6:icon.svg": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.svg\" is 98.7 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:@dynastxu/dsh-anti-blind-approval@0.4.0:icon.svg": {
     "outcome": "published",
     "sha256": "c368636adb7d0cf8f4e941d7a85baca0b7e8de2bcdd4af4b02c2fe4aeb865ce9",
@@ -15456,10 +15056,6 @@
     "sha256": "04ab3c9b2cf1ff0bf4b4d3dd7e0958384473e1830db04aa6caceadfd55745ef1",
     "mediaType": "image/svg+xml",
     "bytes": 495
-  },
-  "npm:@fish-under-sea/dsh-fish@1.0.5:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 231.0 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@flyingludens/dsh-planar-aerial@0.1.0-beta.9:icon.svg": {
     "outcome": "published",
@@ -15735,10 +15331,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 770
   },
-  "npm:@jalilahmad.fazeli/deepseek-peak-indicator@1.0.0:assets/icon-512.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"assets/icon-512.png\" is 58.7 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:@jamolpe88/dsh-deepseek-balance@0.1.2:icon.svg": {
     "outcome": "published",
     "sha256": "d6eb1afc3c7477c978fa540d99ab4ca623acc4a5e5b623f254852f1007e965a7",
@@ -15907,10 +15499,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 426
   },
-  "npm:@johnnren/dsh-im-humanize@4.38.0-humanize.2:assets/logo-plugin-message-link-gradient.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/logo-plugin-message-link-gradient.webp\" is 228.9 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:@jojonadam/dsh-api-contract@0.1.0:icon.svg": {
     "outcome": "published",
     "sha256": "4507bff0f0487136faa59d50158db80bbd74a56738afcf6e17f7347e9347caf3",
@@ -15989,19 +15577,11 @@
     "mediaType": "image/svg+xml",
     "bytes": 558
   },
-  "npm:@kennielearngames/dsh-arcade@0.4.0:assets/branding/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/branding/icon.png\" is 61.5 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:@kenz1117/dsh-engram@0.11.5:icon.svg": {
     "outcome": "published",
     "sha256": "647903a3fa4024ce456df6cc938051ff1a2d66a0cbfa54becc43d22d52be69ae",
     "mediaType": "image/svg+xml",
     "bytes": 2011
-  },
-  "npm:@kirkchinese/dsh-citeciter@0.9.0-beta.7:assets/citeciter-mascot.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/citeciter-mascot.png\" is 57.5 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@kissblank/dsh-session-manager@1.0.1:assets/icon.svg": {
     "outcome": "published",
@@ -16188,14 +15768,6 @@
     "sha256": "a49fb02df6a3efd111092fec2373c4d4ac73da3b68469906f99b94565c35eb48",
     "mediaType": "image/png",
     "bytes": 12404
-  },
-  "npm:@linbin-mk/dsh-session-sync@0.10.0:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is 81.7 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:@linbin-mk/dsh-workspace-prompt@0.10.0:assets/icon-256.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"assets/icon-256.png\" is 44.6 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@linsam262/dsh-ponytail@0.1.1:icon.svg": {
     "outcome": "published",
@@ -16491,10 +16063,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 880
   },
-  "npm:@narratorz/dsh-im@4.38.0:assets/logo-plugin-message-link-gradient.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/logo-plugin-message-link-gradient.webp\" is 228.9 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:@nemushio/dsh-gpt-tutor@1.2.0:icon.svg": {
     "outcome": "published",
     "sha256": "5fe46a0840bf6bbb474c3198422cb5135708bbd2cdab577fbe47200ad9a354e9",
@@ -16512,10 +16080,6 @@
     "sha256": "5bb52792cf0e7dd04b585f338efe82758445a5a83975cc970eba8c42b81cd13f",
     "mediaType": "image/svg+xml",
     "bytes": 603
-  },
-  "npm:@nexscope/dsh-nexscope@0.1.2:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 39.0 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@next-ai-drawio/dsh@0.1.0:icon.png": {
     "outcome": "published",
@@ -16967,38 +16531,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 368
   },
-  "npm:@shellraining/dsh-annotation@0.1.2:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 84.2 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:@shellraining/dsh-brand@0.1.7:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 216.7 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:@shellraining/dsh-inline-code-copy@0.1.6:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 173.0 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:@shellraining/dsh-layout-presets@0.1.3:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 169.5 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:@shellraining/dsh-mermaid@0.5.7:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 41.9 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:@shellraining/dsh-plugin-updates@0.2.5:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 81.9 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:@shellraining/dsh-side-chat@0.1.7:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 59.7 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:@shellraining/dsh-sidebar-session-preview@0.1.6:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 57.2 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:@shellraining/dsh-streamdown@0.1.4:icon.png": {
     "outcome": "published",
     "sha256": "7de638914a47c1776c10378083dcc41351c3ff7048f770d70f8bd044e0d93cd8",
@@ -17119,10 +16651,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 657
   },
-  "npm:@swimmwatch/dsh-tool-search@1.0.0:assets/logo.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/logo.png\" is 39.5 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:@szhl/dsh-balance@1.0.1:icon.svg": {
     "outcome": "published",
     "sha256": "f982427c5c2c59176952d96a74189e5f0e0d0eb9de83b6f566fe5ef4bbc571e9",
@@ -17170,10 +16698,6 @@
     "sha256": "dc9dabdfcbbe2756403da6bd48e9291a62cb8a1c738c30f416e475e5f8e810a3",
     "mediaType": "image/svg+xml",
     "bytes": 703
-  },
-  "npm:@tinyforge/dsh-theme@1.0.21:public/assets/icons/wj-dreamlight.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"public/assets/icons/wj-dreamlight.png\" is 214.9 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@tmmk/media-qwen@0.1.2:icon.svg": {
     "outcome": "published",
@@ -17226,10 +16750,6 @@
     "sha256": "ff2ad48efa33141e72bc37ed59ac45247bab7f6c14c2cd1465e2ab3b25ecab57",
     "mediaType": "image/svg+xml",
     "bytes": 491
-  },
-  "npm:@tuweizhi/dsh-whale-widget@0.5.3:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 80.8 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@tzyc/dsh-model-visibility@1.9.1:icon.svg": {
     "outcome": "published",
@@ -17333,10 +16853,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 1018
   },
-  "npm:@wannanbigpig/dsh-usage-stats@0.6.5:docs/assets/logo.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"docs/assets/logo.png\" is 151.6 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:@weimin96/diagram-deepseek@0.19.0:assets/icon.svg": {
     "outcome": "published",
     "sha256": "aace154ad53a5ea3c89e808296a70b8a08143cf8d0007d1e5feb234b68adbceb",
@@ -17355,19 +16871,11 @@
     "mediaType": "image/svg+xml",
     "bytes": 371
   },
-  "npm:@wenaixi/cfbridge@0.13.2:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 84.3 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:@wenaixi/dsh-ponytail@5.6.2:assets/icon.png": {
     "outcome": "published",
     "sha256": "dfe334f8b6e455a737fa58b5d6cb4fa03fcbfb552f541a9b8a2c8b38d671e766",
     "mediaType": "image/png",
     "bytes": 28480
-  },
-  "npm:@wenaixi/dsh-prompt-history@2.7.1:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 77.7 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@wenaixi/dsh-superpower@8.0.0:icon.png": {
     "outcome": "published",
@@ -17489,18 +16997,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 314
   },
-  "npm:@xiaoso/dsh-run-config@0.2.4:assets/icon.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.webp\" is 204.5 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:@xiaoso/dsh-tool-plus@0.1.17:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 210.2 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:@xiaoso/dsh-workflow-lite@0.9.0:assets/icon.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.webp\" is 212.7 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:@xiaoweiq66/dsh-plugin-manager@1.0.2:icon.svg": {
     "outcome": "published",
     "sha256": "cb1a8fb208ebe9b27c2141875f3bf528e9039540a55aae456cfc6eaaf346c64e",
@@ -17524,10 +17020,6 @@
     "sha256": "d6905be6723765a45701642bc0c451fa93a66466fa5dfc6e2a0bc2fae646211d",
     "mediaType": "image/svg+xml",
     "bytes": 592
-  },
-  "npm:@xmanrui/dsh-im@5.10.0:assets/logo-plugin-message-link-gradient.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/logo-plugin-message-link-gradient.webp\" is 228.9 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@xrn1997/dsh-novel@0.9.0:icon.svg": {
     "outcome": "published",
@@ -17570,10 +17062,6 @@
     "sha256": "b7feb5688c2d36208bca8b282afa3466cbb722fe854559cb835782c595787351",
     "mediaType": "image/svg+xml",
     "bytes": 864
-  },
-  "npm:@yann9/dsh-git-workbench@0.1.7:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 39.9 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@ybbmm/dsh-session-delete@0.4.0:icon.svg": {
     "outcome": "published",
@@ -17713,10 +17201,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 664
   },
-  "npm:@zhiqiangme/dsh-autostart-workbuddy@26.11.4:icons/workbuddy.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icons/workbuddy.png\" is 77.3 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:@zhiqiangme/dsh-magpie@26.11.4:icons/magpie.svg": {
     "outcome": "published",
     "sha256": "58bf7b2125a7daa1a8fbcaa877774e6a42e98036b4f59e6f19b323fbddaf9499",
@@ -17770,10 +17254,6 @@
     "sha256": "aca16947b073ac678779f1790e5696cafdf0b37a869f25b7edc5ef7af5877eba",
     "mediaType": "image/png",
     "bytes": 24863
-  },
-  "npm:@zhz8888/dsh-ios-simulator-helper@1.2.0:ios-simulator.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"ios-simulator.png\" is 36.5 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:@zifeng1023/dsh-bot@0.3.4:icon.png": {
     "outcome": "published",
@@ -17840,10 +17320,6 @@
     "sha256": "88f0b3af8a5230c63816f7942fd4a11759502b27425dc39e49dcec459e2bc121",
     "mediaType": "image/svg+xml",
     "bytes": 439
-  },
-  "npm:agy-next@1.1.0:icon.svg": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.svg\" is 45.1 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:antigravity-executor@0.8.0:icon.svg": {
     "outcome": "published",
@@ -17989,10 +17465,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 863
   },
-  "npm:dsa2a-im@0.1.3:assets/logo-plugin-message-link-gradient.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/logo-plugin-message-link-gradient.webp\" is 228.9 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-2-atoll-notice@0.1.1:icon.svg": {
     "outcome": "published",
     "sha256": "fdbbdee0b42dda061eccb5961428eb374f7ab54fcbac6a0dbbca315f3762de53",
@@ -18064,10 +17536,6 @@
     "sha256": "e5e2802a9beb7d35aec542fd6ca8b20700a2187d4f33b0a6ba70e7f5b1ec55e6",
     "mediaType": "image/svg+xml",
     "bytes": 475
-  },
-  "npm:dsh-agent-plugins-market@0.14.1:assets/dsh-agent-plugins.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/dsh-agent-plugins.png\" is 70.1 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-agent-preset-studio@0.2.2:icon.svg": {
     "outcome": "published",
@@ -18247,10 +17715,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 615
   },
-  "npm:dsh-aperture@0.4.1:icon.svg": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.svg\" is 45.4 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-api-balance-plugin@1.0.0:icon.svg": {
     "outcome": "published",
     "sha256": "96c085488091d52c2182a1394f224d33a79054f61e69b33b0ba3befcb85fcef2",
@@ -18380,14 +17844,6 @@
     "sha256": "ac8387f82c1e59883dfe2b3d782821d10e72105caf7be87adcb37e0c60b28336",
     "mediaType": "image/svg+xml",
     "bytes": 490
-  },
-  "npm:dsh-as-mcp@0.52.84:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 34.1 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:dsh-asc-studio@0.1.4:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is 98.5 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-ascii-sharks@1.0.3:icon.svg": {
     "outcome": "published",
@@ -18787,10 +18243,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 892
   },
-  "npm:dsh-bongo-fish@0.4.3:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 51.4 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-book-deconstruct@1.1.12:icon.svg": {
     "outcome": "published",
     "sha256": "d22689ac1afafb8950853a4f7b5fa0ac44c0634ab49918defb271ea17c659b66",
@@ -18850,10 +18302,6 @@
     "sha256": "5e43c8907bb5d907781868a3de852cd88a44945af4ccf6f3205c6b236fb52489",
     "mediaType": "image/svg+xml",
     "bytes": 482
-  },
-  "npm:dsh-browser-computer@0.1.6:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 46.7 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-bubble-skins@0.2.1:icon.svg": {
     "outcome": "published",
@@ -18962,10 +18410,6 @@
     "sha256": "7f6d0feea3cd9da071b4f663c8b08b5964c23c74d1ca52039fee6c7abf825fd9",
     "mediaType": "image/svg+xml",
     "bytes": 506
-  },
-  "npm:dsh-chang-kaishen@0.1.0:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is 44.7 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-channel-wechat@0.2.8:icon.svg": {
     "outcome": "published",
@@ -19245,10 +18689,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 733
   },
-  "npm:dsh-commandcode@0.3.0:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is 113.7 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-community-bench@0.2.6:icon.svg": {
     "outcome": "published",
     "sha256": "c08c7f7914195187a84c98def1af7f5ba9a50882ee03bd3af4242b99591b4eac",
@@ -19471,10 +18911,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 447
   },
-  "npm:dsh-cook-pet@1.0.1:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 54.0 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-coopanion-pet@1.9.1:icon.svg": {
     "outcome": "published",
     "sha256": "aab636c119e0b88eb527b445e10b8409628793957b7ba5c79e8cb9afc63b31f9",
@@ -19559,14 +18995,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 574
   },
-  "npm:dsh-ctxopt-compaction@0.0.2:pic/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"pic/icon.png\" is 70.5 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:dsh-cuigengji-plugin@0.5.1:src/client/assets/plugin-icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"src/client/assets/plugin-icon.png\" is 42.8 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-cultivation@0.4.3:icon.svg": {
     "outcome": "published",
     "sha256": "32ac7f182b01f59720dc59a6ed425b805d30e3351cb5c44d9a3680f1282f1f19",
@@ -19609,10 +19037,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 684
   },
-  "npm:dsh-custom-tools@0.1.3:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 79.9 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-custom-wallpaper@1.0.2:icon.svg": {
     "outcome": "published",
     "sha256": "f2e6e541034d874c65ffc178f90aa37c44e03cea2880a92d89e7faa176742e1e",
@@ -19637,19 +19061,11 @@
     "mediaType": "image/png",
     "bytes": 26435
   },
-  "npm:dsh-dafeiyu-home@1.3.4:icon.svg": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.svg\" is 45.6 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-daily-zone@0.1.0:icon.svg": {
     "outcome": "published",
     "sha256": "b72951ea6b42803f8f990c6d44d7f342dac9420cf61807f1c01743e7901851b5",
     "mediaType": "image/svg+xml",
     "bytes": 643
-  },
-  "npm:dsh-dania-voice@1.0.0:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 234.1 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-darksouls-guide@0.11.4:icon.svg": {
     "outcome": "published",
@@ -19674,10 +19090,6 @@
     "sha256": "da5419ea97cc6b6d2ad47f6b765657290af3d51dbc6fae7683755a543ad651bd",
     "mediaType": "image/svg+xml",
     "bytes": 262
-  },
-  "npm:dsh-deepseek-meme@0.3.5:assets/default/icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"assets/default/icon.png\" is 134.9 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-deepseek-peak-clock@1.0.1:icon.svg": {
     "outcome": "published",
@@ -19714,10 +19126,6 @@
     "sha256": "4884a1f0738cb39b34542aeee5128bbd3173a485728b15ab1a76b3f7e72a7d23",
     "mediaType": "image/svg+xml",
     "bytes": 441
-  },
-  "npm:dsh-desktop-ball@0.18.0:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 72.3 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-desktop-mcp-bridge@0.2.1-rc2:icon.svg": {
     "outcome": "published",
@@ -19893,10 +19301,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 767
   },
-  "npm:dsh-dragon-maid-pet@1.0.2:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is 164.4 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-dream-skin@11.4.1:icon.svg": {
     "outcome": "published",
     "sha256": "62fe24aed2947ecd65a4b4c67ee819ed0a16d66fe576dd70b7d782f50110b05b",
@@ -19951,19 +19355,11 @@
     "mediaType": "image/svg+xml",
     "bytes": 771
   },
-  "npm:dsh-easy2restart@0.2.3:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 37.0 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-easyrestart@0.2.0:icon.svg": {
     "outcome": "published",
     "sha256": "e8e68aea791ef548250940c96caa48a7fc44fab8ec7e973ba401cbf921b29cc6",
     "mediaType": "image/svg+xml",
     "bytes": 425
-  },
-  "npm:dsh-easyrewrite@3.0.0:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 89.5 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-echelon@1.3.0:icon.svg": {
     "outcome": "published",
@@ -20181,10 +19577,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 1152
   },
-  "npm:dsh-feed-the-seek@1.0.1:public/assets/plugin-icon-v6.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"public/assets/plugin-icon-v6.png\" is 124.9 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-feishu-plugin@0.5.17:icon.svg": {
     "outcome": "published",
     "sha256": "9423db601988a936a1d89705934b9a12d43420d27d48f5230f1c030974c6c95c",
@@ -20262,10 +19654,6 @@
     "sha256": "00e28f8e0b1e91c4064b3f2a052b991bf75ca323109cfe6035c9d3bcadd6f162",
     "mediaType": "image/png",
     "bytes": 986
-  },
-  "npm:dsh-firefly-pet@0.1.0:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 88.6 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-first-principles@0.3.1:icon.svg": {
     "outcome": "published",
@@ -20619,23 +20007,11 @@
     "mediaType": "image/svg+xml",
     "bytes": 468
   },
-  "npm:dsh-gpt-niang-quota@1.5.1:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 35.4 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:dsh-graft-plugin@0.3.3:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 86.2 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-graph@0.23.0:icon.svg": {
     "outcome": "published",
     "sha256": "942fd190cd32690d841670e908ee5e329946614cac30d8748cb9f9b4895f2ad2",
     "mediaType": "image/svg+xml",
     "bytes": 5760
-  },
-  "npm:dsh-grill-first@1.0.1:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 66.0 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-grok-build-policy@1.0.0:icon.svg": {
     "outcome": "published",
@@ -20655,10 +20031,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 2584
   },
-  "npm:dsh-grok-subscription@2.0.9:icon-subscription.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon-subscription.webp\" is 187.7 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-guard-degen@0.1.1:assets/icon-512.png": {
     "outcome": "published",
     "sha256": "1e36f68beff726a63a92b4ee09fbe8c24d65f3f8a08f3eca679d1f3c9c00658b",
@@ -20676,10 +20048,6 @@
     "sha256": "6d84f4e6c9016b4e256083fc4ef5da5e4c2eb6efa35b2ce43d868d0438ae9947",
     "mediaType": "image/svg+xml",
     "bytes": 664
-  },
-  "npm:dsh-guizang-design@0.1.3:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 76.8 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-hackatime@0.5.0:icon.svg": {
     "outcome": "published",
@@ -20771,10 +20139,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 1044
   },
-  "npm:dsh-herta@0.1.11:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 172.9 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-hidden-risk-map@0.2.10:icon.svg": {
     "outcome": "published",
     "sha256": "31fc7d08ca07cafdb367857d83526a2a0d6119d326640593b84746b006181dda",
@@ -20798,10 +20162,6 @@
     "sha256": "a650dfbaf590bf76a2d9a91ddf80bdf5e47d940bb67e226029a67e2b2c51fb8d",
     "mediaType": "image/svg+xml",
     "bytes": 454
-  },
-  "npm:dsh-home-cabin@0.2.0:icon.svg": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.svg\" is 45.6 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-home-hosted@0.9.9:icon.svg": {
     "outcome": "published",
@@ -21127,10 +20487,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 1207
   },
-  "npm:dsh-jianxian-widget@4.27.2:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is 83.9 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-jingjing-sticky-notes@1.7.0:icon.svg": {
     "outcome": "published",
     "sha256": "98e416aba9adfbb7beeb29f4629c1ded319bb1fc0c9ff0ea783301b04d96a39a",
@@ -21142,10 +20498,6 @@
     "sha256": "614fb77f2ac0637bedfa92d97656e5618d8645e4fb19d49564d275d6f45bb349",
     "mediaType": "image/webp",
     "bytes": 21148
-  },
-  "npm:dsh-job-progress@1.0.5:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 98.4 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-job-workbench@26.11.0:icon.svg": {
     "outcome": "published",
@@ -21213,10 +20565,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 418
   },
-  "npm:dsh-kimi-subscription@1.5.0:icon-subscription.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon-subscription.webp\" is 203.9 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-kingdee@0.17.0:icon.svg": {
     "outcome": "published",
     "sha256": "252bb4f839e93e4e4edff1661f0ce52c4a94ee91f5e22c5002c75a387e1b05cd",
@@ -21246,10 +20594,6 @@
     "sha256": "9e781e8001a649876f4f0ef5487330048437ac930816b9aa8e29644da132236b",
     "mediaType": "image/svg+xml",
     "bytes": 816
-  },
-  "npm:dsh-labnana@0.3.6:images/logo.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"images/logo.webp\" is 54.4 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-lan-relay@1.1.1:icon.svg": {
     "outcome": "published",
@@ -21413,10 +20757,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 680
   },
-  "npm:dsh-live2dwaifu@2.3.0:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 82.5 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-livedocs@0.2.3:icon.svg": {
     "outcome": "published",
     "sha256": "fcd77cc89b897e15a78c557e0ea1cd2188a7fb87497fff1693ccb6e5d5884d5e",
@@ -21453,10 +20793,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 1200
   },
-  "npm:dsh-local-proxy-own@0.2.0:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 78.9 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-locale-ko-kr@0.1.2:icon.svg": {
     "outcome": "published",
     "sha256": "3d9f3512220a54e244c638d54e80af0219484f8ef0283901ebac876457aafcbc",
@@ -21487,10 +20823,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 819
   },
-  "npm:dsh-loupe@1.2.0:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 94.4 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-lumen-market@0.8.0:assets/lumen-market.svg": {
     "outcome": "published",
     "sha256": "72dfb07e54f9aebf8e6f901700b0f7f79a89fc981387458c85191d3bfb912753",
@@ -21502,10 +20834,6 @@
     "sha256": "2aabb369abc1470f75a7664276d7170aca3d7afe7a3a2a355322b70d0db38d36",
     "mediaType": "image/svg+xml",
     "bytes": 679
-  },
-  "npm:dsh-macos-share@0.2.0:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 138.7 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-mail-automation@1.0.0:icon.svg": {
     "outcome": "published",
@@ -21639,10 +20967,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 7459
   },
-  "npm:dsh-mcp-summon@0.1.0:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 105.5 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-mcp-tools@1.0.3:icon.svg": {
     "outcome": "published",
     "sha256": "e481919c72353eb39b0d849398f76d908f8f6292d4aaab2b0534d0a3bfd7f34b",
@@ -21678,10 +21002,6 @@
     "sha256": "596111ea0313af67be88df8c6f2059656a215613591375b036e1dd557dfe6eb0",
     "mediaType": "image/svg+xml",
     "bytes": 345
-  },
-  "npm:dsh-meme-copy-own@0.1.2:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 110.3 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-memory-calendar@1.0.0-beta.2:dsh-bundle/icon.svg": {
     "outcome": "published",
@@ -21748,10 +21068,6 @@
     "sha256": "32f57da83d2989727772b1974526a48c3297c56aafec5fd1ae0dbd1f7a4c83ab",
     "mediaType": "image/svg+xml",
     "bytes": 752
-  },
-  "npm:dsh-memory-recall@0.3.0:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 65.4 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-memory-with-soul@0.7.0:adapters/dsh/icon.svg": {
     "outcome": "published",
@@ -21860,10 +21176,6 @@
     "sha256": "702977a03700bcb07bf097d7b6619b090c11162c2cacd02a34d95143db16c73e",
     "mediaType": "image/svg+xml",
     "bytes": 2441
-  },
-  "npm:dsh-mobile-web@0.1.7:assets/icon.svg": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.svg\" is 42.2 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-mode-skills@0.5.0:icon.svg": {
     "outcome": "published",
@@ -22002,10 +21314,6 @@
     "sha256": "c72916b0575d5815ef8084fd2ad28ae4de90b2319eec20366ccae6aaab69189d",
     "mediaType": "image/svg+xml",
     "bytes": 715
-  },
-  "npm:dsh-moonpet@0.1.7:assets/icon.svg": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.svg\" is 208.7 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-movable-settings@1.0.0:icon.svg": {
     "outcome": "published",
@@ -22343,10 +21651,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 1083
   },
-  "npm:dsh-opencode-go@0.2.0:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 41.7 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-opencode-pin@0.1.0:icon.svg": {
     "outcome": "published",
     "sha256": "26a3bd2c14a94f68def4a1401c116a24d3438200b2bd79e92c5bf8a0151f9682",
@@ -22401,18 +21705,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 353
   },
-  "npm:dsh-ops-lite@0.1.0:dist/components/icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"dist/components/icon.png\" is 116.9 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:dsh-ops-zx88@0.1.1:docs/assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"docs/assets/icon.png\" is 116.9 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:dsh-ops@0.4.4:docs/assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"docs/assets/icon.png\" is 116.9 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-origin-bridge@0.4.11:icon.svg": {
     "outcome": "published",
     "sha256": "060d3d077d9340888f6b06ead15963341b57e268eecca4062a1a5b4d32b95957",
@@ -22454,10 +21746,6 @@
     "sha256": "d511227c8037d2ef8a2f79396f8db007964dd8174a5023f64e68f0f207c5936a",
     "mediaType": "image/svg+xml",
     "bytes": 746
-  },
-  "npm:dsh-pajama-whale@0.3.6:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 73.9 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-pancha@3.0.2:icon.svg": {
     "outcome": "published",
@@ -22685,14 +21973,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 1061
   },
-  "npm:dsh-pet-live2d-fix@3.3.4:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 74.0 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:dsh-pet-nhd@1.2.2:assets/logo.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/logo.png\" is 82.3 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-pet-plugin@1.27.1:icon.svg": {
     "outcome": "published",
     "sha256": "e1f1332f196e290d4db7d88a5a0adfad2799eb38e14e0ddf10b9d11ecaa63f9f",
@@ -22707,19 +21987,11 @@
     "outcome": "not-read",
     "detail": "the published package dsh-pet-to-family@0.7.1 is larger than the 32 MiB the catalog build downloads, so its icon was not read."
   },
-  "npm:dsh-pet-unicus@0.4.9:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 83.6 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-pet-watch@0.3.2:icon.svg": {
     "outcome": "published",
     "sha256": "88682f8863f1b962e8b0a67de963b725d9023594c2073321f432a17c5a5cfab0",
     "mediaType": "image/svg+xml",
     "bytes": 578
-  },
-  "npm:dsh-pet-zoo@0.2.5:assets/logo.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/logo.png\" is 34.9 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-pharos@0.6.4:icon.svg": {
     "outcome": "published",
@@ -22750,10 +22022,6 @@
     "sha256": "5954bbd978d9f9bf8a6e4d6d3754e950a3fd8c44f5b3db731e3e5d3ba80ddd5b",
     "mediaType": "image/svg+xml",
     "bytes": 439
-  },
-  "npm:dsh-plain-talk@0.1.10:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is 78.8 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-plan-act-models@0.5.0:icon.svg": {
     "outcome": "published",
@@ -22833,10 +22101,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 1004
   },
-  "npm:dsh-plugin-big-icon@1.0.0:assets/icon-180.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"assets/icon-180.png\" is 40.8 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-plugin-billing-card@0.3.1:icon.svg": {
     "outcome": "published",
     "sha256": "2747403e711db2d350858c96c491a38142d490c2120a05d5e8b5cfabaf8bc33d",
@@ -22906,10 +22170,6 @@
     "sha256": "05def0529eb2970acd132d4632e1e310588c67b78bfc23c169c2047b60077fe4",
     "mediaType": "image/svg+xml",
     "bytes": 325
-  },
-  "npm:dsh-plugin-control-your-development@0.7.0:assets/icon.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.webp\" is 111.7 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-plugin-conversation-purge@1.0.1:icon.svg": {
     "outcome": "published",
@@ -23090,10 +22350,6 @@
     "sha256": "a048d1482f3b1cca025dbd76476ca3b52f5c13554556f61bba81338be4bfea53",
     "mediaType": "image/svg+xml",
     "bytes": 415
-  },
-  "npm:dsh-plugin-highlight-notes@0.1.1:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 95.7 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-plugin-html-report@0.1.0:icon.svg": {
     "outcome": "published",
@@ -23377,10 +22633,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 367
   },
-  "npm:dsh-plugin-shell-skin@0.2.1:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 61.2 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-plugin-sidebar-balance@1.1.0:icon.svg": {
     "outcome": "published",
     "sha256": "8ee9ae3a9caa6b0f5408839e9a4900071d9c9554bb43fe3c3b076a2c00c626d0",
@@ -23489,10 +22741,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 463
   },
-  "npm:dsh-plugin-type@1.4.2:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 65.4 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-plugin-ui-zoom@0.1.2:icon.svg": {
     "outcome": "published",
     "sha256": "021c5189072ce0d59e2fccb576f99dae9ba611f30918ec1d5e9c782af3513397",
@@ -23504,14 +22752,6 @@
     "sha256": "1068744fe27528dc4d7a14e636e8a0bd80ccc0b5e0e183496eac71aa60b7ccf9",
     "mediaType": "image/svg+xml",
     "bytes": 3739
-  },
-  "npm:dsh-plugin-wallpaper-engine-yhz@1.3.5:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 181.0 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:dsh-plugin-wallpaper-engine@1.4.0:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 181.0 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-plugin-web-restart@0.1.0:icon.svg": {
     "outcome": "published",
@@ -23669,10 +22909,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 575
   },
-  "npm:dsh-preset-workshop@0.3.0:assets/color.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/color.png\" is 47.1 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-pretty-cool@1.4.15:icon.svg": {
     "outcome": "published",
     "sha256": "ec8fe2f6902db57786de74360cec5d8bd6bee0e11aabdca47f029154e6452b9e",
@@ -23751,10 +22987,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 617
   },
-  "npm:dsh-proof@0.1.3:public/logo/dsh-proof-icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"public/logo/dsh-proof-icon.png\" is 123.5 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-protest-deadline@0.2.11:icon.svg": {
     "outcome": "published",
     "sha256": "f7daff89c33844f4eb1f62d78b26b46fdf6643f42881feba8a1f00e57094dfe2",
@@ -23808,10 +23040,6 @@
     "sha256": "1a8ebb3409500b8b70a44640eb86c12c83f4b29848c59dccb3f2f3b3ebc1c511",
     "mediaType": "image/svg+xml",
     "bytes": 940
-  },
-  "npm:dsh-pstack@0.2.1:assets/logo.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/logo.png\" is 141.0 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-pulse@0.6.1:assets/icon.svg": {
     "outcome": "published",
@@ -24101,10 +23329,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 346
   },
-  "npm:dsh-recharge-animation@0.2.2:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 125.4 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-recycle-bin@1.4.1:icon.svg": {
     "outcome": "published",
     "sha256": "68a48f42b583c141da3b02e4178f1ec979e103fe7c183168ba760dcfb855f918",
@@ -24375,10 +23599,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 439
   },
-  "npm:dsh-run2skill@0.5.0-alpha.4:assets/run2skill-logo.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/run2skill-logo.webp\" is 250.5 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-rustxng-web-search@1.0.2:icon.svg": {
     "outcome": "published",
     "sha256": "a0640a307b937a8aaee50eb905864f6a1e6701d1cf745955dd3b2aeabe8115c2",
@@ -24414,10 +23634,6 @@
     "sha256": "ff045e582c49dbb08625c50b4ff6a65776a54c258cda1cc31d0222203e71ed4f",
     "mediaType": "image/svg+xml",
     "bytes": 571
-  },
-  "npm:dsh-schedule-later@0.7.8:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 32.3 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-scout@0.9.3:assets/icon.svg": {
     "outcome": "published",
@@ -24785,14 +24001,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 527
   },
-  "npm:dsh-shenshen-companion@0.1.1:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 72.3 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:dsh-shiori@0.2.0:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 47.1 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-showcase@0.1.8:plugin/icon.svg": {
     "outcome": "published",
     "sha256": "1d4c3f0350f651b8224659de93a9459a16dfb2f7ea6aeabfaaf8d7a4c8846c89",
@@ -25026,10 +24234,6 @@
     "sha256": "6356921fb44fed703518269179fde8635bda51449b6b8787029f79f75a75bbb8",
     "mediaType": "image/svg+xml",
     "bytes": 402
-  },
-  "npm:dsh-slang-own@0.1.0:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 108.1 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-slipbox@0.1.5:icon.svg": {
     "outcome": "published",
@@ -25391,10 +24595,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 359
   },
-  "npm:dsh-system1@0.5.0:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 65.7 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-tab@0.2.0:icon.svg": {
     "outcome": "published",
     "sha256": "68dba764e4756ebce8848d7bc489716af4d9ae8048666d4c208dd1abaca6d6c4",
@@ -25533,10 +24733,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 438
   },
-  "npm:dsh-tentacle@0.1.0:docs/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"docs/icon.png\" is 41.5 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-term-glossary@0.3.9:icon.svg": {
     "outcome": "published",
     "sha256": "1add75d2281d724d67179bcbf7d7a2b544f7ab70c12371eb40c4035f35711d74",
@@ -25567,14 +24763,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 431
   },
-  "npm:dsh-theme-aurora@1.0.3:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is 94.0 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:dsh-theme-jing-chiyang@1.1.2:icon-256.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon-256.png\" is 55.7 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-theme-native@0.1.2:icon.svg": {
     "outcome": "published",
     "sha256": "9b86827b71a265418d1bbc64ee10563469d98b5a5741a8ca5378b5db24213051",
@@ -25598,14 +24786,6 @@
     "sha256": "ab984a08b13e4e52869ae8e158ac7d3330bb942cc3c7b7343f6bc501af4dda71",
     "mediaType": "image/svg+xml",
     "bytes": 1386
-  },
-  "npm:dsh-theme-tarkov@0.4.1:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 137.5 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:dsh-theme-whalegirl@0.4.0:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 93.0 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-thinking-bar@1.0.7:icon-v2.svg": {
     "outcome": "published",
@@ -25823,10 +25003,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 742
   },
-  "npm:dsh-tree-view@1.2.3:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 101.8 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-treecom@1.0.3:icon.svg": {
     "outcome": "published",
     "sha256": "61a02f0f9bf65efa4f61701d60f86a4c01e324ba8107efe4d7efa9d12d1b832a",
@@ -25850,10 +25026,6 @@
     "sha256": "4c6c6546d9fc60bb54d863735e931a39ac8b3e50bffb629003f6848435a4d6c2",
     "mediaType": "image/svg+xml",
     "bytes": 830
-  },
-  "npm:dsh-trust-check@0.2.5:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 141.5 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-turn-game@0.1.0:icon.svg": {
     "outcome": "published",
@@ -25933,10 +25105,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 459
   },
-  "npm:dsh-ultra-slider@1.0.0:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 98.0 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-ulw-plan@0.1.2:icon.svg": {
     "outcome": "published",
     "sha256": "485d532e81d2017da3992f250b3df057c7bef963fa2978433a78fe70a36cdbd3",
@@ -26009,19 +25177,11 @@
     "mediaType": "image/svg+xml",
     "bytes": 797
   },
-  "npm:dsh-verbose@0.8.2:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 66.6 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-versatileds@0.5.0:assets/icon.jpg": {
     "outcome": "published",
     "sha256": "776162aabac8f31b2491fbb015215c491f04c52a15706c6c110a32de83be48ac",
     "mediaType": "image/jpeg",
     "bytes": 27175
-  },
-  "npm:dsh-version-badge-own@0.3.1:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 109.5 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-vibekey-focus@0.1.0:icon.svg": {
     "outcome": "published",
@@ -26107,10 +25267,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 742
   },
-  "npm:dsh-vscode-connect@0.1.13:assets/vscode.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/vscode.png\" is 112.3 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-vscode-themes2@1.1.0:icon.svg": {
     "outcome": "published",
     "sha256": "425baadcfc728b60d0aa65cb52423b557a29e55e2629fd0e84d60e49bb1d11ae",
@@ -26194,10 +25350,6 @@
     "sha256": "b1668e8fc7039c3e461f1933e8e0afeb18e2162935126b39ac6cb303c8b0bdd8",
     "mediaType": "image/svg+xml",
     "bytes": 895
-  },
-  "npm:dsh-we-wallpaper@2.1.0:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 181.0 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-weaknet@1.0.0:icon.svg": {
     "outcome": "published",
@@ -26331,10 +25483,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 1296
   },
-  "npm:dsh-whale-bongo@0.3.3:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is 144.8 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-whale-brand@0.1.0:assets/icon.svg": {
     "outcome": "published",
     "sha256": "d2ca4da519d0ba894c378ef4b6aadc7d4cb72628a97fb8e5dd32cb2720919fe5",
@@ -26369,23 +25517,11 @@
     "mediaType": "image/png",
     "bytes": 25058
   },
-  "npm:dsh-whale-combo@1.0.7:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is 212.8 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-whale-daily-nonsense@0.1.1:icon.svg": {
     "outcome": "published",
     "sha256": "5d98b2a451dc69c282588c1aabcc22bbb7939c52ba46bac3941dfcee4c8a4390",
     "mediaType": "image/svg+xml",
     "bytes": 719
-  },
-  "npm:dsh-whale-files@0.1.2:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 40.3 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "npm:dsh-whale-jump@0.1.1:assets/whale-icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/whale-icon.png\" is 105.9 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-whale-slacking-timer@0.1.1:icon.svg": {
     "outcome": "published",
@@ -26399,19 +25535,11 @@
     "mediaType": "image/svg+xml",
     "bytes": 486
   },
-  "npm:dsh-whale-soul@0.3.1:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 37.5 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-whale-waker@0.6.0:icon.svg": {
     "outcome": "published",
     "sha256": "1f65b502e3e279a65ead468f54b6c1fa436d9a1912017e100ba9f7cf6d11a306",
     "mediaType": "image/svg+xml",
     "bytes": 464
-  },
-  "npm:dsh-whale-widget@0.4.2:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 80.8 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:dsh-whalechan-herself@0.4.0:icon.svg": {
     "outcome": "published",
@@ -26849,10 +25977,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 402
   },
-  "npm:dsh-zotero@0.14.1:docs/images/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"docs/images/icon.png\" is 59.0 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:dsh-zrwang-plugin@0.1.0:icon.svg": {
     "outcome": "not-read",
     "detail": "the published package dsh-zrwang-plugin@0.1.0 is larger than the 32 MiB the catalog build downloads, so its icon was not read."
@@ -26883,19 +26007,11 @@
     "outcome": "not-read",
     "detail": "the published package dshpet-dshwe@0.3.8 is larger than the 32 MiB the catalog build downloads, so its icon was not read."
   },
-  "npm:emoking@0.12.0:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 85.8 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:emotion-state-portrait@1.0.4:icon.svg": {
     "outcome": "published",
     "sha256": "ce1093b837acde19e08c327bc3606b669e29365893280e0ee9e813c0071785ff",
     "mediaType": "image/svg+xml",
     "bytes": 641
-  },
-  "npm:envoy-dsh@0.1.44:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is 55.6 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:fanframe@1.10.0-beta.19:icon.svg": {
     "outcome": "published",
@@ -27005,10 +26121,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 1128
   },
-  "npm:onekey-models@0.1.0:icon.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.webp\" is 80.9 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:qubitclient-dsh-panel@0.1.3:dsh-plugin/qubitclient-panel/icon.svg": {
     "outcome": "published",
     "sha256": "1ca0772673285df3d1ef080c63e674b513a0f09c62334a28685350782e08d691",
@@ -27039,10 +26151,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 1777
   },
-  "npm:sage-mem@2.3.1:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 34.4 KiB; the shop shows icons of at most 32 KiB."
-  },
   "npm:smart-compaction@0.3.15:icon.svg": {
     "outcome": "published",
     "sha256": "d3383b1aa4dcf13481a0af2a920021498b2cdd0e8ae505ffb6b27e68c32f45f6",
@@ -27064,10 +26172,6 @@
   "npm:sparksight-dsh@0.5.4:icon.svg": {
     "outcome": "not-read",
     "detail": "the published package sparksight-dsh@0.5.4 is larger than the 32 MiB the catalog build downloads, so its icon was not read."
-  },
-  "npm:team-dsh@0.1.0-alpha.2:assets/whale-idle.webp": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"assets/whale-idle.webp\" is 187.5 KiB; the shop shows icons of at most 32 KiB."
   },
   "npm:terminalkeeper@0.1.4:icon.svg": {
     "outcome": "published",
@@ -27134,10 +26238,6 @@
     "sha256": "325fef09b5225b72250befbda3e7875312004a18685f361884f170156bdc6ddc",
     "mediaType": "image/webp",
     "bytes": 5038
-  },
-  "release:12df0ccdc627dc50e3c2b0e5929e471dfeaeadf736b0b0ba8c4104310d6300a9:images/logo-icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"images/logo-icon.png\" is 37.1 KiB; the shop shows icons of at most 32 KiB."
   },
   "release:156511b673f664556bd4e592090cac7da28d04deb611b011452f72e70c89ee31:icon.svg": {
     "outcome": "published",
@@ -27211,14 +26311,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 663
   },
-  "release:444d766867d746cbff0c92c10e96361b17b05caa6fd4caa77df6c73796c9f6c0:assets/icon-color.webp": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon-color.webp\" is 44.1 KiB; the shop shows icons of at most 32 KiB."
-  },
-  "release:47921866faf6344800a8395154c181f4d1164af4e96477bd8f2232c35a8176e8:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 78.9 KiB; the shop shows icons of at most 32 KiB."
-  },
   "release:48027b822da244d1a1fc9b8b4da8858af13da4ae4b0c9a85f517a484299366e8:icon.svg": {
     "outcome": "published",
     "sha256": "2a31283d590f1169335979b80b88fcace9d578579c77bf4e883342d61d87e189",
@@ -27267,10 +26359,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 652
   },
-  "release:646ef8c7d1d503d71c39b0aea594be809ffcd19ca1fbc486ff420992af47b7df:icon.png": {
-    "outcome": "refused",
-    "detail": "the \"./icon\" export \"icon.png\" is 111.9 KiB; the shop shows icons of at most 32 KiB."
-  },
   "release:668bfba31ba694a0f911798dda315e35cdc750f8bff886fe1a8df696a38a7e5f:assets/icon.svg": {
     "outcome": "published",
     "sha256": "c0ecf44a79c0170746662fe5a97b3b3ffc5bcc8d06b68a15cc81481a305df3a9",
@@ -27307,10 +26395,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 318
   },
-  "release:82eeac83857b312a0760e8d52eb1d09e8fa279822856f3805cc7be10f0b1679f:src/client/assets/dmxapi-icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"src/client/assets/dmxapi-icon.png\" is 45.5 KiB; the shop shows icons of at most 32 KiB."
-  },
   "release:911bf22ccc3f35b49c82dfab434afaee50e07f370316945a9b147e3f720407e1:icon.svg": {
     "outcome": "published",
     "sha256": "188d95a5ba6c45f5b7ad0c22937a0de756fc005b7dfe217c4501333583481015",
@@ -27334,10 +26418,6 @@
     "sha256": "7f936493adfe7a00bd1c1e3f92fc2fc5e59509a02411533da2d542a922a6f28e",
     "mediaType": "image/svg+xml",
     "bytes": 458
-  },
-  "release:95341856a72a1280984f9c1a4d026fe2b9f5647908ad41736b27c4f8e09939db:assets/icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"assets/icon.png\" is 1031.9 KiB; the shop shows icons of at most 32 KiB."
   },
   "release:96b4604b522d82d237bf6e71c3ab70a15b471546084427fe71152b3f398d70e2:assets/favicon.svg": {
     "outcome": "published",
@@ -27387,10 +26467,6 @@
     "mediaType": "image/svg+xml",
     "bytes": 312
   },
-  "release:cc5ab0358977ccfff6c811791f60ff07cdf79b16cc3f4e101955c0e499b62023:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 76.6 KiB; the shop shows icons of at most 32 KiB."
-  },
   "release:cd61bfd8923352240bc235770a4a420ddc598520b3d591b8f3ebfd717e665f98:assets/icon.png": {
     "outcome": "published",
     "sha256": "e5e93f3956d74db8037579807b0d4e8ca36c3db534a574a1a0be4cc5a2f9eb63",
@@ -27432,10 +26508,6 @@
     "sha256": "de56901e42ad4bde8e379769e4892d0d5cb9b89a98df0ec27541451ca8af2dd7",
     "mediaType": "image/svg+xml",
     "bytes": 281
-  },
-  "release:ef53fd52941324e2b0c30fbcb932964f2eebea47c9307cf5d66fbef74f7c131d:icon.png": {
-    "outcome": "refused",
-    "detail": "package.json \"icon\" \"icon.png\" is 33.8 KiB; the shop shows icons of at most 32 KiB."
   },
   "release:f19b0cf1615a8d563c971a69fbb6f690b6af112b62e8527293533c3f0e66f6ec:icon.svg": {
     "outcome": "published",

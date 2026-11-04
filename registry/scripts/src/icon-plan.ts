@@ -33,7 +33,8 @@
  * @module icon-plan
  */
 import { escapeCell } from './emit.ts'
-import { checkIconBytes, iconDataUrl, sha256Hex, sniffedMediaType } from './icon-bytes.ts'
+import { checkIconBytes, iconDataUrl, MAX_CATALOG_ICON_BYTES, sha256Hex, sniffedMediaType } from './icon-bytes.ts'
+import { shrinkIconBytes } from './icon-normalize.ts'
 import { iconDetail } from './icon-declaration.ts'
 import type { IconDeclaration, IconRead } from './icon-declaration.ts'
 import { githubIconKey, npmIconKey, pruneIconState, releaseIconKey } from './icon-state.ts'
@@ -387,19 +388,28 @@ interface Settled {
  */
 function settle(result: Exclude<IconFetchResult, { kind: 'not-yet-read' }>, declaration: IconDeclaration): Settled {
   if (result.kind !== 'bytes') return { outcome: { outcome: result.kind, detail: result.detail } }
-  const checked = checkIconBytes(result.bytes, declaration)
+  // An oversized PNG or JPEG is drawn into the catalog's own box before it is
+  // judged (design 2026-11-04-icon-downscale.md): the card draws it at 24 px,
+  // so a 512 px export is shrunk rather than refused. The type judged and
+  // published below is the one the RESULT carries — a PNG that would not fit
+  // comes back as JPEG — and anything this cannot decode keeps its original
+  // bytes, so the size refusal still names the author's real file.
+  const carried = shrinkIconBytes(result.bytes, sniffedMediaType(result.bytes) ?? declaration.mediaType, MAX_CATALOG_ICON_BYTES) ?? result.bytes
+  const checked = checkIconBytes(carried, declaration)
   if (!checked.ok) return { outcome: { outcome: 'refused', detail: checked.detail } }
-  const sha256 = sha256Hex(result.bytes)
+  const sha256 = sha256Hex(carried)
   // The type the URL carries comes from the BYTES where they are one of the
   // catalog's own: a raster is accepted under any raster extension, the icons
   // file is keyed by the bytes alone, and two entries shipping the same bytes
   // under two extensions would otherwise write one URL and label it with
   // whichever key came first. GIF, BMP and ICO have no catalog type, so their
   // declaration's stands.
-  const mediaType = sniffedMediaType(result.bytes) ?? declaration.mediaType
+  const mediaType = sniffedMediaType(carried) ?? declaration.mediaType
   return {
-    outcome: { outcome: 'published', sha256, mediaType, bytes: result.bytes.length },
-    held: { sha256, dataUrl: iconDataUrl(result.bytes, mediaType) },
+    // The size recorded is the CARRIED one: it is what the file holds, and the
+    // number a build report's byte count adds up.
+    outcome: { outcome: 'published', sha256, mediaType, bytes: carried.length },
+    held: { sha256, dataUrl: iconDataUrl(carried, mediaType) },
   }
 }
 
