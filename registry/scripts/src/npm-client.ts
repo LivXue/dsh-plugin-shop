@@ -2406,6 +2406,29 @@ function isPublishableBin(name: string): boolean {
 }
 
 /**
+ * Whether a manifest declares a script npm or pnpm would run at install time
+ * (design 2026-11-04-borrowings-round-4 §2): `preinstall`, `install` or
+ * `postinstall`. A boolean, because the sheet asks "will this run code on my
+ * machine" and the script body is npm's to keep, not ours to publish.
+ *
+ * pnpm 10 and newer refuse to run these unless the profile allows them, so the
+ * fact is what explains a plugin that installs and then does nothing — the
+ * npm twin of the `requires-build` refusal on the github channel. It is a
+ * declaration, never a verdict: a script can be `node-gyp rebuild` or
+ * `echo hi`.
+ *
+ * Own keys only: `constructor` is a legal script name and an index read on a
+ * plain object answers for `Object.prototype`. Any value counts, including a
+ * non-string, because npm would try to run whatever the manifest holds.
+ * @param manifest - one version manifest, npm's or a repository's, unvalidated.
+ */
+export function declaresInstallScripts(manifest: { scripts?: unknown }): boolean {
+  const scripts = manifest.scripts
+  if (scripts === null || typeof scripts !== 'object' || Array.isArray(scripts)) return false
+  return ['preinstall', 'install', 'postinstall'].some(name => Object.hasOwn(scripts, name))
+}
+
+/**
  * Project one npm packument into a candidate.
  * @param packument - the parsed registry document for one package.
  * @returns the candidate, or null when the document names no usable latest version.
@@ -2500,6 +2523,7 @@ export function toCandidate(packument: unknown): Candidate | null {
       engines?: unknown
       dependencies?: unknown
       bin?: unknown
+      scripts?: unknown
       icon?: unknown
       exports?: unknown
       dsh?: { bundle?: unknown; catalog?: unknown }
@@ -2586,6 +2610,7 @@ export function toCandidate(packument: unknown): Candidate | null {
       const bin = binNamesOf(manifest, name)
       return bin === undefined ? {} : { bin }
     })(),
+    ...(declaresInstallScripts(manifest) ? { installScripts: true } : {}),
     // And most declare no icon, which is no key: the `none` read is never
     // stored. The whole manifest goes to the reader, since dsh finds `icon`
     // and the `./icon` export through `exports`. `files` is not consulted: npm

@@ -153,6 +153,10 @@ export interface Candidate {
   /** The command names the manifest's `bin` declares, at most three
    * (`binNamesOf`, design 2026-11-02-market-borrowings §2). */
   bin?: string[]
+  /** The manifest declares a `preinstall`/`install`/`postinstall` script
+   * (`declaresInstallScripts`, design 2026-11-04-borrowings-round-4 §2).
+   * `true` only, omitted otherwise, like every additive optional. */
+  installScripts?: true
   /**
    * What the latest version's manifest says about its icon, by dsh 0.2.1's
    * rule (`readIconDeclaration`, design 2026-10-23-shop-plugin-icons §4):
@@ -319,6 +323,9 @@ export interface RepoCandidate {
   engines?: string
   dependencies?: number
   bin?: string[]
+  /** The manifest declares an install-time script; see
+   * {@link Candidate.installScripts}. */
+  installScripts?: true
   /**
    * The installed manifest's own `version`, verbatim and bounded by the npm
    * `version` bound (`VERSION_MAX_LENGTH`), and never blank: the version dsh
@@ -748,6 +755,11 @@ export interface Entry {
    * Author text copied verbatim, so it IS counted in the payload probe.
    */
   bin?: string[]
+  /** The manifest declares a `preinstall`, `install` or `postinstall` script,
+   * which pnpm 10+ refuses to run unless the profile allows it (design
+   * 2026-11-04-borrowings-round-4 §2). A declaration, never a verdict: the
+   * detail row says so, and nothing here judges what the script does. */
+  installScripts?: true
   /**
    * A github entry's installed manifest `version` (see
    * {@link RepoCandidate.manifestVersion}), present exactly when its

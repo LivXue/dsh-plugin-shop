@@ -460,6 +460,8 @@ describe('the per-entry size budget on the github channel', () => {
     const bin = ['dsh-a', 'dsh-b', 'dsh-c']
     expect(reported({ bin }) - reported({})).toBe(marginal('bin', bin))
     expect(reported({ dependencies: 42 })).toBe(reported({}))
+    // One registry-written boolean, like `dependencies`.
+    expect(reported({ installScripts: true })).toBe(reported({}))
   })
 
   it('counts dshPeers and manifestVersion toward the payload budget', () => {

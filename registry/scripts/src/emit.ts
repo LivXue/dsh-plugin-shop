@@ -252,7 +252,7 @@ export function emit(
   // (design §3.5). The additive fields (`added`, `tarball`, `replacement`,
   // `peers`, `publisher`, `unpackedSize`, `installSize`, `compatibility`,
   // `dshPeers`, `archived`, `forked`, `manifestVersion`, `icon`, `engines`,
-  // `dependencies`, `bin`) ride EVERY
+  // `dependencies`, `bin`, `installScripts`) ride EVERY
   // version: an old client's zod strips a key it does not know (consumer-side
   // zod is non-strict by design), so none of them needs a gate. `icon` is
   // optional and the index's `icons` pointer is too; an older shop's non-strict
