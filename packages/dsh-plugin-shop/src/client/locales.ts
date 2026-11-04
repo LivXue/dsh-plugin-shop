@@ -148,6 +148,11 @@ export const zh = {
   requiresDsh: '需要 dsh',
   dependencies: '依赖',
   commands: '提供的命令',
+  /** The install-scripts row (design 2026-11-04-borrowings-round-4 §2). The
+   * second line states what pnpm does with it, so the fact is not read as a
+   * verdict on the script. */
+  installScripts: '安装脚本',
+  installScriptsDeclared: '声明了安装时运行的脚本（pnpm 默认不执行）',
   /** The size label's tooltip for an install that lands more than 50 MB on
    * disk. The figure is already large on screen; this phrase says why it is
    * tinted, without inventing a threshold nobody measured — 50 MB is the
@@ -203,6 +208,9 @@ export const zh = {
    * GitHub compare view, or the repository's releases. */
   whatChanged: '查看变更',
   update: '更新',
+  /** The Updatable section's one batch action (design
+   * 2026-11-04-borrowings-round-4 §3). `{count}` is the rows it will start. */
+  updateAll: '全部更新（{count}）',
   installed: '已安装',
   uninstall: '卸载',
   uninstalling: '正在卸载…',
@@ -351,6 +359,8 @@ export const en = {
   requiresDsh: 'Requires dsh',
   dependencies: 'Dependencies',
   commands: 'Commands',
+  installScripts: 'Install scripts',
+  installScriptsDeclared: 'Declares a script that runs at install time (pnpm does not run it by default)',
   sizeLabelLarge: '{size} on disk — large',
   reviewedVersionLine: 'Reviewed: {reviewed} · Current version {current} has not been reviewed',
   reviewedPinLine: 'Reviewed: {pin} · Current version {current} has not been reviewed',
@@ -381,6 +391,7 @@ export const en = {
   rollbackFailed: 'The rollback failed. Please try again.',
   whatChanged: 'What changed',
   update: 'Update',
+  updateAll: 'Update all ({count})',
   installed: 'Installed',
   uninstall: 'Uninstall',
   uninstalling: 'Uninstalling…',
