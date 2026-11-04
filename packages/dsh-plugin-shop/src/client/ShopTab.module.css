@@ -974,11 +974,14 @@
   cursor: pointer;
 }
 
-/* The hover only darkens an UNSTARRED star. On a starred one it must not:
- * this rule outranks `.favoriteButtonOn` by specificity, so a plain `:hover`
- * turned a yellow star grey under the pointer. */
+/* Hover is a faint wash, never a frame: a border here drew a box around a
+ * star the reader had just set, which read as a selected tile rather than as
+ * a favorite (reported 2026-11-04 from a screenshot where the pointer still
+ * rested on the button). The wash only darkens an UNSTARRED star — this rule
+ * outranks `.favoriteButtonOn` by specificity, so a `color` here would turn a
+ * yellow star grey under the pointer. */
 .favoriteButton:hover {
-  border-color: var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-secondary);
 }
 
