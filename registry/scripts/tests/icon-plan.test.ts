@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
 import { describe, expect, it } from 'vitest'
+import { PNG as PNG_SYNC } from 'pngjs'
 import { MAX_CATALOG_ICON_BYTES, checkIconBytes, iconDataUrl, sha256Hex } from '../src/icon-bytes.ts'
 import { iconDetail, iconLabel, shownPath } from '../src/icon-declaration.ts'
 import type { IconDeclaration, IconMediaType } from '../src/icon-declaration.ts'
@@ -730,6 +731,35 @@ describe('foldIconResults: what a fetch brings back', () => {
     const { fold } = runDay([png], { results: resultsOf([keyOf(png), bytesResult(PNG)]) })
     expect(fold.nextState).toEqual(stateOf([keyOf(png), { outcome: 'published', sha256: sha256Hex(PNG), mediaType: 'image/png', bytes: PNG.length }]))
     expect(fold.file?.icons[sha256Hex(PNG)]).toBe(`data:image/png;base64,${Buffer.from(PNG).toString('base64')}`)
+  })
+
+  it('shrinks an oversized PNG into the box and publishes it (design 2026-11-04-icon-downscale)', () => {
+    // A 256 × 256 export of noise: genuinely larger than the cap, and a real
+    // PNG the decoder can read — unlike the header-only fixture above, which
+    // is all the size refusal needs.
+    const noise = new Uint8Array(256 * 256 * 4)
+    let state = 7
+    for (let i = 0; i < noise.length; i++) {
+      state ^= state << 13
+      state ^= state >>> 17
+      state ^= state << 5
+      noise[i] = (state >>> 24) & 0xff
+    }
+    const big = new Uint8Array(PNG_SYNC.sync.write({ width: 256, height: 256, data: Buffer.from(noise) } as never))
+    expect(big.length).toBeGreaterThan(MAX_CATALOG_ICON_BYTES)
+    const png = npmSubject('png', declared('icon.png', 'image/png'))
+    const { fold } = runDay([png], { results: resultsOf([keyOf(png), bytesResult(big)]) })
+    const row = fold.nextState.get(keyOf(png))
+    expect(row?.outcome).toBe('published')
+    if (row?.outcome !== 'published') throw new Error('not published')
+    expect(row.bytes).toBeLessThanOrEqual(MAX_CATALOG_ICON_BYTES)
+    const sha = row.sha256
+    const url = fold.file?.icons[sha]
+    expect(url).toMatch(/^data:image\/png;base64,/)
+    const decoded = PNG_SYNC.sync.read(Buffer.from((url as string).split(',')[1] as string, 'base64'))
+    expect(decoded.width).toBe(64)
+    expect(decoded.height).toBe(64)
+    expect(fold.counts).toEqual({ ...ZERO, declared: 1, published: 1 })
   })
 
   it('refuses oversize bytes with the check\'s sentence and records the refusal', () => {
