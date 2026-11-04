@@ -652,6 +652,33 @@
   letter-spacing: 0.02em;
   color: var(--dsw-alias-label-primary);
 }
+/* The Updatable heading and its one batch action on a line (design
+ * 2026-11-04-borrowings-round-4 §3). The action sits at the row's end, where
+ * the card list's other secondary actions put theirs, and wraps under the
+ * heading rather than squeezing it when the column is narrow. */
+.updatableHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+}
+
+.updateAllButton {
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.updateAllButton:hover {
+  border-color: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-brand-primary);
+}
 
 .catalogStatsRow {
   display: flex;

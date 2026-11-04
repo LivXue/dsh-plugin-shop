@@ -4,7 +4,7 @@
  * details — never markup, so hostile npm descriptions cannot inject (spec
  * §11.3.4): no render path here may ever use dangerouslySetInnerHTML. */
 
-import { Component, Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
+import { Component, Fragment, memo, useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopStateResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
 import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type InstallView, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, iconOf, identityKey, installPhaseKey, isCustomLicense, listedOnShelf, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, updateAwaitsRestart, utcDay, versionLabel, versionLabelKey, whatChangedUrl } from './present.ts'
@@ -440,6 +440,17 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
                     * there is nothing here that could look like a runnable
                     * command line. */}
                   <dd>{entry.bin.join(', ')}</dd>
+                </div>
+              )}
+              {entry.installScripts === true && (
+                <div className={css.detailRow} data-shop-install-scripts>
+                  <dt>{t('installScripts')}</dt>
+                  {/* A declaration, never a verdict: the row says the package
+                    * asks to run code at install time, and that pnpm does not
+                    * run it unless the profile allows it. What the script
+                    * does is not ours to judge (design
+                    * 2026-11-04-borrowings-round-4 §2). */}
+                  <dd>{t('installScriptsDeclared')}</dd>
                 </div>
               )}
             </dl>
@@ -1713,9 +1724,39 @@ function OutdatedSection({ state, entriesByKey, icons, missingByKey, harnessVerd
     (entry): entry is ShopInstalledEntry & { latest: string } => entry.outdated && entry.latest !== null,
   )
   if (outdated.length === 0) return null
+  // One press updates every row that can be updated (design
+  // 2026-11-04-borrowings-round-4 §3). The host serialises installs per
+  // profile, so starting them together queues rather than races; a row whose
+  // install the host would refuse is skipped, and so is one already running.
+  // A failure leaves the others alone: each row keeps its own record.
+  const updateAll = (): void => {
+    for (const row of outdated) {
+      const key = identityKey(row)
+      const flow = flowFor(key)
+      if (flow.starting || flow.view.kind === 'running') continue
+      if (uninstallFor(key).view.kind === 'running' || uninstallFor(key).view.kind === 'done') continue
+      if (refusesInstall(blockersOf(missingByKey.get(key) ?? [], harnessVerdictOf(harnessVerdicts, key), undefined))) continue
+      const tier = entriesByKey.get(key)?.tier ?? 'community'
+      void flow.start({
+        name: row.name,
+        version: row.latest,
+        source: row.source,
+        ...(row.repo !== undefined ? { repo: row.repo } : {}),
+        ...(row.subdir !== undefined ? { subdir: row.subdir } : {}),
+        acknowledged: tier === 'verified' ? undefined : true,
+      })
+    }
+  }
   return (
     <section className={css.outdatedSection} data-shop-outdated aria-labelledby={UPDATABLE_HEADING_ID}>
-      <h2 className={css.updatableHeading} id={UPDATABLE_HEADING_ID}>{t('updatableSection')}</h2>
+      <div className={css.updatableHead}>
+        <h2 className={css.updatableHeading} id={UPDATABLE_HEADING_ID}>{t('updatableSection')}</h2>
+        {outdated.length > 1 && (
+          <button type="button" className={css.updateAllButton} data-shop-update-all onClick={updateAll}>
+            {t('updateAll', { count: outdated.length })}
+          </button>
+        )}
+      </div>
       <ul className={css.outdatedList}>
         {outdated.map(row => (
           <li key={identityKey(row)}>
@@ -2410,7 +2451,15 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   // once per query change keeps every keystroke out of the catalog's filter
   // loop, and the caller's `matched` memo can consult the same answer for
   // every entry it scans.
-  const expansionMemo = useMemo(() => expandZhQuery(query), [query])
+  // The shelf's filter reads a DEFERRED query (design
+  // 2026-11-04-borrowings-round-4 §5). Measured on the live catalog's 14,167
+  // entries, one pass costs 2–8 ms — inside a frame today — but the point is
+  // that a keystroke must not wait for it: the input paints immediately and
+  // React re-runs the filter and the list at a lower priority, dropping
+  // intermediate values when typing outruns it. No fixed delay, so a fast
+  // machine sees results at once and a slow one stays responsive.
+  const deferredQuery = useDeferredValue(query)
+  const expansionMemo = useMemo(() => expandZhQuery(deferredQuery), [deferredQuery])
   const matched = useMemo(() => {
     const q = expansionMemo.query
     // The Installed view is management, not shelf, so it reads the whole

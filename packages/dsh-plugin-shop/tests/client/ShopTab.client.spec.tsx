@@ -6019,6 +6019,18 @@ describe('the prepurchase facts, favorites and recovery (design 2026-11-02-marke
     expect(nodeAt(container, '[data-shop-bin]').textContent).toContain('dsh-hello, hello-cli')
   })
 
+  it('says the package declares an install-time script, and what pnpm does with it', async () => {
+    const { injected } = bench(snapshot({ installScripts: true }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    await act(async () => { fireEvent.click(nodeAt(container, `${CARD} button[aria-expanded]`)) })
+    const row = nodeAt(container, '[data-shop-install-scripts]')
+    expect(row.textContent).toContain(en.installScripts)
+    // The fact is a declaration, not a verdict: the row says pnpm will not run
+    // it by default.
+    expect(row.textContent).toContain(en.installScriptsDeclared)
+  })
+
   it('renders no row for a fact the manifest does not declare', async () => {
     const { injected } = bench(snapshot())
     const { container } = renderTab(injected)
@@ -6027,6 +6039,7 @@ describe('the prepurchase facts, favorites and recovery (design 2026-11-02-marke
     expect(container.querySelector('[data-shop-engines]')).toBeNull()
     expect(container.querySelector('[data-shop-dependencies]')).toBeNull()
     expect(container.querySelector('[data-shop-bin]')).toBeNull()
+    expect(container.querySelector('[data-shop-install-scripts]')).toBeNull()
   })
 
   it('marks an install past 50 MB and leaves a small one unmarked', async () => {
@@ -6110,6 +6123,28 @@ describe('the prepurchase facts, favorites and recovery (design 2026-11-02-marke
     expect(container.querySelector(`${CARD} [data-shop-rollback]`)).toBeTruthy()
     fireEvent.click(container.querySelector(`${CARD} [data-shop-uninstall]`) as HTMLElement)
     await waitFor(() => expect(container.querySelector(`${CARD} [data-shop-rollback]`)).toBeNull())
+  })
+
+  it('updates every row that can be updated from one press', async () => {
+    const { injected, install } = bench(snapshot(), [
+      { name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true },
+      { name: 'dsh-second-plugin', installed: '1.0.0', latest: '2.0.0', outdated: true, enabled: true },
+    ])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')).toBeTruthy())
+    fireEvent.click(nodeAt(container, '[data-shop-update-all]'))
+    await waitFor(() => expect(install).toHaveBeenCalledTimes(2))
+    expect(install.mock.calls.map(([args]) => `${args.name}@${args.version}`).sort())
+      .toEqual(['dsh-hello-plugin@1.2.0', 'dsh-second-plugin@2.0.0'])
+  })
+
+  it('offers no batch action for a single row', async () => {
+    const { injected } = bench(snapshot(), [
+      { name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true },
+    ])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')).toBeTruthy())
+    expect(container.querySelector('[data-shop-update-all]')).toBeNull()
   })
 
   it('links an outdated row to what the new version changed', async () => {
