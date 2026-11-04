@@ -477,7 +477,10 @@ export interface KillFns {
 export const nodeKills: KillFns = {
   killGroup: pid => process.kill(-pid, 'SIGKILL'),
   killPid: pid => process.kill(pid, 'SIGKILL'),
-  taskkill: pid => { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }) },
+  // `windowsHide` for the same reason the install spawn carries it: this runs
+  // on the timeout path, from a dsh that a desktop launcher may have started
+  // without a console to lend the child.
+  taskkill: pid => { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }) },
 }
 
 /** Kill a child and its descendants (process group on POSIX, taskkill tree on Windows). */

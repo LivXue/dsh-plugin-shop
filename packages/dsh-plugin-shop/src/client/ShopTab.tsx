@@ -1687,7 +1687,7 @@ const UPDATABLE_HEADING_ID = 'dsh-shop-updatable-heading'
  * community entry's does); an entry absent from the catalog is read as
  * community, so its request acknowledges, which the host accepts for any
  * tier. */
-function OutdatedSection({ state, entriesByKey, icons, missingByKey, harnessVerdicts, t, setEnabled, flowFor, uninstallFor, restart, restartBlocked, reload, page }: {
+function OutdatedSection({ state, entriesByKey, icons, missingByKey, harnessVerdicts, nameTakenByKey, t, setEnabled, flowFor, uninstallFor, restart, restartBlocked, reload, page }: {
   state: InstalledState
   entriesByKey: ReadonlyMap<string, CatalogEntry>
   /** sha256 → data URL, from the catalog result. */
@@ -1696,6 +1696,10 @@ function OutdatedSection({ state, entriesByKey, icons, missingByKey, harnessVerd
   /** The catalog result's `incompatibleHarness`, or undefined from a host that
    * predates it — `harnessVerdictOf` reads either. */
   harnessVerdicts: Readonly<Record<string, HarnessVerdict>> | undefined
+  /** The plugin holding each entry's bundle name, when a different one does.
+   * The batch action needs it to skip a row the host would refuse; the rows
+   * themselves never show it (a row IS this installation). */
+  nameTakenByKey: ReadonlyMap<string, string>
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   flowFor: (key: string) => InstallFlow
@@ -1733,9 +1737,12 @@ function OutdatedSection({ state, entriesByKey, icons, missingByKey, harnessVerd
     for (const row of outdated) {
       const key = identityKey(row)
       const flow = flowFor(key)
-      if (flow.starting || flow.view.kind === 'running') continue
+      // A settled `done` row can stay in `outdated` until the settle's re-read
+      // lands; pressing again in that window would re-send an install that
+      // already completed.
+      if (flow.starting || flow.view.kind === 'running' || flow.view.kind === 'done') continue
       if (uninstallFor(key).view.kind === 'running' || uninstallFor(key).view.kind === 'done') continue
-      if (refusesInstall(blockersOf(missingByKey.get(key) ?? [], harnessVerdictOf(harnessVerdicts, key), undefined))) continue
+      if (refusesInstall(blockersOf(missingByKey.get(key) ?? [], harnessVerdictOf(harnessVerdicts, key), nameTakenByKey.get(key)))) continue
       const tier = entriesByKey.get(key)?.tier ?? 'community'
       void flow.start({
         name: row.name,
@@ -2447,12 +2454,12 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   // below has to say which control emptied it, and this is the only honest way
   // to know — `matched` non-empty with `filtered` empty means the modifier did
   // it, with no second copy of the filter chain to drift.
-  // expandZhQuery is a pure function of the raw query alone; computing it
-  // once per query change keeps every keystroke out of the catalog's filter
-  // loop, and the caller's `matched` memo can consult the same answer for
-  // every entry it scans.
+  // expandZhQuery is a pure function of the DEFERRED query alone; computing
+  // it once per deferred change keeps every keystroke out of the catalog's
+  // filter loop, and the caller's `matched` memo can consult the same answer
+  // for every entry it scans.
   // The shelf's filter reads a DEFERRED query (design
-  // 2026-11-04-borrowings-round-4 §5). Measured on the live catalog's 14,167
+  // 2026-11-04-borrowings-round-4 §4). Measured on the live catalog's 14,167
   // entries, one pass costs 2–8 ms — inside a frame today — but the point is
   // that a keystroke must not wait for it: the input paints immediately and
   // React re-runs the filter and the list at a lower priority, dropping
@@ -3089,6 +3096,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
             icons={icons}
             missingByKey={missingByKey}
             harnessVerdicts={harnessVerdicts}
+            nameTakenByKey={nameTakenByKey}
             t={t}
             setEnabled={setEnabled}
             flowFor={flows.flowFor}

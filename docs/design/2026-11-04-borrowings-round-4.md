@@ -28,12 +28,19 @@ Two consequences, one visible and one silent:
   `INSTALL_TIMEOUT_MS` (15 minutes) and reports a **timeout** — the wrong
   cause, and the most expensive kind of wrong report.
 
-`child-env.ts` owns the one rule both spawns use: the caller's environment with
-`GIT_TERMINAL_PROMPT=0`. It is not a preference a caller may override — no
-prompt on this path can be answered — and `CI=1` is deliberately NOT set,
-because pnpm's behaviour under it differs and dsh's own manager already
-computes what it wants for its children. Both spawns also pass
-`windowsHide: true`.
+`child-env.ts` owns the environment both spawns use: the caller's environment
+with `GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never`. The second is the one
+Windows needs — Git Credential Manager ships as Git for Windows' default helper
+and ignores `GIT_TERMINAL_PROMPT`, opening its own window on a cache miss;
+`never` still resolves a stored credential and fails fast instead of prompting.
+Neither is a preference a caller may override — no prompt on this path can be
+answered — and `CI=1` is deliberately NOT set, because pnpm's behaviour under it
+differs and dsh's own manager already computes what it wants for its children.
+
+Every spawn in the two modules passes `windowsHide: true`, the timeout path's
+`taskkill` included: it runs from the same console-less dsh. The structural test
+counts them per CALL, not once per file — the first version matched
+`windowsHide: true` anywhere in the file, so `taskkill` sat through it.
 
 ## 2. An install-time script is a fact the sheet can state
 
@@ -60,9 +67,14 @@ that starts every row it can:
 
 - a row already running, or whose uninstall is running or has landed, is
   skipped;
+- a row that has already settled `done` is skipped: it can stay in `outdated`
+  until the settle's re-read lands, and a second press in that window would
+  re-send an install that completed;
 - a row whose install the host would refuse (`refusesInstall`: a taken name,
   or harness peers dsh rejects) is skipped — pressing it could only produce the
-  refusal the row already explains;
+  refusal the row already explains. This read the name-taken holder as absent
+  until the review asked for the skip rules to be tested: the batch action
+  passed `undefined` for it, so a name-conflicted row was started anyway;
 - the rest are started together. The host serialises installs per profile
   (`executor.ts`'s profile queue), so starting them together queues rather than
   races; each row keeps its own record, so one failure leaves the others

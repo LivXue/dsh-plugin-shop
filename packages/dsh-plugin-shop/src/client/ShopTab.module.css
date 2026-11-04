@@ -680,6 +680,15 @@
   color: var(--dsw-alias-brand-primary);
 }
 
+/* The ring every other control in this stylesheet carries. The batch action is
+ * the only one in the Updatable header, so it is also the only Tab stop there
+ * — without this it would be the one keyboard-reachable control with no
+ * visible focus. */
+.updateAllButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
 .catalogStatsRow {
   display: flex;
   align-items: center;

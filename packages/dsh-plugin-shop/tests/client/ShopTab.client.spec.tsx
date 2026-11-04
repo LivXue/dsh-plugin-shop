@@ -6138,6 +6138,41 @@ describe('the prepurchase facts, favorites and recovery (design 2026-11-02-marke
       .toEqual(['dsh-hello-plugin@1.2.0', 'dsh-second-plugin@2.0.0'])
   })
 
+  it('skips a running row, a mid-uninstall row and a refused row', async () => {
+    // The three skip rules section 3 is made of. Without them the action is a
+    // loop over the row buttons: it would re-send an install already running,
+    // start one behind an uninstall of the same plugin, and press a button the
+    // card already refuses.
+    const base = snapshot().plugins[0]!
+    const catalog = {
+      ...snapshot(),
+      plugins: [
+        { ...base, name: 'dsh-hello-plugin' },
+        { ...base, name: 'dsh-run' },
+        { ...base, name: 'dsh-uninst' },
+        { ...base, name: 'dsh-refused' },
+      ],
+    }
+    const rows = ['dsh-hello-plugin', 'dsh-run', 'dsh-uninst', 'dsh-refused'].map(name => ({
+      name, installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true,
+    }))
+    // A github spec under an npm name is a different identity: the host would
+    // refuse the install, so the row must be skipped.
+    const { injected, install, installStatus } = bench(catalog, rows, { 'dsh-refused': 'github:other/repo' })
+    // Nothing settles, so the flows stay `running` for the assertions below.
+    installStatus.mockImplementation(() => new Promise<never>(() => {}))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-outdated-entry="dsh-run"]')).toBeTruthy())
+
+    fireEvent.click(nodeAt(container, '[data-shop-outdated-entry="dsh-run"] [data-shop-update]'))
+    fireEvent.click(nodeAt(container, '[data-shop-entry="dsh-uninst"] [data-shop-uninstall]'))
+    await waitFor(() => expect(install).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(nodeAt(container, '[data-shop-update-all]'))
+    await waitFor(() => expect(install).toHaveBeenCalledTimes(2))
+    expect(install.mock.calls.map(([args]) => args.name)).toEqual(['dsh-run', 'dsh-hello-plugin'])
+  })
+
   it('offers no batch action for a single row', async () => {
     const { injected } = bench(snapshot(), [
       { name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true },
