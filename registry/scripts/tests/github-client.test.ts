@@ -942,6 +942,26 @@ describe('fetchRepoCandidate', () => {
     expect(candidate).toMatchObject({ dshPeers: { '@deepseek-ai/dsh': '0.1.5-rc.2' }, manifestVersion: version, declarationsRule: DECLARATIONS_RULE })
   })
 
+  it('records an install-time script from the manifest, and nothing for one npm does not run', async () => {
+    // The github channel reads the same three names the npm channel does
+    // (design 2026-11-04-borrowings-round-4 §2). `prepare` runs on a git
+    // install only through npm's own path, not pnpm's install scripts, and the
+    // gate already refuses a repo whose build needs it — so it is not this
+    // field.
+    const withScript = await candidateFromManifest({
+      name: 'dsh-scripted', dsh: { bundle: { patch: './cordis.patch.yml' } },
+      scripts: { postinstall: 'node ./build.js' },
+    })
+    expect(withScript?.installScripts).toBe(true)
+    // Not `prepare`/`prepack`: those mean the repository needs a build, which
+    // is the gate's `requires-build` question and sends the projection to the
+    // release probe — a different fact from "runs a script at install time".
+    for (const scripts of [undefined, {}, { build: 'tsc' }, { test: 'vitest' }]) {
+      const candidate = await candidateFromManifest({ name: 'dsh-scripted', dsh: { bundle: { patch: './cordis.patch.yml' } }, ...(scripts === undefined ? {} : { scripts }) })
+      expect(candidate !== undefined && 'installScripts' in candidate, JSON.stringify(scripts)).toBe(false)
+    }
+  })
+
   describe('the icon declaration (design 2026-10-23-shop-plugin-icons §4)', () => {
     // Read from the manifest the projection already holds, by the reader the
     // npm channel uses, and recorded by the one declarations writer: so it is
@@ -3968,6 +3988,26 @@ describe('harvestRepos', () => {
       expect(result.rereadStopped).toBeNull()
       expect([result.rereadAttempted, result.rereadUpdated, result.rereadFailed, result.rereadAssetChanged]).toEqual([14, 4, 10, 0])
       for (const repo of Object.keys(pinned)) expect(result.nextState[repo], repo).toEqual(state[repo])
+    })
+
+    it('drops installScripts when the re-read manifest no longer declares it', async () => {
+      // The delete arm of the one declarations writer: a carried candidate
+      // recorded `installScripts: true` whose manifest has since dropped the
+      // script must not keep publishing it. Budget 0 makes the re-read the only
+      // queue that can answer.
+      const { state, seen } = carriedRepos('s/scripts', 1)
+      const repo = 's/scripts-00'
+      const carried = state[repo]?.candidates[0]
+      if (carried === undefined) throw new Error('fixture carried no candidate')
+      state[repo] = { ...state[repo]!, candidates: [{ ...carried, installScripts: true }] }
+      const { fetchImpl } = rereadFetch(seen, url => {
+        const slug = repoOf(url).split('/')[1] ?? ''
+        return new Response(JSON.stringify({ name: slug, dsh: { bundle: {} } }), { status: 200 })
+      })
+      const { value: result } = await quietly(() => harvestRepos({ state, budget: 0, fetchImpl, sleep, token: 't' }))
+      expect(result.rereadUpdated).toBe(1)
+      const next = result.nextState[repo]?.candidates[0]
+      expect(next !== undefined && 'installScripts' in next).toBe(false)
     })
 
     it('counts only failures in a row: an answer between them starts the count again', async () => {
