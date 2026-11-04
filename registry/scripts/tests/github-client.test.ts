@@ -942,6 +942,32 @@ describe('fetchRepoCandidate', () => {
     expect(candidate).toMatchObject({ dshPeers: { '@deepseek-ai/dsh': '0.1.5-rc.2' }, manifestVersion: version, declarationsRule: DECLARATIONS_RULE })
   })
 
+  it('drops an engines declaration when the manifest has no usable version', async () => {
+    // `engines` used to be written beside the pairing instead of inside it, so
+    // a manifest with no `version` — PerryLink/dsh-certification, 2026-11-04 —
+    // got the declaration and no `manifestVersion`. The next build's parse
+    // refused the whole state file as "declarations and manifestVersion
+    // recorded apart" and could not start. A declaration with no version
+    // cannot name an exemption, so it goes with the version, as `dshPeers`
+    // does.
+    for (const version of [undefined, '', '   ', '1'.repeat(VERSION_MAX_LENGTH + 1)]) {
+      const candidate = await candidateFromManifest({
+        name: 'dsh-certification', dsh: { bundle: { patch: './cordis.patch.yml' } },
+        engines: { dsh: '>=0.2.2-0 <0.3.0' },
+        ...(version === undefined ? {} : { version }),
+      })
+      expect(candidate !== undefined && 'engines' in candidate, JSON.stringify(version)).toBe(false)
+      expect(candidate !== undefined && 'manifestVersion' in candidate, JSON.stringify(version)).toBe(false)
+    }
+    // With a version, both are written.
+    const withVersion = await candidateFromManifest({
+      name: 'dsh-certification', version: '1.0.0', dsh: { bundle: {} },
+      engines: { dsh: '>=0.2.2-0 <0.3.0' },
+    })
+    expect(withVersion?.engines).toBe('>=0.2.2-0 <0.3.0')
+    expect(withVersion?.manifestVersion).toBe('1.0.0')
+  })
+
   it('records an install-time script from the manifest, and nothing for one npm does not run', async () => {
     // The github channel reads the same three names the npm channel does
     // (design 2026-11-04-borrowings-round-4 §2). `prepare` runs on a git

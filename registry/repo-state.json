@@ -233171,7 +233171,6 @@
         "catalog": null,
         "description": "Community certification registry for DeepSeek Harness plugins: public spec, scoring model, registry data and badges.",
         "peers": [],
-        "engines": ">=0.2.2-0 <0.3.0",
         "icon": {
           "kind": "declared",
           "declaration": {

@@ -1317,17 +1317,27 @@ function writeDeclarations(
   if ((dshPeers !== undefined || engines !== undefined) && usableVersion) {
     if (dshPeers !== undefined) candidate.dshPeers = dshPeers
     else delete candidate.dshPeers
+    // `engines` belongs INSIDE the pairing, not beside it: written on its own
+    // it lands on a candidate whose version was just dropped, which is the
+    // shape the parse refuses as "declarations and manifestVersion recorded
+    // apart" — a manifest with no `version` (PerryLink/dsh-certification,
+    // 2026-11-04) stopped the next build from starting. A declaration with no
+    // version cannot name an exemption, so it is dropped with the version,
+    // exactly as `dshPeers` is.
+    if (engines !== undefined) candidate.engines = engines
+    else delete candidate.engines
     candidate.manifestVersion = version
   } else {
     delete candidate.dshPeers
+    delete candidate.engines
     delete candidate.manifestVersion
   }
   // The three prepurchase facts (design 2026-11-02-market-borrowings §1–§2).
   // Removed, never left stale, when this manifest declares none: absent beside
   // the current stamp means "declares none", and keeping the previous
-  // declaration would publish one this manifest never made.
-  if (engines === undefined) delete candidate.engines
-  else candidate.engines = engines
+  // declaration would publish one this manifest never made. `engines` is
+  // paired above; the other two are not, because neither dsh nor the pairing
+  // rule reads a version beside them.
   const dependencies = dependencyCountOf(declarations)
   if (dependencies === undefined) delete candidate.dependencies
   else candidate.dependencies = dependencies
