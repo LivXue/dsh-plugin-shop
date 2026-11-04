@@ -254,6 +254,14 @@ const entrySchema = z.object({
   // registry bounds the list to three of 48 characters; the schema bounds it
   // again because the strings are rendered as text in the detail row.
   bin: z.array(z.string()).optional(),
+  // Whether the manifest declares a `preinstall`, `install` or `postinstall`
+  // script (registry `Entry.installScripts`; design 2026-11-04-borrowings-round-4
+  // §2). pnpm 10+ refuses to run one unless the profile allows it, so the
+  // detail row says the package asked to run code at install time. The
+  // registry writes `true` only and omits the key otherwise; typed as a
+  // boolean so a hand-edited `false` reads as "declares none" rather than
+  // costing the whole data file.
+  installScripts: z.boolean().optional(),
   // npm's `dist.unpackedSize`, additive and optional for the same reason as
   // `publisher` — this schema strips a key it does not know, so old and new
   // hosts share one catalog, while bumping the version NUMBER would make

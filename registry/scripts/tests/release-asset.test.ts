@@ -162,6 +162,7 @@ describe('verifyReleaseAsset', () => {
         engines: undefined,
         dependencies: undefined,
         bin: undefined,
+        scripts: undefined,
         icon: undefined,
         exports: undefined,
       })
@@ -207,6 +208,7 @@ describe('verifyReleaseAsset', () => {
         engines: undefined,
         dependencies: undefined,
         bin: undefined,
+        scripts: undefined,
         icon: undefined,
         exports: undefined,
       },

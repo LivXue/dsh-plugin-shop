@@ -90,6 +90,7 @@ export interface PackedDeclarations {
   engines: unknown
   dependencies: unknown
   bin: unknown
+  scripts: unknown
   icon: unknown
   exports: unknown
 }
@@ -513,6 +514,7 @@ interface PackedManifest {
   engines?: unknown
   dependencies?: unknown
   bin?: unknown
+  scripts?: unknown
 }
 
 /**
@@ -595,6 +597,7 @@ function declarationsOf(manifest: PackedManifest): PackedDeclarations {
     engines: manifest.engines,
     dependencies: manifest.dependencies,
     bin: manifest.bin,
+    scripts: manifest.scripts,
     icon: manifest.icon,
     exports: manifest.exports,
   }

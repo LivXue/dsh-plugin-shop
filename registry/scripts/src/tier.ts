@@ -81,6 +81,7 @@ export function assignTier(accepted: Accepted, config: RegistryConfig): Entry {
     ...(candidate.engines !== undefined ? { engines: candidate.engines } : {}),
     ...(candidate.dependencies !== undefined ? { dependencies: candidate.dependencies } : {}),
     ...(candidate.bin !== undefined ? { bin: candidate.bin } : {}),
+    ...(candidate.installScripts === true ? { installScripts: true as const } : {}),
   }
   // Defence in depth: a github review is keyed by its repository now, so it
   // can no longer be reached by an npm name at all (config.ts). If one ever
@@ -181,6 +182,7 @@ export function assignRepoTier(accepted: RepoAccepted, config: RegistryConfig): 
     ...(repo.engines !== undefined ? { engines: repo.engines } : {}),
     ...(repo.dependencies !== undefined ? { dependencies: repo.dependencies } : {}),
     ...(repo.bin !== undefined ? { bin: repo.bin } : {}),
+    ...(repo.installScripts === true ? { installScripts: true as const } : {}),
   }
   // A release-pinned entry is reviewed by its tarball sha256: the tag is
   // display only — a mutable ref an author can re-point at different content

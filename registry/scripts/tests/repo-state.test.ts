@@ -922,6 +922,12 @@ describe('a carried declarations record is checked on the way in', () => {
       expect(parsed?.manifestVersion).toBe('1.0.0')
     })
 
+    it('round-trips installScripts, and refuses anything but true', () => {
+      const parsed = parseRepoState(rowWith({ installScripts: true }))['a/one']?.candidates[0]
+      expect(parsed?.installScripts).toBe(true)
+      expect(() => parseRepoState(rowWith({ installScripts: false }))).toThrow('a malformed installScripts record')
+    })
+
     it('keeps an empty engines range, which dsh reads as unsatisfiable on purpose', () => {
       const parsed = parseRepoState(rowWith({ engines: '', manifestVersion: '1.0.0' }))['a/one']?.candidates[0]
       expect(parsed?.engines).toBe('')

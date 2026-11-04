@@ -16,7 +16,7 @@
 
 import { createHash } from 'node:crypto'
 import { truncateWholeCharacters, VERSION_MAX_LENGTH } from './gate.ts'
-import { binNamesOf, compatibilityOf, dependencyCountOf, dshPeersOf, enginesDshOf, FetchTimeoutError, fetchWithRetry, peerNamesOf, withTimeout } from './npm-client.ts'
+import { binNamesOf, compatibilityOf, declaresInstallScripts, dependencyCountOf, dshPeersOf, enginesDshOf, FetchTimeoutError, fetchWithRetry, peerNamesOf, withTimeout } from './npm-client.ts'
 import { parseBudgetVariable } from './pipeline.ts'
 import { fileListIncludes, type IconRead, iconDetail, iconLabel, readIconDeclaration, shownPath } from './icon-declaration.ts'
 import { canEverList } from './repo-gate.ts'
@@ -1293,6 +1293,7 @@ function writeDeclarations(
     engines?: unknown
     dependencies?: unknown
     bin?: unknown
+    scripts?: unknown
     icon?: unknown
     exports?: unknown
     files?: unknown
@@ -1334,6 +1335,8 @@ function writeDeclarations(
   const bin = binNamesOf(declarations, packageName)
   if (bin === undefined) delete candidate.bin
   else candidate.bin = bin
+  if (declaresInstallScripts(declarations)) candidate.installScripts = true
+  else delete candidate.installScripts
   const read = readIconDeclaration(declarations)
   const icon: IconRead = read.kind === 'declared' && !fileListIncludes(declarations.files, read.declaration.path)
     ? { kind: 'refused', detail: iconDetail.notInFiles(iconLabel(read.declaration.source), shownPath(read.declaration.path)) }

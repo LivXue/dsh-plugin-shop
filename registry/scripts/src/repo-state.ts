@@ -65,11 +65,14 @@ import type { RepoCandidate, StoredIconRead } from './types.ts'
  * 4 (2026-11-02): `engines`, `dependencies` and `bin` as well (design
  * 2026-11-02-market-borrowings §1–§2); every listable carried candidate
  * stamped 3 is re-read once to gain them, and until it is, it carries none.
+ * 5 (2026-11-04): `installScripts` as well (design
+ * 2026-11-04-borrowings-round-4 §2); every listable carried candidate stamped
+ * 4 is re-read once to gain it, and until it is, it carries none.
  * `engines` is the one that changes a verdict rather than a label: dsh 0.2.1
  * reads it in place of the peers, so a stale candidate would keep predicting
  * a refusal from the half dsh does not read.
  */
-export const DECLARATIONS_RULE = 4
+export const DECLARATIONS_RULE = 5
 
 /** One repository's recorded state. Exactly one of the outcome fields is
  * present: candidates for a usable fetch, or a failure reason. */
@@ -269,7 +272,7 @@ function checkCarriedDeclarations(repo: string, candidate: unknown): RepoCandida
   if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
     throw new Error(`repo-state.json: ${repo} has a candidate that is not an object`)
   }
-  const { peers, compatibility, declarationsRule, dshPeers, manifestVersion, icon, engines, dependencies, bin, subdir, repo: recordedRepo } = candidate as {
+  const { peers, compatibility, declarationsRule, dshPeers, manifestVersion, icon, engines, dependencies, bin, installScripts, subdir, repo: recordedRepo } = candidate as {
     peers?: unknown
     compatibility?: unknown
     declarationsRule?: unknown
@@ -279,6 +282,7 @@ function checkCarriedDeclarations(repo: string, candidate: unknown): RepoCandida
     engines?: unknown
     dependencies?: unknown
     bin?: unknown
+    installScripts?: unknown
     subdir?: unknown
     repo?: unknown
   }
@@ -329,6 +333,10 @@ function checkCarriedDeclarations(repo: string, candidate: unknown): RepoCandida
   }
   if (bin !== undefined && !isStringArray(bin)) {
     throw new Error(`repo-state.json: ${repo} has a candidate with a malformed bin record`)
+  }
+  // `true` only: the writer omits the key rather than writing `false`.
+  if (installScripts !== undefined && installScripts !== true) {
+    throw new Error(`repo-state.json: ${repo} has a candidate with a malformed installScripts record`)
   }
   // The state key is the repository, so the candidate's `repo` is the key, and
   // the key is then the shape a repository's full name has.

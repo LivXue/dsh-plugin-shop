@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, type PublisherState } from '../src/publisher-state.ts'
-import { accountForDepartures, BIN_MAX_COUNT, BIN_NAME_MAX_LENGTH, binNamesOf, type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPATIBILITY_RANGE_MAX_LENGTH, CoverageCheckError, DEPENDENCIES_MAX_COUNT, dependencyCountOf, DSH_PEER_RANGE_MAX_LENGTH, dshPeersOf, enginesDshOf, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, PROFILE_NAME_MAX_LENGTH, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, readDeparture, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { accountForDepartures, BIN_MAX_COUNT, BIN_NAME_MAX_LENGTH, binNamesOf, declaresInstallScripts, type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPATIBILITY_RANGE_MAX_LENGTH, CoverageCheckError, DEPENDENCIES_MAX_COUNT, dependencyCountOf, DSH_PEER_RANGE_MAX_LENGTH, dshPeersOf, enginesDshOf, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, PROFILE_NAME_MAX_LENGTH, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, readDeparture, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { iconDetail, shownPath } from '../src/icon-declaration.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
@@ -1004,6 +1004,34 @@ describe('binNamesOf', () => {
   })
 })
 
+describe('declaresInstallScripts', () => {
+  // The npm twin of the github channel's `requires-build`: pnpm 10+ refuses to
+  // run one of these unless the profile allows it, so the sheet says the
+  // package asks to run code at install time (design 2026-11-04-borrowings-round-4 §2).
+
+  it('is true for any of the three install-time scripts', () => {
+    for (const name of ['preinstall', 'install', 'postinstall']) {
+      expect(declaresInstallScripts({ scripts: { [name]: 'node-gyp rebuild' } }), name).toBe(true)
+    }
+    expect(declaresInstallScripts({ scripts: { build: 'tsc' } })).toBe(false)
+  })
+
+  it('counts a non-string value: npm would try to run whatever is there', () => {
+    expect(declaresInstallScripts({ scripts: { postinstall: 1 } })).toBe(true)
+  })
+
+  it('is false for no scripts, a malformed one, or only non-install scripts', () => {
+    for (const scripts of [undefined, null, 'x', [], {}, { test: 'vitest' }, { prepublishOnly: 'x' }]) {
+      expect(declaresInstallScripts({ scripts }), JSON.stringify(scripts)).toBe(false)
+    }
+  })
+
+  it('does not read an inherited key as a declared script', () => {
+    const inherited = Object.create({ postinstall: 'x' }) as Record<string, unknown>
+    expect(declaresInstallScripts({ scripts: inherited })).toBe(false)
+  })
+})
+
 describe('the prepurchase facts reach the candidate', () => {
   it('writes engines, dependencies and bin, and omits each when undeclared', () => {
     const doc = {
@@ -1016,6 +1044,7 @@ describe('the prepurchase facts reach the candidate', () => {
           engines: { dsh: '>=0.2.0' },
           dependencies: { a: '1' },
           bin: { 'dsh-facts': './cli.js' },
+          scripts: { postinstall: 'node ./build.js' },
         },
       },
     }
@@ -1029,6 +1058,8 @@ describe('the prepurchase facts reach the candidate', () => {
     expect(candidate !== null && 'engines' in candidate).toBe(false)
     expect(candidate !== null && 'dependencies' in candidate).toBe(false)
     expect(candidate !== null && 'bin' in candidate).toBe(false)
+    expect(candidate !== null && 'installScripts' in candidate).toBe(false)
+    expect(toCandidate(doc)?.installScripts).toBe(true)
   })
 })
 

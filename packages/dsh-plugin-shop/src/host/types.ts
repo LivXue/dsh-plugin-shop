@@ -107,6 +107,10 @@ export interface CatalogEntry {
    * same design): a fact about the install surface, never a claim about what
    * any command does. Absent when none. */
   bin?: string[]
+  /** The manifest declares a `preinstall`, `install` or `postinstall` script
+   * (registry `Entry.installScripts`; design 2026-11-04-borrowings-round-4
+   * §2): a fact about the install, never a verdict on what the script does. */
+  installScripts?: boolean
   /** Wire-compatibility key, not a field to read — see {@link installSize},
    * which the catalog parse fills from this one. It names npm's OWN quantity
    * (`dist.unpackedSize`), so it is npm-only and the parse REFUSES one on a
