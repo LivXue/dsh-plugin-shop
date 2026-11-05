@@ -404,6 +404,11 @@
   by: human
   reason: "腌菜保存 — pickle preservation. \"store\" is the verb."
 
+- name: "dsh-plug-store"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: DSH 插件商店（宿主版）— 在 DSH 内浏览 qianyumeng0228/dsh-store 的 1.7 万+ 插件目录，真实执行安装/卸载/更新/备份/诊断。 · DSH plugin store inside DeepSeek Harness: browse the dsh-store catalog and install community plugins with real host capabilities."
+
 - name: "dsh-plugin"
   market: true
   by: human
@@ -668,6 +673,11 @@
   market: true
   by: llm
   reason: "Judged a dsh plugin market from: Tangyixiao DSH plugin market — an independent format-1 index for DeepSeek Harness"
+
+- name: "traness-dsh-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: TranESS 企业插件市场：员工把自建插件发布到企业 npm 仓库，市场按企业身份显示上传人姓名，同事可直接下载安装。"
 
 - name: "untr-dsh-marketplace"
   market: true
