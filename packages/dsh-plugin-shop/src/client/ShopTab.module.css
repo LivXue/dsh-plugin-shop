@@ -1771,6 +1771,16 @@
   color: var(--shop-error);
 }
 
+.reportLine {
+  margin: 0;
+  font-size: 12px;
+}
+
+.reportLink {
+  color: var(--dsw-alias-brand-primary);
+  text-decoration: underline;
+}
+
 .failedDetail {
   margin: 0;
   font-size: 12px;

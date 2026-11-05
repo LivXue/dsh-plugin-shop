@@ -7,7 +7,7 @@
 import { Component, Fragment, memo, useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopStateResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type InstallView, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, iconOf, identityKey, installPhaseKey, isCustomLicense, listedOnShelf, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, updateAwaitsRestart, utcDay, versionLabel, versionLabelKey, whatChangedUrl } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type InstallView, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, entryKey, formatSize, formatStars, githubSlugOf, failureReportUrl, harnessVerdictOf, hasGithubHome, heldBy, iconOf, identityKey, installPhaseKey, isCustomLicense, listedOnShelf, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, updateAwaitsRestart, utcDay, versionLabel, versionLabelKey, whatChangedUrl } from './present.ts'
 import { createPageStore, switchKey, type OwedNotice, type ShopPageStore, type SwitchSurface } from './page-store.ts'
 import { readRestartMonitor, requestRestart, subscribeRestartMonitor, type RestartMonitorState } from './restart-monitor.ts'
 import { useRegistryFlows, type InstallFlow, type UninstallFlow, type UseUninstallFlows } from './useFlows.ts'
@@ -133,6 +133,13 @@ export type ShopTabProps =
  * reverdict's request, and the host judges it after the settle that raised
  * the reverdict, so its answer clears the reverdict, and a failure asks for
  * it again. */
+/** How long a shop left in a background tab may show a stale catalog after
+ * the tab comes back to the front (design 2026-11-05-failure-report.md §3).
+ * Five minutes is the skin market's interval: long enough that switching
+ * windows never spends a request, short enough that a catalogue published
+ * while the reader was away is one focus away. */
+const FOCUS_REFRESH_MS = 5 * 60_000
+
 type LoadRequest =
   | { kind: 'initial' }
   | { kind: 'refresh'; reverdicts: number | null }
@@ -522,7 +529,7 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
               * is still browsable, and a live Install button beside its
               * uninstall receipt is the intended pairing. */}
             {!inInstalledView && (
-              <InstallPanel key="install" target={installTarget} tier={entry.tier} blockers={blockers} blockersStated flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
+              <InstallPanel key="install" target={installTarget} tier={entry.tier} blockers={blockers} blockersStated github={githubSlugOf(entry.repo, entry.repository)} flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
             )}
           </>
         ) : (
@@ -540,7 +547,7 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
               // The update button drives the same install flow for the
               // catalog's latest version; a completed flow stays mounted
               // after installed() catches up so its outcome remains visible.
-              <InstallPanel key="install" target={installTarget} tier={entry.tier} variant={installed.outdated ? 'update' : 'install'} locked={uninstalling} blockers={blockers} blockersStated flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
+              <InstallPanel key="install" target={installTarget} tier={entry.tier} variant={installed.outdated ? 'update' : 'install'} locked={uninstalling} blockers={blockers} blockersStated github={githubSlugOf(entry.repo, entry.repository)} flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
             ) : (
               // No button on this branch, so the badge follows the label that
               // takes its place: an installed plugin whose modules are absent
@@ -928,7 +935,7 @@ function RollbackControl({ identity, version, t, start, status, onSettled, onDon
   )
 }
 
-function InstallPanel({ target, tier, blockers, blockersStated = false, variant = 'install', locked = false, flow, t, restart, restartBlocked, reload }: {
+function InstallPanel({ target, tier, blockers, blockersStated = false, variant = 'install', locked = false, github = null, flow, t, restart, restartBlocked, reload }: {
   /** The install request this panel drives, identity included. */
   target: InstallArgs
   tier: CatalogEntry['tier']
@@ -950,6 +957,9 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
    * install keeps its own view. The flow itself is untouched, so a failed
    * uninstall, which removed nothing, brings the receipt back. */
   locked?: boolean
+  /** The plugin's GitHub `owner/slug`, when one is known: what a failed
+   * install offers to report against (design 2026-11-05-failure-report.md). */
+  github?: string | null
   /** Shared by every panel rendering this install identity. */
   flow: InstallFlow
   t: ShopTabProps['t']
@@ -1036,6 +1046,15 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
     )
   }
   if (view.kind === 'failed') {
+    const report = failureReportUrl({
+      verb: variant === 'update' ? 'update' : 'install',
+      name: target.name,
+      version: target.version,
+      source: target.source ?? 'npm',
+      repo: github,
+      detail: view.detail === '' ? t('installTransportFailed') : view.detail,
+      log: view.log,
+    })
     return (
       <div className={css.installPanel}>
         <p className={css.failedHeading}>{t('installFailed')}</p>
@@ -1054,6 +1073,19 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
             (§7.2 stderr plus the recovery hint) and renders verbatim. */}
         <p className={css.failedDetail}>{view.detail === '' ? t('installTransportFailed') : view.detail}</p>
         {view.command !== undefined && <CommandLine command={view.command} t={t} />}
+        {/* A prefilled issue against the plugin's own repository (design
+          * 2026-11-05-failure-report.md §2). Offered only when a repository is
+          * known and the URL is one this code will build; a report filed on
+          * the wrong repository is worse than no link. The shop fills in what
+          * it knows and marks the harness version for the reporter to paste,
+          * never guessing one. */}
+        {report !== null && (
+          <p className={css.reportLine}>
+            <a className={css.reportLink} data-shop-report href={report} target="_blank" rel="noopener noreferrer">
+              {t('reportProblem')}
+            </a>
+          </p>
+        )}
         {/* `failed` renders no Install button, and the page store keeps this
             view for the page's life (design 2026-10-16-shop-sidebar-page
             §5.2): the remount that once cleared it is gone, so without this
@@ -1614,13 +1646,15 @@ function EnabledSwitch({ row, surface, page, t, setEnabled, restart, restartBloc
  * carry a `latest` string — a catalog truth to compare against; §C10's
  * shadowed rows hold `latest: null` and never reach this control, so the
  * field is narrowed at the parameter. */
-function OutdatedRow({ row, icon, tier, missing, harness, t, setEnabled, flowFor, locked, restart, restartBlocked, reload, page }: {
+function OutdatedRow({ row, icon, tier, missing, harness, github, t, setEnabled, flowFor, locked, restart, restartBlocked, reload, page }: {
   row: ShopInstalledEntry & { latest: string }
   /** The row's catalog entry's icon, or undefined when the entry is gone. */
   icon: string | undefined
   tier: CatalogEntry['tier']
   missing: string[]
   harness: HarnessVerdict | undefined
+  /** The plugin's GitHub `owner/slug`, for the failure report. */
+  github: string | null
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   flowFor: (key: string) => InstallFlow
@@ -1659,7 +1693,8 @@ function OutdatedRow({ row, icon, tier, missing, harness, t, setEnabled, flowFor
         <EnabledSwitch row={row} surface="row" page={page} t={t} setEnabled={setEnabled} restart={restart} restartBlocked={restartBlocked} reload={reload} locked={locked} />
         <InstallPanel
           target={{ name: row.name, version: row.latest, source: row.source, repo: row.repo, subdir: row.subdir }}
-          tier={tier} variant="update" locked={locked} blockers={stateBlockers(blockersOf(missing, harness, undefined), t)}
+          tier={tier} variant="update" locked={locked} github={github}
+          blockers={stateBlockers(blockersOf(missing, harness, undefined), t)}
           flow={flowFor(identityKey(row))} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload}
         />
       </div>
@@ -1773,6 +1808,7 @@ function OutdatedSection({ state, entriesByKey, icons, missingByKey, harnessVerd
               tier={entriesByKey.get(identityKey(row))?.tier ?? 'community'}
               missing={missingByKey.get(identityKey(row)) ?? []}
               harness={harnessVerdictOf(harnessVerdicts, identityKey(row))}
+              github={githubSlugOf(entriesByKey.get(identityKey(row))?.repo, entriesByKey.get(identityKey(row))?.repository) ?? row.repo ?? null}
               t={t}
               setEnabled={setEnabled}
               flowFor={flowFor}
@@ -2053,6 +2089,30 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   // the instance that set it.
   const pendingRefreshRef = useRef<LoadRequest | null>(null)
 
+  // When the catalogue was last read, for the focus refresh below.
+  const lastLoadedAtRef = useRef(Date.now())
+
+  // A shop left open in a background tab showed the catalogue it loaded that
+  // morning all day (design 2026-11-05-failure-report.md §3). Returning to
+  // the tab asks again, throttled to one refresh per FOCUS_REFRESH_MS and
+  // skipped while a load is already in flight — a reader switching windows
+  // must not spend a request each time. `visibilitychange` covers a tab
+  // switch, `focus` a window that never hid (another window in front of it).
+  useEffect(() => {
+    const onForeground = (): void => {
+      if (document.visibilityState !== 'visible') return
+      if (Date.now() - lastLoadedAtRef.current < FOCUS_REFRESH_MS) return
+      if (pendingRefreshRef.current !== null) return
+      setRequest({ kind: 'refresh', reverdicts: null })
+    }
+    document.addEventListener('visibilitychange', onForeground)
+    window.addEventListener('focus', onForeground)
+    return () => {
+      document.removeEventListener('visibilitychange', onForeground)
+      window.removeEventListener('focus', onForeground)
+    }
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     // A refresh or a reverdict keeps the stale snapshot visible during the
@@ -2086,6 +2146,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
         // second network load (design 2026-09-01-harness-compatibility
         // section 9.1).
         if (!cancelled) {
+          lastLoadedAtRef.current = Date.now()
           setCatalogState({ kind: 'ready', result })
           // The answer the pending reverdict waited for (above): its own
           // request's, or that of a Refresh or Retry that superseded it.

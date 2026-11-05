@@ -1534,6 +1534,54 @@ describe('ShopTab', () => {
     expect(screen.getByText('pnpm failed — run: dsh plugin --profile web install')).toBeTruthy()
   })
 
+  it('offers a prefilled issue against the plugin\'s repository on a failed install', async () => {
+    const { injected, installStatus } = bench(snapshot({ tier: 'verified' }))
+    installStatus.mockResolvedValue({ found: true, state: 'failed', log: ['pnpm failed'], detail: 'pnpm failed — run: dsh plugin --profile web install' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    // The flow polls the status, as the existing failure test does.
+    await waitFor(() => expect(screen.getByText('pnpm failed')).toBeTruthy(), { timeout: 3000 })
+    await waitFor(() => expect(container.querySelector('[data-shop-report]')).toBeTruthy())
+    const href = container.querySelector('[data-shop-report]')?.getAttribute('href') ?? ''
+    expect(href.startsWith('https://github.com/you/hello-plugin/issues/new?')).toBe(true)
+    expect(href).toContain(encodeURIComponent('Install failed: dsh-hello-plugin@1.2.0'))
+    expect(href).toContain(encodeURIComponent('pnpm failed'))
+    expect(container.querySelector('[data-shop-report]')?.textContent).toBe(en.reportProblem)
+  })
+
+  it('offers no report when the catalog names no repository', async () => {
+    const { injected, installStatus } = bench(snapshot({ repository: null }))
+    installStatus.mockResolvedValue({ found: true, state: 'failed', log: ['pnpm failed'], detail: 'pnpm failed' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-log]')).toBeTruthy(), { timeout: 5000 })
+    expect(screen.getByText(en.installFailed)).toBeTruthy()
+    expect(container.querySelector('[data-shop-report]')).toBeNull()
+  })
+
+  it('asks the catalogue again when the tab comes back to the front, once per window', async () => {
+    const { injected, catalog } = bench(snapshot())
+    const now = vi.spyOn(Date, 'now')
+    const base = Date.now()
+    now.mockReturnValue(base)
+    try {
+      renderTab(injected)
+      await waitFor(() => expect(catalog).toHaveBeenCalledTimes(1))
+      // Inside the window: a reader switching windows costs nothing.
+      now.mockReturnValue(base + 60_000)
+      act(() => { window.dispatchEvent(new Event('focus')) })
+      await waitFor(() => expect(catalog).toHaveBeenCalledTimes(1))
+      // Past it: one refresh, with the stale shelf kept until it lands.
+      now.mockReturnValue(base + 6 * 60_000)
+      act(() => { window.dispatchEvent(new Event('focus')) })
+      await waitFor(() => expect(catalog).toHaveBeenCalledWith({ refresh: true }))
+    } finally {
+      now.mockRestore()
+    }
+  })
+
   it('never renders the transport detail of a thrown install', async () => {
     const { injected, install } = bench(snapshot({ tier: 'verified' }))
     install.mockRejectedValueOnce(new Error('shop remote: WIRE: boom'))
