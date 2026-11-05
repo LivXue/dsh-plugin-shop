@@ -702,6 +702,126 @@ function isGithubRepo(repo: string): boolean {
   return GITHUB_REPO.test(repo) && repo.split('/').every(segment => segment !== '.' && segment !== '..')
 }
 
+/**
+ * The GitHub `owner/slug` a plugin's repository lives on, from either the
+ * entry's `repo` (a github source holds it directly) or its `repository` URL
+ * (an npm source holds a URL), or null when neither names one this code will
+ * put in a URL path (design 2026-11-05-failure-report.md §1).
+ *
+ * The URL forms npm actually sees are handled: `https://github.com/o/s`,
+ * `git+https://…`, `git@github.com:o/s.git` and the `github:o/s` shorthand.
+ * Everything else — a GitLab URL, a shorthand that names another host — is
+ * null rather than a guess: an issue filed on the wrong repository is worse
+ * than no link.
+ */
+export function githubSlugOf(repo: string | null | undefined, repository: string | null | undefined): string | null {
+  if (repo !== null && repo !== undefined && isGithubRepo(repo)) return repo
+  if (repository === null || repository === undefined) return null
+  const text = repository.trim()
+  if (text === '' || text.length > 512) return null
+  // `github:owner/slug` is npm's shorthand for the https URL.
+  const shorthand = /^github:([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+?)(?:\.git)?$/.exec(text)
+  if (shorthand !== null) {
+    const slug = shorthand[1] ?? ''
+    return isGithubRepo(slug) ? slug : null
+  }
+  // `git@github.com:owner/slug.git` and `ssh://git@github.com/owner/slug`.
+  const scp = /^(?:ssh:\/\/)?git@github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(text)
+  if (scp !== null) {
+    const slug = scp[1] ?? ''
+    return isGithubRepo(slug) ? slug : null
+  }
+  let url: URL
+  try {
+    url = new URL(text.replace(/^git\+/, ''))
+  } catch {
+    return null
+  }
+  if (url.hostname !== 'github.com') return null
+  const path = url.pathname.replace(/^\/+/, '').replace(/\/+$/, '').replace(/\.git$/, '')
+  return isGithubRepo(path) ? path : null
+}
+
+/**
+ * How much of a failure a prefilled issue carries. The body is a URL query
+ * parameter, and a browser or proxy cuts one off somewhere past a few
+ * kilobytes; the last lines of a log are the interesting ones, and the first
+ * are the ones a reporter can scroll back for.
+ */
+const REPORT_DETAIL_MAX = 1200
+const REPORT_LOG_MAX = 1500
+const REPORT_LOG_LINES = 20
+
+/** ANSI colour and cursor sequences: a rendered log never shows them, and a
+ * pasted issue should not either. */
+const ANSI = /\u001b\[[0-9;?]*[A-Za-z]/g
+
+/** What the failure report needs from the flow it reports. */
+export interface FailureReportInput {
+  verb: 'install' | 'update'
+  name: string
+  version: string
+  source: 'npm' | 'github'
+  /** Already resolved `owner/slug`, or null when the entry names none. */
+  repo: string | null
+  /** The host's published copy, which a failure may leave empty. */
+  detail: string
+  log: readonly string[]
+  /** The running shop's version, when the tab knows it. */
+  shopVersion?: string
+}
+
+/**
+ * A prefilled GitHub issue against the plugin's own repository, or null when
+ * no honest one can be built (design 2026-11-05-failure-report.md §1).
+ *
+ * The shop fills in what it knows and says so in the first line, so a
+ * reporter is not handed a form that pretends to be complete. It never
+ * claims a harness version it does not have: the author asks for
+ * `dsh --version` in their template, and a wrong one would send the report
+ * down the wrong path.
+ */
+export function failureReportUrl(input: FailureReportInput): string | null {
+  if (input.repo === null || !isGithubRepo(input.repo)) return null
+  const clipped = (text: string, max: number): string => text.length <= max ? text : `${text.slice(0, max)}…`
+  const logLines = input.log
+    .join('\n')
+    .replace(ANSI, '')
+    .split('\n')
+    .filter(line => line !== '')
+    .slice(-REPORT_LOG_LINES)
+    .join('\n')
+  const detail = clipped(input.detail.replace(ANSI, '').trim(), REPORT_DETAIL_MAX)
+  const body = [
+    '<!-- The shop filled in what it knows. Edit anything that is wrong. -->',
+    '',
+    '### What I did',
+    `\`${input.verb === 'update' ? 'Update' : 'Install'}\` \`${input.name}@${input.version}\` from ${input.source}, through the shop.`,
+    '',
+    '### What happened',
+    detail === '' ? '(the shop recorded no detail)' : detail,
+    '',
+    '### Log',
+    '```',
+    clipped(logLines, REPORT_LOG_MAX),
+    '```',
+    '',
+    '### Environment',
+    `- dsh-plugin-shop: ${input.shopVersion ?? 'unknown'}`,
+    '- dsh: <!-- paste the output of `dsh --version` -->',
+  ].join('\n')
+  const title = `${input.verb === 'update' ? 'Update' : 'Install'} failed: ${input.name}@${input.version}`
+  // A URL survives about 8 KiB in every client that opens one, and a body of
+  // Chinese text costs nine encoded characters per character. Halving until
+  // the ENCODED query fits keeps the link openable; the marker says so, and
+  // the reporter can paste the rest.
+  let fitted = body
+  while (encodeURIComponent(fitted).length > 6000 && fitted.length > 200) {
+    fitted = `${fitted.slice(0, Math.floor(fitted.length * 0.8)).trimEnd()}\n… (truncated; the full log is in the shop)`
+  }
+  return `https://github.com/${input.repo}/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(fitted)}`
+}
+
 /** A version segment safe to put in one URL path piece. */
 const URL_VERSION = /^[A-Za-z0-9._+-]{1,256}$/
 

@@ -152,6 +152,8 @@ export const zh = {
    * second line states what pnpm does with it, so the fact is not read as a
    * verdict on the script. */
   installScripts: '安装脚本',
+  /** The failure report's prefilled issue (design 2026-11-05-failure-report.md). */
+  reportProblem: '报告问题',
   installScriptsDeclared: '声明了安装时运行的脚本（pnpm 默认不执行）',
   /** The size label's tooltip for an install that lands more than 50 MB on
    * disk. The figure is already large on screen; this phrase says why it is
@@ -360,6 +362,7 @@ export const en = {
   dependencies: 'Dependencies',
   commands: 'Commands',
   installScripts: 'Install scripts',
+  reportProblem: 'Report a problem',
   installScriptsDeclared: 'Declares a script that runs at install time (pnpm does not run it by default)',
   sizeLabelLarge: '{size} on disk — large',
   reviewedVersionLine: 'Reviewed: {reviewed} · Current version {current} has not been reviewed',

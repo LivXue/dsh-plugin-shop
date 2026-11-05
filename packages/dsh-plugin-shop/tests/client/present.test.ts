@@ -9,6 +9,7 @@ import {
   reviewHashPin, shelfOrderLocaleKey, shelfTime, SHELF_ORDERS, sortByStars, starsOf, tierKey, utcDay, orderShelf,
   RESTART_STABLE_MS, RESTART_WAIT_MS, restartMonitorVerdict, answeredByAnotherProcess, settledByRestart, updateAwaitsRestart,
   versionLabel, versionLabelKey, whatChangedUrl,
+  githubSlugOf, failureReportUrl,
 } from '../../src/client/present.ts'
 import { en, zh } from '../../src/client/locales.ts'
 import type { CatalogEntry, HarnessVerdict, RestartBlockedReason, ShopVersionResult } from '../../src/host/index.ts'
@@ -491,6 +492,97 @@ describe('reviewHashPin', () => {
 
   it('returns an empty string when no hash pin exists', () => {
     expect(reviewHashPin(review)).toBe('')
+  })
+})
+
+describe('githubSlugOf', () => {
+  // The failure report files an issue on the plugin's own repository, so a
+  // wrong slug is worse than no link (design 2026-11-05-failure-report.md §1).
+  it('takes the github source\'s own identity', () => {
+    expect(githubSlugOf('someone/dsh-foo', null)).toBe('someone/dsh-foo')
+  })
+
+  it('reads every repository form npm actually sees', () => {
+    const forms = [
+      'https://github.com/someone/dsh-foo',
+      'https://github.com/someone/dsh-foo.git',
+      'https://github.com/someone/dsh-foo/',
+      'git+https://github.com/someone/dsh-foo.git',
+      'git@github.com:someone/dsh-foo.git',
+      'ssh://git@github.com/someone/dsh-foo',
+      'github:someone/dsh-foo',
+    ]
+    for (const repository of forms) expect(githubSlugOf(null, repository), repository).toBe('someone/dsh-foo')
+  })
+
+  it('answers null rather than guessing at another host or a traversal', () => {
+    for (const repository of [
+      'https://gitlab.com/someone/dsh-foo',
+      'https://github.com/someone/../other',
+      'https://github.com/someone',
+      'not a url',
+      '',
+      null,
+      undefined,
+    ]) {
+      expect(githubSlugOf(null, repository), String(repository)).toBeNull()
+    }
+  })
+})
+
+describe('failureReportUrl', () => {
+  const base = {
+    verb: 'install' as const,
+    name: 'dsh-hello-plugin',
+    version: '1.2.0',
+    source: 'npm' as const,
+    repo: 'someone/dsh-foo',
+    detail: 'pnpm failed',
+    log: ['line one', 'line two'],
+    shopVersion: '0.9.2-beta.1',
+  }
+
+  it('prefills the title and the body on the plugin\'s own repository', () => {
+    const url = failureReportUrl(base)
+    expect(url).not.toBeNull()
+    const parsed = new URL(url as string)
+    expect(parsed.origin + parsed.pathname).toBe('https://github.com/someone/dsh-foo/issues/new')
+    expect(parsed.searchParams.get('title')).toBe('Install failed: dsh-hello-plugin@1.2.0')
+    const body = parsed.searchParams.get('body') ?? ''
+    expect(body).toContain('dsh-hello-plugin@1.2.0')
+    expect(body).toContain('pnpm failed')
+    expect(body).toContain('line two')
+    expect(body).toContain('0.9.2-beta.1')
+    // The harness version is the reporter's to paste: the shop never guesses one.
+    expect(body).toContain('dsh --version')
+  })
+
+  it('says update when it was an update', () => {
+    const url = failureReportUrl({ ...base, verb: 'update' })
+    expect(new URL(url as string).searchParams.get('title')).toBe('Update failed: dsh-hello-plugin@1.2.0')
+  })
+
+  it('strips ANSI colour and cuts a long log to its last lines', () => {
+    const log = Array.from({ length: 60 }, (_, i) => `\u001b[31mline ${i}\u001b[0m`)
+    const body = new URL(failureReportUrl({ ...base, log }) as string).searchParams.get('body') ?? ''
+    expect(body).not.toContain('\u001b')
+    expect(body).toContain('line 59')
+    expect(body).not.toContain('line 0\n')
+  })
+
+  it('bounds the encoded URL so a long non-ASCII log still opens', () => {
+    // Chinese costs nine encoded characters per character; without the bound
+    // the link would exceed what every client will open.
+    const log = Array.from({ length: 40 }, () => '安装失败：网络不可达，请检查代理设置并重试'.repeat(3))
+    const url = failureReportUrl({ ...base, log, detail: '中文错误'.repeat(200) })
+    expect(url).not.toBeNull()
+    expect((url as string).length).toBeLessThanOrEqual(8000)
+    expect(new URL(url as string).searchParams.get('body')).toContain('truncated')
+  })
+
+  it('answers null when there is nowhere honest to file it', () => {
+    expect(failureReportUrl({ ...base, repo: null })).toBeNull()
+    expect(failureReportUrl({ ...base, repo: '../evil' })).toBeNull()
   })
 })
 
