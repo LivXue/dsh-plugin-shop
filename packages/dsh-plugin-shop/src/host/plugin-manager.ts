@@ -11,8 +11,11 @@ import { refusedRequirements } from './harness.ts'
 import type { HotRestartReason } from './hot.ts'
 
 /** The operations the shop calls. `cancelInstall` is optional because only
- * the install deadline uses it. Answers stay `unknown` until `readChange`
- * reads them: a later harness may add or drop fields. */
+ * the install deadline uses it. `updateBundle` is optional because only dsh
+ * 0.2.2 and later offers it; through 0.2.1 the manager refuses an in-place
+ * update with `already-installed` and has no update operation at all.
+ * Answers stay `unknown` until `readChange`/`readUpdate` reads them: a later
+ * harness may add or drop fields. */
 export interface PluginManagerLike {
   installBundle(spec: string, options: { requestId: string }): Promise<unknown>
   removeBundle(name: string): Promise<unknown>
@@ -20,6 +23,10 @@ export interface PluginManagerLike {
    * not the patch row id (dsh 0.1.7-rc.2 `setPluginEnabled`). */
   setPluginEnabled(id: string, enabled: boolean): Promise<unknown>
   setBundleEnabled(name: string, enabled: boolean): Promise<unknown>
+  /** Update an installed npm bundle the way dsh's own Plugins page does:
+   * check, remove, install, and restore the old version when the install
+   * fails (dsh-plugin-manager 0.2.2's `updateBundle`). */
+  updateBundle?(name: string, version: string, options: { requestId: string; registry?: string }): Promise<unknown>
   cancelInstall?(requestId: string): Promise<unknown>
 }
 
@@ -100,6 +107,32 @@ export function readChange(raw: unknown): ManagerChange {
     failedAt: text(result.failedAt),
     changed: typeof result.changed === 'boolean' ? result.changed : null,
     truncated: run.truncated === true,
+  }
+}
+
+/** One `updateBundle` answer, as far as the shop reads it (dsh-plugin-manager
+ * 0.2.2): the versions it moved between, the step that settled, the nested
+ * change `managerOutcome` reads, and the restore attempt dsh makes itself
+ * when the install fails after the removal. `result` stays raw so
+ * `managerOutcome` reads it exactly as it reads an `installBundle` answer;
+ * `restore` stays raw so `readChange` says whether the old version came
+ * back. Every field is optional, the same rule as `readChange`. */
+export interface ManagerUpdate {
+  from: string | null
+  to: string | null
+  step: string | null
+  result: unknown
+  restore: unknown | null
+}
+
+export function readUpdate(raw: unknown): ManagerUpdate {
+  const answer = record(raw)
+  return {
+    from: text(answer.from),
+    to: text(answer.to),
+    step: text(answer.step),
+    result: answer.result ?? null,
+    restore: answer.restore ?? null,
   }
 }
 

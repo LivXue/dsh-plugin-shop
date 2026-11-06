@@ -72,6 +72,10 @@ export const NS = 'settings.shop'
  * 2026-10-16-shop-sidebar-page §4.1). */
 export const SHOP_PANEL = 'shop'
 
+/** dsh's own Plugins page (dsh-client-ui-plugin-manager's `PANEL_ID`), the
+ * surface that updates a package on the desktop profile. */
+const DSH_PLUGINS_PANEL = 'plugins'
+
 /** How long a stashed catalog may satisfy a plain open. The host applies the
  * same five-minute freshness window, so the client stash must not outlive it. */
 export const WARM_TTL_MS = 5 * 60 * 1000
@@ -366,6 +370,41 @@ export async function apply(ctx: ClientContext): Promise<void> {
   ctx.effect(() => () => { page.dispose() }, 'dsh-plugin-shop: page store')
   restartListeners.add(() => { page.noteRestarted() })
 
+  // dsh's layout service, read through the reflect shop rather than `inject`,
+  // as `modules` is: what needs it degrades without it, and an inject
+  // requirement would hold the whole client back on a harness that lacks it.
+  // Read as a shape to check rather than to trust: a service without
+  // `selectPanel`, as a reshaped one could be, cannot move the reader, so
+  // nothing here calls it or offers to.
+  const layout = (): Partial<ShopLayoutFace> | undefined => ctx.get('layout') as Partial<ShopLayoutFace> | undefined
+  const selectShopPage = (): void => {
+    const service = layout()
+    if (typeof service?.selectPanel !== 'function') return
+    try {
+      service.selectPanel(SHOP_PANEL)
+    } catch {
+      // dsh refuses a key no `main` entry holds, the one throw `selectPanel`
+      // documents: this instance's own entry is gone, a teardown under way,
+      // so there is no page to select.
+    }
+  }
+  /** dsh's own Plugins page, the one surface that can update the shop on the
+   * desktop profile (`updateBundle`: remove, install, restore). The panel id
+   * is dsh-client-ui-plugin-manager 0.2.2-rc.1's own `PANEL_ID`; a harness
+   * that names it differently refuses the key in `selectPanel`, which the
+   * catch below reads as "no such page" — the same degradation a missing
+   * service gets. */
+  const openDshPluginsPage = (): void => {
+    const service = layout()
+    if (typeof service?.selectPanel !== 'function') return
+    try {
+      service.selectPanel(DSH_PLUGINS_PANEL)
+    } catch {
+      // See `selectShopPage`: a key no `main` entry holds is the one throw,
+      // and there is nothing else this button can do about it.
+    }
+  }
+
   const injected = (): ShopTabInjected => ({
     catalog: async args => handOver(await hostCatalog(args)),
     install,
@@ -385,27 +424,9 @@ export async function apply(ctx: ClientContext): Promise<void> {
     state,
     setFavorite,
     rollback,
+    openPluginsPage: openDshPluginsPage,
     page,
   })
-
-  // dsh's layout service, read through the reflect shop rather than `inject`,
-  // as `modules` is: what needs it degrades without it, and an inject
-  // requirement would hold the whole client back on a harness that lacks it.
-  // Read as a shape to check rather than to trust: a service without
-  // `selectPanel`, as a reshaped one could be, cannot move the reader, so
-  // nothing here calls it or offers to.
-  const layout = (): Partial<ShopLayoutFace> | undefined => ctx.get('layout') as Partial<ShopLayoutFace> | undefined
-  const selectShopPage = (): void => {
-    const service = layout()
-    if (typeof service?.selectPanel !== 'function') return
-    try {
-      service.selectPanel(SHOP_PANEL)
-    } catch {
-      // dsh refuses a key no `main` entry holds, the one throw `selectPanel`
-      // documents: this instance's own entry is gone, a teardown under way,
-      // so there is no page to select.
-    }
-  }
 
   // The shop's own page in dsh's main column (design
   // 2026-10-16-shop-sidebar-page §4.1), under the key its sidebar row
