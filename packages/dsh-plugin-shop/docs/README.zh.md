@@ -33,9 +33,9 @@ pnpm`，并用 `dsh --version` 和 `pnpm --version` 验证。
 # dsh 在 PATH 上（全局安装）。必须钉版本号：pnpm 11 会拦下刚发布的新版本，
 # 不写版本号的裸安装可能给你旧版。下面是当前版本——用
 # `npm view dsh-plugin-shop version` 查最新值。
-dsh plugin --profile web add dsh-plugin-shop@0.9.1
+dsh plugin --profile web add dsh-plugin-shop@0.9.2
 # 或全程走 npx，什么都不装：
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.9.1
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.9.2
 ```
 
 如果你用的不是 `web` profile，把它换成你自己的。然后重启一次 `dsh`——新加的 bundle 不会作用于
@@ -60,7 +60,7 @@ ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 **2. 安装。** 钉版本号——显式钉版本能绕过 pnpm 的发布冷却期，确定性安装本来也是 agent 路径的要点。
 
 ```sh
-dsh plugin --profile <profile> add dsh-plugin-shop@0.9.1
+dsh plugin --profile <profile> add dsh-plugin-shop@0.9.2
 ```
 
 **3. 验证——这步别省。** 第 2 步返回 0 只说明 pnpm 解析到了这个包，不代表 profile 会加载它。
@@ -108,8 +108,8 @@ dsh plugin --profile <profile> list --depth 0
 
 | | |
 |---|---|
-| **浏览与搜索** | 数千个插件，按 `dsh-plugin` 与 `deepseek-harness` 关键字从整个公共 npm registry 采集（外加把这些关键字用作 topic 的 GitHub 仓库）；作者若自己声明了简介就用作者原话，并归入七个分类。货架可以按星标、最新上架或最近更新排序，后两种在卡片上标出日期；版本号会写明自己是什么：npm 版本、GitHub 发布还是 GitHub 提交 |
-| **安装** | 一次点击，没有对话框。本机 dsh 会拒绝的安装——harness peer 不被当前版本接受，或名字已被另一个已装插件占用——卡片会在按钮的位置显示红色标签并写明原因，peer 被拒时附上 dsh 自己的豁免命令。较长的红字折叠成两行，点「展开」看全文 |
+| **浏览与搜索** | 数千个插件，按 `dsh-plugin` 与 `deepseek-harness` 关键字从整个公共 npm registry 采集（外加把这些关键字用作 topic 的 GitHub 仓库）；作者若自己声明了简介就用作者原话，并归入七个分类。货架可以按星标、最新上架或最近更新排序，后两种在卡片上标出日期；版本号会写明自己是什么：npm 版本、GitHub 发布还是 GitHub 提交。切回标签页会重新读取目录，最多每五分钟一次 |
+| **安装** | 一次点击，没有对话框。本机 dsh 会拒绝的安装——harness peer 不被当前版本接受，或名字已被另一个已装插件占用——卡片会在按钮的位置显示红色标签并写明原因，peer 被拒时附上 dsh 自己的豁免命令。较长的红字折叠成两行，点「展开」看全文。安装失败时，会给出指向插件自己仓库的预填 GitHub issue |
 | **启停** | 对已安装插件生效，无需重启。带浏览器半边的插件还需要刷新当前页面，商店会在需要时给出按钮 |
 | **已安装状态** | 已安装的插件在卡片上显示「已安装」，目录有新版本时改为「更新」按钮，另有「卸载」按钮；顶部「已安装」筛选只看已装插件 |
 | **体积与作者** | 每张卡片显示装上它会占多少磁盘，紧挨着发布账号——用的是 npm 自己的解包体积，所以和该包的 npm 页面对得上 |

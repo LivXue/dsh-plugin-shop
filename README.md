@@ -35,9 +35,9 @@ are available with `dsh --version` and `pnpm --version`.
 # Specify the version: pnpm 11 restricts newly published releases by default,
 # so omitting the version may install an older release. The current version
 # is shown below; check for updates with `npm view dsh-plugin-shop version`.
-dsh plugin --profile web add dsh-plugin-shop@0.9.1
+dsh plugin --profile web add dsh-plugin-shop@0.9.2
 # Alternatively, run the installation command through npx:
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.9.1
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.9.2
 ```
 
 Replace `web` with your profile name if you use a different one. Restart `dsh` after
@@ -57,7 +57,7 @@ ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 
 # 2. Specify the version to bypass pnpm's release cooldown and ensure
 #    that the expected version is installed.
-dsh plugin --profile <profile> add dsh-plugin-shop@0.9.1
+dsh plugin --profile <profile> add dsh-plugin-shop@0.9.2
 
 # 3. Verify the installation; exit code 0 above only means pnpm resolved the package.
 dsh plugin --profile <profile> list --depth 0   # The output should include dsh-plugin-shop.
@@ -112,6 +112,13 @@ see the [package README](packages/dsh-plugin-shop/README.md#failure-modes).
 - **🖥️ A layout that uses the width** — on a wide tab the controls become a
   sticky filter rail beside a two-column card grid; narrower tabs keep the
   wrapping category chips and gain two columns as soon as they fit.
+- **🐞 Failures you can report** — a failed install offers a prefilled GitHub
+  issue against the plugin's own repository: what you did, the host's detail
+  and the last 20 log lines. A repository the shop cannot recognise gets no
+  link, because a report on the wrong repository is worse than none.
+- **🔄 A shelf that keeps up** — returning to the shop's tab refreshes the
+  catalog, at most once every five minutes; a failed refresh keeps the shelf
+  you were reading.
 
 <a id="-how-it-fits-together"></a>
 

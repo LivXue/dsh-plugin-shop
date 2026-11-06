@@ -213,6 +213,14 @@ These block a real launch, not the code.
       moved into the Account menu (§5)~~ — resolved by the 0.9.0 promotion,
       which navigates to the shop's own sidebar row and so presses no Settings
       button at all.
+12. **dsh 0.2.2-rc.1 — shipped in 0.9.2, 2026-11-06.** dsh 0.2.2-rc.1
+    became npm's `latest` on 2026-11-04 and moved `PROFILE_TEMPLATES` from
+    `dsh-app-boot` into `@deepseek-ai/dsh-official-bundles`; the shop now
+    reads it there when app-boot exports none, restoring the
+    `harness-profile` badge. The CI matrix gained a 0.2.2-rc.1 leg on both
+    platforms.
+    [2026-11-06-dsh-022-profile-templates.md](../design/2026-11-06-dsh-022-profile-templates.md).
+    No open item.
 
 ## P1 — the Host half (done 2026-08-25)
 

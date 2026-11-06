@@ -1,6 +1,6 @@
 # dsh 0.2.2-rc.1: the profile table moved out of app-boot
 
-Status: **built 2026-11-06.** dsh `0.2.2-rc.1` became npm's `latest` on
+Status: **released 2026-11-06 as 0.9.2.** dsh `0.2.2-rc.1` became npm's `latest` on
 2026-11-04; this records what the shop had to change and how the harness was
 verified. The previous pin is [2026-10-19-dsh-021-readiness.md](2026-10-19-dsh-021-readiness.md)'s
 subject.

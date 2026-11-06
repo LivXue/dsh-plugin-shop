@@ -35,9 +35,9 @@ install them once with `npm install -g @deepseek-ai/dsh pnpm` and verify with
 # holds back very recent releases, so a bare `add dsh-plugin-shop` can hand
 # you an older version for a while. Pin the current release — refresh it
 # with `npm view dsh-plugin-shop version`.
-dsh plugin --profile web add dsh-plugin-shop@0.9.1
+dsh plugin --profile web add dsh-plugin-shop@0.9.2
 # or straight through npx, nothing installed:
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.9.1
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.9.2
 ```
 
 Replace `web` with your profile if you use another one. Then restart `dsh` once — a
@@ -67,7 +67,7 @@ ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 cooldown, and deterministic installs are the point of the agent path.
 
 ```sh
-dsh plugin --profile <profile> add dsh-plugin-shop@0.9.1
+dsh plugin --profile <profile> add dsh-plugin-shop@0.9.2
 ```
 
 **3. Verify — do not skip this.** A zero exit from step 2 means pnpm resolved the
@@ -117,8 +117,8 @@ bundle is not.
 
 | | |
 |---|---|
-| **Browse & search** | Thousands of plugins, harvested from the whole public npm registry by the `dsh-plugin` and `deepseek-harness` keywords and from GitHub repositories using them as topics — shown with the author's own summary when they declared one, and sorted into seven categories. The shelf orders them by stars, by newest listing or by latest update, the last two with the date on each card, and a version says what it is: an npm version, a GitHub release, or a GitHub commit |
-| **Install** | One click, no dialog. Where your dsh would refuse the install — a harness peer its version does not accept, or a name another installed plugin already holds — the card shows a red label in the button's place and says why, with dsh's own exemption command for a refused peer. Long red text folds to two lines behind Show more |
+| **Browse & search** | Thousands of plugins, harvested from the whole public npm registry by the `dsh-plugin` and `deepseek-harness` keywords and from GitHub repositories using them as topics — shown with the author's own summary when they declared one, and sorted into seven categories. The shelf orders them by stars, by newest listing or by latest update, the last two with the date on each card, and a version says what it is: an npm version, a GitHub release, or a GitHub commit. Returning to the tab refreshes the catalog, at most once every five minutes |
+| **Install** | One click, no dialog. Where your dsh would refuse the install — a harness peer its version does not accept, or a name another installed plugin already holds — the card shows a red label in the button's place and says why, with dsh's own exemption command for a refused peer. Long red text folds to two lines behind Show more. A failed install offers a prefilled GitHub issue against the plugin's own repository |
 | **Enable / disable** | Applies to an installed plugin without a restart. A plugin with a browser half also needs the open page reloaded, and the shop offers the button when it does |
 | **Installed state** | An installed plugin shows an Installed label on its card — or an Update button when the catalog has a newer version — plus an Uninstall button; the Installed filter in the category bar shows only installed plugins |
 | **Size & author** | Each card shows what installing the plugin puts on disk, next to the account that published it — npm's own unpacked figure, so it matches the package's npm page |

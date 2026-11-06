@@ -1,6 +1,6 @@
 # Reporting a failure, and a catalogue that keeps up — design
 
-Status: **built 2026-11-05.** Two borrowings from the market scan of that day:
+Status: **released 2026-11-06 as 0.9.2.** Two borrowings from the market scan of that day:
 dshplugin/dsh-plugin-hub files failures as prefilled GitHub issues, and
 kingOfSoySauce/dsh-skin-market re-reads its catalogue when the page comes back
 to the front. English only, per convention.
