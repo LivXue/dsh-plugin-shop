@@ -751,6 +751,8 @@ export function githubSlugOf(repo: string | null | undefined, repository: string
 const REPORT_DETAIL_MAX = 1200
 const REPORT_LOG_MAX = 1500
 const REPORT_LOG_LINES = 20
+/** The longest the body may be once URL-encoded, which is what a link pays. */
+const REPORT_ENCODED_MAX = 6000
 
 /** ANSI colour and cursor sequences: a rendered log never shows them, and a
  * pasted issue should not either. */
@@ -783,43 +785,57 @@ export interface FailureReportInput {
  */
 export function failureReportUrl(input: FailureReportInput): string | null {
   if (input.repo === null || !isGithubRepo(input.repo)) return null
-  const clipped = (text: string, max: number): string => text.length <= max ? text : `${text.slice(0, max)}…`
-  const logLines = input.log
+  // A cut keeps what matters at each end: the detail its start, where the
+  // host states the cause; the log its end, where the failure is.
+  const keepStart = (text: string, max: number): string => text.length <= max ? text : `${text.slice(0, max).trimEnd()} … (truncated)`
+  const keepEnd = (text: string, max: number): string => text.length <= max ? text : `… (truncated; the full log is in the shop)\n${text.slice(text.length - max).trimStart()}`
+  const logSource = input.log
     .join('\n')
     .replace(ANSI, '')
     .split('\n')
     .filter(line => line !== '')
     .slice(-REPORT_LOG_LINES)
     .join('\n')
-  const detail = clipped(input.detail.replace(ANSI, '').trim(), REPORT_DETAIL_MAX)
-  const body = [
+  const detailSource = input.detail.replace(ANSI, '').trim()
+  const verb = input.verb === 'update' ? 'Update' : 'Install'
+  let detailMax = REPORT_DETAIL_MAX
+  let logMax = REPORT_LOG_MAX
+  const compose = (): string => [
     '<!-- The shop filled in what it knows. Edit anything that is wrong. -->',
     '',
     '### What I did',
-    `\`${input.verb === 'update' ? 'Update' : 'Install'}\` \`${input.name}@${input.version}\` from ${input.source}, through the shop.`,
+    `\`${verb}\` \`${input.name}@${input.version}\` from ${input.source}, through the shop.`,
     '',
     '### What happened',
-    detail === '' ? '(the shop recorded no detail)' : detail,
+    detailSource === '' ? '(the shop recorded no detail)' : keepStart(detailSource, detailMax),
     '',
     '### Log',
     '```',
-    clipped(logLines, REPORT_LOG_MAX),
+    keepEnd(logSource, logMax),
     '```',
     '',
     '### Environment',
     `- dsh-plugin-shop: ${input.shopVersion ?? 'unknown'}`,
     '- dsh: <!-- paste the output of `dsh --version` -->',
   ].join('\n')
-  const title = `${input.verb === 'update' ? 'Update' : 'Install'} failed: ${input.name}@${input.version}`
   // A URL survives about 8 KiB in every client that opens one, and a body of
-  // Chinese text costs nine encoded characters per character. Halving until
-  // the ENCODED query fits keeps the link openable; the marker says so, and
-  // the reporter can paste the rest.
-  let fitted = body
-  while (encodeURIComponent(fitted).length > 6000 && fitted.length > 200) {
-    fitted = `${fitted.slice(0, Math.floor(fitted.length * 0.8)).trimEnd()}\n… (truncated; the full log is in the shop)`
+  // Chinese text costs nine encoded characters per character. The longer of
+  // the detail and the log gives up a fifth at a time until the ENCODED body
+  // fits. Only those two are cut: the environment block and the log's fences
+  // are kept whole. The whole body used to be cut from its end, which took
+  // the shop's version and the `dsh --version` marker out of exactly the long
+  // non-ASCII reports (design 2026-11-05-failure-report.md §1, 2026-11-06).
+  let body = compose()
+  while (encodeURIComponent(body).length > REPORT_ENCODED_MAX) {
+    const logShown = Math.min(logMax, logSource.length)
+    const detailShown = Math.min(detailMax, detailSource.length)
+    if (logShown === 0 && detailShown === 0) break
+    if (logShown >= detailShown) logMax = Math.floor(logShown * 0.8)
+    else detailMax = Math.floor(detailShown * 0.8)
+    body = compose()
   }
-  return `https://github.com/${input.repo}/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(fitted)}`
+  const title = `${verb} failed: ${input.name}@${input.version}`
+  return `https://github.com/${input.repo}/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`
 }
 
 /** A version segment safe to put in one URL path piece. */

@@ -33,10 +33,19 @@ a URL is a worse place), and ANSI sequences — a rendered log has no colours
 and a pasted one should not either.
 
 **Length.** A URL survives about 8 KiB, and Chinese costs nine encoded
-characters per character. The detail is clipped to 1,200 characters and the
-log to 1,500 (its last 20 lines), and the whole body is then halved until its
-ENCODED query fits 6,000 characters, with a `… (truncated)` marker. A failure
-whose log is enormous still yields an openable link.
+characters per character. The detail is cut to its first 1,200 characters and
+the log to the last 1,500 of its last 20 lines; the longer of the two then
+gives up a fifth at a time until the ENCODED body fits 6,000 characters — the
+detail keeping its start, where the host states the cause, the log its end,
+where the failure is — and each cut is marked `… (truncated)`. The environment
+block and the log's fences are never cut. A failure whose log is enormous
+still yields an openable link.
+
+*Amended 2026-11-06, after review:* the whole body used to be cut from its
+end, which took the environment block — the shop's version and the
+`dsh --version` marker — out of exactly the long non-ASCII reports the zh UI
+produces, and the 1,500 clip kept the log's start, against the rule that its
+last lines are the interesting ones.
 
 ## 2. Where the link is offered
 
@@ -83,7 +92,11 @@ shop already had.
 - `ShopTab.client.spec.tsx`, 2026-11-06: the version the header shows is in the
   body built by the card's panel on a failed install, and by the outdated row's
   and the card's on a failed update — the rendered check the 0.9.2 defect
-  lacked.
+  lacked. The host's `latest` differs from the running version there, so a
+  panel handed the wrong one fails too.
+- `present.test.ts`, 2026-11-06: a body that has to be cut keeps its
+  environment block, a closed log fence before it and the encoded bound, and
+  loses the log's oldest lines first.
 
 Client-only: no catalogue field changes, so this rides the next shop release
 without a beta-first requirement of its own.

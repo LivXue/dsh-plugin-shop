@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { reportBodyOf } from './report-link.ts'
 import {
   INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, activationNoticeKey, categoryKey, entryKey, formatSize, formatStars,
   uninstallActivationNoticeKey,
@@ -548,7 +549,7 @@ describe('failureReportUrl', () => {
     const parsed = new URL(url as string)
     expect(parsed.origin + parsed.pathname).toBe('https://github.com/someone/dsh-foo/issues/new')
     expect(parsed.searchParams.get('title')).toBe('Install failed: dsh-hello-plugin@1.2.0')
-    const body = parsed.searchParams.get('body') ?? ''
+    const body = reportBodyOf(url)
     expect(body).toContain('dsh-hello-plugin@1.2.0')
     expect(body).toContain('pnpm failed')
     expect(body).toContain('line two')
@@ -564,7 +565,7 @@ describe('failureReportUrl', () => {
 
   it('strips ANSI colour and cuts a long log to its last lines', () => {
     const log = Array.from({ length: 60 }, (_, i) => `\u001b[31mline ${i}\u001b[0m`)
-    const body = new URL(failureReportUrl({ ...base, log }) as string).searchParams.get('body') ?? ''
+    const body = reportBodyOf(failureReportUrl({ ...base, log }))
     expect(body).not.toContain('\u001b')
     expect(body).toContain('line 59')
     expect(body).not.toContain('line 0\n')
@@ -577,7 +578,35 @@ describe('failureReportUrl', () => {
     const url = failureReportUrl({ ...base, log, detail: '中文错误'.repeat(200) })
     expect(url).not.toBeNull()
     expect((url as string).length).toBeLessThanOrEqual(8000)
-    expect(new URL(url as string).searchParams.get('body')).toContain('truncated')
+    expect(reportBodyOf(url)).toContain('truncated')
+  })
+
+  // What a cut keeps (review of #132, finding 2). The cut took the body's
+  // tail, which is where the shop's version and the `dsh --version` marker
+  // sit, so exactly the long non-ASCII reports the app's primary locale
+  // produces lost both.
+  it('keeps the environment block when it has to cut the body to fit', () => {
+    const log = Array.from({ length: 40 }, (_, i) => `第 ${i} 行：安装失败，依赖解析出错`)
+    const body = reportBodyOf(failureReportUrl({ ...base, log, detail: '中文错误'.repeat(200), shopVersion: '9.8.7' }))
+    expect(body).toContain('truncated')
+    expect(body).toContain('### Environment')
+    expect(body).toContain('- dsh-plugin-shop: 9.8.7')
+    expect(body).toContain('dsh --version')
+    // The log's fence still closes before the environment, or GitHub would
+    // draw the environment as part of the log.
+    expect(body.split('```').length - 1).toBe(2)
+    expect(body.indexOf('### Environment')).toBeGreaterThan(body.lastIndexOf('```'))
+    expect(encodeURIComponent(body).length).toBeLessThanOrEqual(6000)
+  })
+
+  it('cuts the oldest log lines first, keeping the newest', () => {
+    // The last lines of a log are the interesting ones (this builder's own
+    // rule): a cut that has to shorten the log drops from its start.
+    const log = Array.from({ length: 20 }, (_, i) => `第 ${i} 行：${'依赖解析出错'.repeat(6)}`)
+    const body = reportBodyOf(failureReportUrl({ ...base, log, detail: '中文错误'.repeat(200) }))
+    expect(body).toContain('truncated')
+    expect(body).toContain('第 19 行')
+    expect(body).not.toContain('第 0 行')
   })
 
   it('answers null when there is nowhere honest to file it', () => {
