@@ -45,7 +45,7 @@ import {
 import { compatibilityMap, peerVerdictsOf, type HarnessVerdict, type PeerVerdict } from './compatibility.ts'
 import { readRunningHarness, type HarnessLocator, type RunningHarness } from './harness.ts'
 import { continueAfter, ManagerLogs, messageOf, startManagerOperation } from './manager-runner.ts'
-import { asPluginManager, codeReason, forDesktopReader, managerOutcome, readChange, thrownTail, type ManagerChange, type ManagerOutcome, type OutcomeContext, type PluginManagerLike } from './plugin-manager.ts'
+import { asPluginManager, codeReason, forDesktopReader, managerOutcome, readChange, readUpdate, thrownTail, type ManagerChange, type ManagerOutcome, type OutcomeContext, type PluginManagerLike } from './plugin-manager.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
@@ -267,6 +267,17 @@ const RESTART_BLOCKED_DETAIL: Record<RestartBlockedReason, string> = {
 const DESKTOP_PROFILE_DETAIL = 'dsh-plugin-shop: this profile is managed by the DeepSeek Harness desktop app.'
   + ' The shop cannot change it through the command line. Add or remove plugins from the app.'
 
+/** Why the shop's own update cannot run in the desktop profile, and where it
+ * can (2026-11-06 amendment). dsh's plugin manager refuses an in-place
+ * update of an installed package (`already-installed`), and the CLI
+ * continuation every other profile takes cannot run here: dsh's launcher
+ * refuses `--profile desktop` outright. dsh's own Plugins page has the
+ * operation the shop lacks — check, remove, install, restore on failure —
+ * so that page is the path, and the client's version row offers it there. */
+const DESKTOP_SELF_UPDATE_DETAIL = 'dsh-plugin-shop: this profile is managed by the DeepSeek Harness desktop app,'
+  + ' where the shop cannot replace itself while it is running. Update it from dsh\'s Plugins page (插件):'
+  + ' select dsh-plugin-shop, then update it there; dsh removes and reinstalls it, restoring the old version if that fails.'
+
 /** Why a switch through dsh's `pluginManager` waits for an operation this
  * gateway started: dsh holds its profile lock for a whole install or removal
  * (`change()` wraps pnpm) and makes any other change wait for it up to its
@@ -323,13 +334,23 @@ export interface ShopVersionResult {
    * field, and the client judges nothing by it.
    */
   bootId?: string
+  /**
+   * Where this profile's self-update can run, when it cannot run here:
+   * `'dsh-page'` on the desktop profile, whose app updates the shop by
+   * removing and reinstalling it (dsh's `updateBundle`, the operation this
+   * shop cannot call on itself while it runs). Null on every profile the
+   * shop's own update button serves, and absent from a host older than the
+   * field — the client reads both as "update here".
+   */
+  selfUpdate?: 'dsh-page' | null
 }
 
 /** `shop/updateStart` result (§7.3): the self-update spawn, or a typed
- * refusal (a version that is not plain semver). */
+ * refusal (a version that is not plain semver, or the desktop profile, whose
+ * update belongs to dsh's own Plugins page). */
 export type ShopUpdateResult =
   | { ok: true; installId: string; state: InstallState }
-  | { ok: false; detail: string }
+  | { ok: false; code?: 'desktop-manual'; detail: string }
 
 /** `shop/installed` entry (§7.3): one installed catalog plugin. The identity
  * fields distinguish same-named npm and GitHub rows; `installed` remains the
@@ -1567,6 +1588,32 @@ export class ShopGateway extends TypertRemoteService {
     // which dsh runs cannot change while it runs (see `harnessRead`).
     const harness = await this.runningHarness()
     if (manager !== null) {
+      // The desktop profile has no CLI continuation (dsh refuses that profile
+      // outright), so an update there takes dsh's own update operation
+      // instead: check, remove, install, and restore the old version when the
+      // install fails — the sequence dsh's Plugins page runs (`updateBundle`,
+      // 0.2.2 on). Only npm entries: `updateBundle` is a registry-version
+      // operation, while a github update installs a new commit spec, which
+      // dsh's `already-installed` guard already lets through. Design
+      // 2026-11-06-desktop-updates.
+      const updateInPlace = isUpdate && entry.source === 'npm' && isDesktopProfile(this.profile)
+        ? manager.updateBundle?.bind(manager)
+        : undefined
+      if (updateInPlace !== undefined) {
+        const running = this.startManagerUpdate(
+          updateInPlace,
+          manager,
+          entry.name,
+          entry.version,
+          `update ${spec}`,
+          raw => this.updateOutcome(raw, this.outcomeContext(args.name, 'update', alreadyImported, this.packageHasClientHalf(args.name))),
+          () => this.postInstallHazard(args.name, harness, ' It is on disk: uninstall it from the shop to undo this install.'),
+        )
+        this.track(running)
+        this.recordGithubPin(entry)
+        this.rememberOnDone(running, entry, args.name, replaced)
+        return { ok: true, installId: running.installId, state: running.status().state }
+      }
       // An update dsh's plugin manager refuses in place continues through
       // dsh's CLI, in this same record (design 2026-10-19-dsh-021-readiness
       // §2): from dsh 0.2.1 (dsh-plugin-manager 0.2.1-alpha.3 on) the manager
@@ -1800,6 +1847,70 @@ export class ShopGateway extends TypertRemoteService {
       spec,
       desktop: isDesktopProfile(this.profile),
     })
+  }
+
+  /**
+   * One update through dsh's `updateBundle` (0.2.2 on): the operation dsh's
+   * own Plugins page runs, remove → install → restore. The desktop profile
+   * needs it because dsh's CLI cannot manage that profile, so the CLI
+   * continuation an update takes everywhere else is unavailable there; with
+   * neither, every desktop update ended on dsh's `already-installed`
+   * refusal (measured 2026-11-06, design 2026-11-06-desktop-updates).
+   *
+   * `spec` is the same `name@version` the install path builds, and only
+   * warms the download phase and spells the mechanism line; the service is
+   * handed the name and version `updateBundle` takes.
+   */
+  private startManagerUpdate(
+    updateBundle: NonNullable<PluginManagerLike['updateBundle']>,
+    manager: PluginManagerLike,
+    name: string,
+    version: string,
+    mechanism: string,
+    outcome: (raw: unknown) => ManagerOutcome,
+    alsoConfirm?: () => string | null,
+  ): RunningInstall {
+    const spec = `${name}@${version}`
+    // The operand gate the CLI path runs in spawnPluginCli (R41): the spec
+    // goes to the download phase, whose pump relies on it. It throws as that
+    // path does, before anything is queued.
+    gateOperand(spec)
+    const cancel = manager.cancelInstall?.bind(manager)
+    return startManagerOperation({
+      profile: this.profile,
+      requestId: randomUUID(),
+      mechanism,
+      logs: this.managerLogs,
+      run: requestId => updateBundle(name, version, { requestId }),
+      ...(cancel !== undefined ? { cancel } : {}),
+      outcome,
+      ...(alsoConfirm !== undefined ? { alsoConfirm } : {}),
+      prefetcher: this.prefetcher,
+      spec,
+      desktop: isDesktopProfile(this.profile),
+    })
+  }
+
+  /**
+   * What one `updateBundle` answer means to the reader: the nested change is
+   * fed to `managerOutcome` exactly as an `installBundle` answer is, and
+   * dsh's own restore attempt is named when the install failed after a
+   * removal. Saying nothing about it would leave a reader on the failure
+   * detail alone, unable to tell whether the old version is still there —
+   * dsh reinstalls it, and the answer records whether that worked.
+   */
+  private updateOutcome(raw: unknown, context: OutcomeContext): ManagerOutcome {
+    const update = readUpdate(raw)
+    const outcome = managerOutcome(update.result ?? raw, context)
+    if (outcome.state !== 'failed' || update.restore === null) return outcome
+    const restore = readChange(update.restore)
+    const restored = restore.application !== 'failed' && restore.application !== 'cancelled'
+    const sentence = restored
+      ? `The previously installed version${update.from === null ? '' : ` (${update.from})`} was restored.`
+      : 'Restoring the previously installed version also failed.'
+    if (outcome.detail === undefined) return { ...outcome, detail: `dsh-plugin-shop: ${sentence}` }
+    const needsPeriod = !/[.!?]$/.test(outcome.detail)
+    return { ...outcome, detail: `${outcome.detail}${needsPeriod ? '.' : ''} ${sentence}` }
   }
 
   /** Keep a started record where `installStatus`, the restart gate and
@@ -2422,6 +2533,7 @@ export class ShopGateway extends TypertRemoteService {
       restartBlocked: this.staticRestartBlock(),
       pendingVersion: this.pendingVersion(installed),
       bootId,
+      selfUpdate: isDesktopProfile(this.profile) ? 'dsh-page' : null,
     }
   }
 
@@ -2462,13 +2574,22 @@ export class ShopGateway extends TypertRemoteService {
     if (valid(args.version) === null) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.version} is not a valid version` }
     }
+    // The desktop profile's update belongs to dsh's own Plugins page. dsh's
+    // manager refuses an in-place update (`already-installed`) and the CLI
+    // cannot manage this profile, while the shop cannot remove itself
+    // mid-operation — so say where the update runs instead of surfacing the
+    // refusal after a spawn that could never finish (design
+    // 2026-11-06-desktop-updates).
+    if (isDesktopProfile(this.profile)) {
+      return { ok: false, code: 'desktop-manual', detail: DESKTOP_SELF_UPDATE_DETAIL }
+    }
     const spec = `dsh-plugin-shop@${args.version}`
     if (manager !== null) {
       // The shop is always installed, so every self-update is an update, and
       // one dsh's plugin manager refuses in place continues through dsh's
-      // CLI as a plugin's does (see `install`), except on the desktop
-      // profile.
-      const continues = !isDesktopProfile(this.profile)
+      // CLI (see `install`). The desktop profile, whose CLI cannot be used,
+      // returned above.
+      const continues = true
       let refusedInPlace = false
       // The host half running here is the shop's own, so its update never
       // goes live: dsh answers with a restart and loads nothing (measured on

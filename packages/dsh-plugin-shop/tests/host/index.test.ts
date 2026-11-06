@@ -1940,6 +1940,18 @@ describe('restart guard (systemd)', () => {
     expect(version.restartBlocked).toBe(null)
   })
 
+  it("sends a desktop self-update to dsh's Plugins page in the version answer", async () => {
+    // The client draws its update control from this field: `'dsh-page'` turns
+    // the Update button into the move to dsh's own page, where the update can
+    // actually run (design 2026-11-06-desktop-updates). Any other profile
+    // keeps the shop's own button, and a host older than the field sends none
+    // — which the client also reads as "update here".
+    const desktop = new ShopGateway(stubCtx(), { ...gatewayOptions(), profile: 'desktop', fetchLatestVersion: async () => '9.9.9' })
+    expect((await desktop.version()).selfUpdate).toBe('dsh-page')
+    const web = new ShopGateway(stubCtx(), { ...gatewayOptions(), profile: 'web', fetchLatestVersion: async () => '9.9.9' })
+    expect((await web.version()).selfUpdate).toBe(null)
+  })
+
   it("reports restartBlocked: 'port-zero' under --port 0, which restart() refused but version() used to hide", async () => {
     // The gap this closes: `restart()` has always refused `--port 0`, but the
     // boolean `version()` answered was computed from the platform and the
@@ -4170,6 +4182,9 @@ describe("installs and updates through dsh's pluginManager", () => {
     entries?: CatalogEntry[]
     rejectsWith?: Error
     vanishes?: boolean
+    /** Answer `updateBundle` with this and record the call. Omitted, the
+     * service has no update operation at all — the 0.1.7–0.2.1 shape. */
+    update?: object
     /** Serve an `hmr` service whose `reconcileProfile` makes this harness one
      * that replaces running plugins at a reconcile (dsh 0.2.1's dsh-hmr). */
     reconciles?: boolean
@@ -4179,7 +4194,7 @@ describe("installs and updates through dsh's pluginManager", () => {
     const {
       dependencies = {}, profile = 'web', lands = true, hangs = false, importedModules = new Set<string>(),
       output = (spec: string) => [{ stream: 'stdout', text: `+ ${spec}\n` }], prefetcher = fixturePrefetcher(), pinFs, entries = [], rejectsWith,
-      vanishes = false, reconciles = false, cli = (dir: string) => fakeDshRecording(dir, 0, { silent: true }), restart = {},
+      vanishes = false, reconciles = false, update, cli = (dir: string) => fakeDshRecording(dir, 0, { silent: true }), restart = {},
     } = options
     const profileDir = toggleProfile()
     writeManifest(profileDir, dependencies)
@@ -4213,6 +4228,20 @@ describe("installs and updates through dsh's pluginManager", () => {
         calls.push(['removeBundle', name])
         throw rejectsWith ?? new Error('this case must not call removeBundle')
       },
+      ...(update === undefined ? {} : {
+        updateBundle(name: string, version: string, request: { requestId: string }): Promise<unknown> {
+          calls.push(['updateBundle', name, version, request.requestId])
+          if (rejectsWith !== undefined) return Promise.reject(rejectsWith)
+          for (const chunk of output(`${name}@${version}`)) {
+            listeners.get('plugin-manager/install-log')?.({ requestId: request.requestId, jobId: 'j', argv: ['pnpm', 'add', `${name}@${version}`], cwd: profileDir, ...chunk })
+          }
+          // dsh's update installs the target version, so the package on disk
+          // is the one the post-install reads see.
+          const patch = patches.get(name)
+          if (lands && patch !== undefined) fixturePackage(profileDir, name, patch)
+          return Promise.resolve(update)
+        },
+      }),
       setPluginEnabled: async () => { throw new Error('this case must not call setPluginEnabled') },
       setBundleEnabled: async () => { throw new Error('this case must not call setBundleEnabled') },
       // A method that reads `this`, as dsh's own does: the shop has to call
@@ -4382,19 +4411,86 @@ describe("installs and updates through dsh's pluginManager", () => {
     expect(cliCalls(cliDir)).toEqual([])
   })
 
-  it('does not continue on the desktop profile', async () => {
-    // dsh's CLI refuses the desktop profile, so an update there keeps the
-    // refusal, the plugin's and the shop's own alike.
+  it('updates a desktop plugin through updateBundle, the operation that profile cannot get any other way', async () => {
+    // dsh 0.2.2's own update operation, the one its Plugins page calls:
+    // check, remove, install, restore on failure. The desktop profile has no
+    // CLI fallback (dsh's launcher refuses it outright) and the manager
+    // refuses an install in place, so without this an update there failed
+    // with `already-installed` (measured 2026-11-06, design
+    // 2026-11-06-desktop-updates).
+    const answer = { from: '0.9.0', to: '1.0.0', step: 'install', result: { ...applied, target: 'dsh-managed@1.0.0' } }
+    const { gateway, calls, cliDir } = managedGateway(applied, {
+      update: answer, profile: 'desktop', reconciles: true, dependencies: { 'dsh-managed': '0.9.0' },
+    })
+    const started = await gateway.install({ name: 'dsh-managed', version: '1.0.0', acknowledged: true })
+    if (!started.ok) throw new Error(started.detail)
+    const status = await finish(gateway, started.installId)
+    expect(calls).toEqual([['updateBundle', 'dsh-managed', '1.0.0', started.installId]])
+    expect(status).toMatchObject({ state: 'done', activation: 'live' })
+    expect(status.log[0]).toBe("via dsh's plugin manager: update dsh-managed@1.0.0")
+    expect(cliCalls(cliDir)).toEqual([])
+  })
+
+  it("names dsh's restore when a desktop update fails after the removal", async () => {
+    // updateBundle removes the old version before it installs the new one. A
+    // failed install is followed by dsh's own restore of the old version, and
+    // the answer records whether it worked: a reader on the failure detail
+    // alone cannot tell whether anything is installed.
+    const failed = {
+      changed: false, application: 'failed', stage: 'install', target: 'dsh-managed@1.0.0',
+      packageResult: { exitCode: 1, output: 'ERR_PNPM something broke\n', truncated: false, logPath: '/l' },
+    }
+    const restored = { changed: true, application: 'applied', stage: 'install', target: 'dsh-managed@0.9.0' }
+    const { gateway } = managedGateway(failed, {
+      update: { from: '0.9.0', to: '1.0.0', step: 'install', result: failed, restore: restored },
+      profile: 'desktop',
+      dependencies: { 'dsh-managed': '0.9.0' },
+    })
+    const status = await installAndSettle(gateway, managed)
+    expect(status.state).toBe('failed')
+    expect(status.detail).toContain('The previously installed version (0.9.0) was restored.')
+  })
+
+  it('keeps a github desktop update on installBundle, which dsh already lets through', async () => {
+    // `updateBundle` is a registry-version operation. A github update installs
+    // a new commit spec, and dsh's `already-installed` guard does not read
+    // that as an installed name, so the ordinary install path is both correct
+    // and available.
+    const { gateway, calls } = managedGateway(applied, {
+      update: { from: '0.9.0', to: '1.0.0', step: 'install', result: applied },
+      profile: 'desktop',
+      dependencies: { 'dsh-managed-repo': `github:someone/dsh-managed-repo#${'a'.repeat(40)}` },
+    })
+    const started = await gateway.install({ name: 'dsh-managed-repo', version: commit, acknowledged: true })
+    if (!started.ok) throw new Error(started.detail)
+    await finish(gateway, started.installId)
+    expect(calls[0]?.slice(0, 2)).toEqual(['installBundle', `github:someone/dsh-managed-repo#${commit}`])
+  })
+
+  it('refuses a desktop self-update with where it runs instead, and starts nothing', async () => {
+    // The shop cannot call updateBundle on itself: the removal step would
+    // dispose the host that is running the call. dsh's own Plugins page is
+    // the surface whose update survives that, so the host names it and
+    // touches no manager method.
+    const { gateway, calls } = managedGateway(applied, {
+      update: { from: '0.9.0', to: '9.9.9', step: 'install', result: applied },
+      profile: 'desktop',
+    })
+    expect(await gateway.updateStart({ version: '9.9.9' })).toEqual({
+      ok: false,
+      code: 'desktop-manual',
+      detail: expect.stringContaining("dsh's Plugins page"),
+    })
+    expect(calls).toEqual([])
+  })
+
+  it('keeps the already-installed refusal on a desktop manager with no update operation', async () => {
+    // Through dsh 0.2.1 the manager has no updateBundle at all. The refusal
+    // is then the honest answer: there is nothing this profile can run.
     const { gateway, cliDir } = managedGateway(refusedInPlace('dsh-managed@1.0.0'), { ...beforePnpm, profile: 'desktop', dependencies: { 'dsh-managed': '0.9.0' } })
     expect(await installAndSettle(gateway, managed)).toMatchObject({
       state: 'failed',
       detail: `dsh-plugin-shop: dsh refused the update of dsh-managed (already-installed): ${inPlaceSentence}`,
-    })
-    const updating = await gateway.updateStart({ version: '9.9.9' })
-    if (!updating.ok) throw new Error(updating.detail)
-    expect(await finish(gateway, updating.installId)).toMatchObject({
-      state: 'failed',
-      detail: `dsh-plugin-shop: dsh refused the update of dsh-plugin-shop (already-installed): ${inPlaceSentence}`,
     })
     expect(cliCalls(cliDir)).toEqual([])
   })
@@ -4815,10 +4911,10 @@ describe("installs and updates through dsh's pluginManager", () => {
     await installAndSettle(install.gateway, managed)
     expect(install.calls.map(call => call[0])).toEqual(['installBundle'])
     const update = managedGateway(restartRequired, { profile: 'desktop', vanishes: true })
-    const updating = await update.gateway.updateStart({ version: '9.9.9' })
-    if (!updating.ok) throw new Error(updating.detail)
-    await finish(update.gateway, updating.installId)
-    expect(update.calls.map(call => call[0])).toEqual(['installBundle'])
+    // The shop's own update no longer chooses a path on this profile: it
+    // names dsh's Plugins page and touches no manager method (2026-11-06).
+    expect(await update.gateway.updateStart({ version: '9.9.9' })).toMatchObject({ ok: false, code: 'desktop-manual' })
+    expect(update.calls).toEqual([])
     const removal = managedGateway(applied, { profile: 'desktop', vanishes: true, dependencies: { 'dsh-other': '1.0.0' } })
     const removing = await removal.gateway.uninstall({ name: 'dsh-other' })
     if (!removing.ok) throw new Error(removing.detail)
@@ -4890,13 +4986,17 @@ describe("installs and updates through dsh's pluginManager", () => {
     expect(status.detail).not.toContain('dsh plugin')
   })
 
-  it('fails a desktop self-update without naming dsh plugin, when the service reports a failed pnpm run', async () => {
+  it('sends a desktop self-update to the Plugins page without naming a dsh-CLI command', async () => {
+    // A desktop reader can run no `dsh plugin` command, so the one sentence
+    // they get must not name one — the scrubbing rule every other desktop
+    // refusal follows. The manager is never called, whatever it would answer.
     const { gateway } = managedGateway(pnpmFailed('install', 'dsh-plugin-shop@9.9.9'), { profile: 'desktop', lands: false })
-    const started = await gateway.updateStart({ version: '9.9.9' })
-    if (!started.ok) throw new Error(started.detail)
-    const status = await finish(gateway, started.installId)
-    expect(status.state).toBe('failed')
-    expect(status.detail).not.toContain('dsh plugin')
+    const answer = await gateway.updateStart({ version: '9.9.9' })
+    expect(answer).toMatchObject({ ok: false, code: 'desktop-manual' })
+    if (answer.ok === false) {
+      expect(answer.detail).toContain("dsh's Plugins page")
+      expect(answer.detail).not.toContain('dsh plugin')
+    }
   })
 })
 

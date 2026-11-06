@@ -87,8 +87,9 @@ function bench(
   const restart = vi.fn<ShopTabInjected['restart']>().mockResolvedValue({ ok: true })
   const version = vi.fn<ShopTabInjected['version']>().mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: null, pendingVersion: null })
   const updateStart = vi.fn<ShopTabInjected['updateStart']>().mockResolvedValue({ ok: true, installId: 's1', state: 'running' })
-  const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, restart, version, updateStart }
-  return { catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, restart, version, updateStart, injected }
+  const openPluginsPage = vi.fn<NonNullable<ShopTabInjected['openPluginsPage']>>()
+  const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, restart, version, updateStart, openPluginsPage }
+  return { catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, restart, version, updateStart, openPluginsPage, injected }
 }
 
 /** @param wrap the tree around the tab, for a case that needs a host of its
@@ -1251,6 +1252,25 @@ describe('ShopTab', () => {
     const { container } = renderTab(injected)
     await waitFor(() => expect(container.querySelector('[data-shop-update-self]')).toBeTruthy())
     expect(container.querySelector('[data-shop-check-update]')).toBeNull()
+  })
+
+  it("moves a desktop self-update to dsh's Plugins page instead of offering one the shop cannot run", async () => {
+    // `selfUpdate: 'dsh-page'` is the desktop profile: dsh's manager refuses
+    // an in-place update, its CLI cannot manage the profile, and the shop
+    // cannot remove itself mid-call. The row therefore offers the move to
+    // dsh's own page — whose update runs remove → install → restore — and
+    // never calls the shop's update RPC (design 2026-11-06-desktop-updates).
+    const { injected, version, updateStart, openPluginsPage } = bench(snapshot())
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: null, selfUpdate: 'dsh-page' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-update-desktop]')).toBeTruthy())
+    expect(container.querySelector('[data-shop-update-self]')).toBeNull()
+    const button = container.querySelector('[data-shop-update-desktop]') as HTMLButtonElement
+    expect(button.textContent).toBe(en.updateInDshPage)
+    expect(button.getAttribute('title')).toBe(en.updateInDshPageTitle)
+    fireEvent.click(button)
+    expect(openPluginsPage).toHaveBeenCalledTimes(1)
+    expect(updateStart).not.toHaveBeenCalled()
   })
 
   it('shows the update button for a newer release and drives the self-update to the restart offer', async () => {
