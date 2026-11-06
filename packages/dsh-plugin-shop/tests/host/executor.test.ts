@@ -1704,4 +1704,15 @@ describe('the retry line (design 2026-11-02-market-borrowings §5)', () => {
     expect(retryCommand('linux', 'my profile', 'add', 'dsh-a@1.0.0')).toBeUndefined()
     expect(retryCommand('linux', 'web', 'add', "dsh-a'; rm -rf /")).toBeUndefined()
   })
+
+  it('offers no line for the desktop profile, which dsh refuses to run any command for', () => {
+    // dsh's CLI rejects `desktop` in any letter case, so the line would fail
+    // at once — and a desktop reader is never handed a `dsh plugin` command.
+    // The plugin-manager path asks for a line on every profile, desktop
+    // included (2026-11-06), so the refusal lives here, in the one builder.
+    for (const platform of ['linux', 'win32'] as const) {
+      expect(retryCommand(platform, 'desktop', 'add', 'dsh-a@1.0.0')).toBeUndefined()
+      expect(retryCommand(platform, 'Desktop', 'add', 'dsh-a@1.0.0')).toBeUndefined()
+    }
+  })
 })

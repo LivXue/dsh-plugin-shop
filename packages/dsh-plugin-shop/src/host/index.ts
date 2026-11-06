@@ -16,7 +16,7 @@ import type { CatalogOrigin } from './origin.ts'
 import { npmrcRegistry } from './npmrc.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
-import { gateOperand, INSTALL_TIMEOUT_MS, startInstall, startUninstall, type InstallStatus, type RunningInstall } from './executor.ts'
+import { gateOperand, INSTALL_TIMEOUT_MS, retryCommand, startInstall, startUninstall, type InstallStatus, type RunningInstall } from './executor.ts'
 import { cleanHotDir, hotMount, hotUnmount, nodeHotFs, type HotFs } from './hot.ts'
 import { FAVORITES_MAX, nodeShopStateFs, readShopState, rollbackSpec, writeShopState, type ShopRollbackRecord, type ShopStateFs } from './state.ts'
 import { activationOf, type Activation } from './activation.ts'
@@ -586,8 +586,9 @@ export class ShopGateway extends TypertRemoteService {
   private readonly stateFs: ShopStateFs
   private readonly allowRestart?: boolean
   private readonly env: NodeJS.ProcessEnv
-  /** The platform the restart gate reads; production defaults to
-   * process.platform. The two-phase handoff is POSIX-only (restart.ts). */
+  /** The platform the restart gate reads, and the one the plugin-manager
+   * path quotes its retry line for; production defaults to process.platform.
+   * The two-phase handoff is POSIX-only (restart.ts). */
   private readonly platform: NodeJS.Platform
   /** The parent pid `detectSupervisor` inspects; production defaults to
    * process.ppid (a systemd unit's main process has ppid 1). */
@@ -1832,6 +1833,13 @@ export class ShopGateway extends TypertRemoteService {
     // goes to installBundle and to the download phase, whose pump relies on
     // the gate. It throws as that path does, before anything is queued.
     gateOperand(spec)
+    // The CLI line that retries this spec by hand, which a failure here
+    // carries (design 2026-11-02-market-borrowings §5, 2026-11-06
+    // amendment): from dsh 0.1.7 every fresh install takes this path, so with
+    // the line on the CLI path alone no current dsh ever showed one. The same
+    // builder and the same gated operand as that path's own line; none on the
+    // desktop profile, whose CLI dsh refuses.
+    const command = retryCommand(this.platform, this.profile, 'add', spec)
     // Bound here, because the runner calls it apart from the service.
     const cancel = manager.cancelInstall?.bind(manager)
     return startManagerOperation({
@@ -1846,6 +1854,7 @@ export class ShopGateway extends TypertRemoteService {
       prefetcher: this.prefetcher,
       spec,
       desktop: isDesktopProfile(this.profile),
+      ...(command !== undefined ? { command } : {}),
     })
   }
 

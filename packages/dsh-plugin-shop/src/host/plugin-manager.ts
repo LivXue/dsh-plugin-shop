@@ -244,7 +244,20 @@ export function thrownTail(message: string, desktop: boolean): string {
   return said.trim() === '' ? '.' : `: ${said}`
 }
 
-export interface ManagerOutcome { state: 'done' | 'failed'; activation?: Activation; restartReason?: HotRestartReason; detail?: string }
+export interface ManagerOutcome {
+  state: 'done' | 'failed'
+  activation?: Activation
+  restartReason?: HotRestartReason
+  detail?: string
+  /** False when the answer's own recovery is something other than the same
+   * command again, so the failure offers no CLI retry line (design
+   * 2026-11-02-market-borrowings §5, 2026-11-06 amendment). Set for
+   * `already-installed` alone: its reason says to uninstall first, and where
+   * the shop refuses rather than continues — a fresh install dsh holds as
+   * installed — it declines the CLI route on purpose, which a line would
+   * hand straight back to the reader. */
+  retry?: false
+}
 
 export interface OutcomeContext {
   profile: string
@@ -482,7 +495,11 @@ function outcomeByRule(change: ManagerChange, context: OutcomeContext): ManagerO
     const said = change.errorCode === 'operation-error'
       ? `could not ${context.operation} ${context.name}`
       : `refused the ${context.operation} of ${context.name}`
-    return { state: 'failed', detail: `dsh-plugin-shop: dsh ${said} (${change.errorCode})${codeReason(change, change.errorCode)}` }
+    return {
+      state: 'failed',
+      detail: `dsh-plugin-shop: dsh ${said} (${change.errorCode})${codeReason(change, change.errorCode)}`,
+      ...(change.errorCode === 'already-installed' ? { retry: false as const } : {}),
+    }
   }
   if (change.application === 'cancelled') {
     return { state: 'failed', detail: cancelledDetail(context) }

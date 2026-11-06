@@ -12,7 +12,7 @@ import { StringDecoder } from 'node:string_decoder'
 import { readProfileManifest, resolveProfileDir } from '@deepseek-ai/dsh-app-boot'
 import { allowVersionCommand } from './compatibility.ts'
 import { installEnv } from './child-env.ts'
-import { dshCommand, resolveDshScript, DSH_PACKAGE, type DshCliFs } from './dsh-cli.ts'
+import { dshCommand, isDesktopProfile, resolveDshScript, DSH_PACKAGE, type DshCliFs } from './dsh-cli.ts'
 import type { HotRestartReason } from './hot.ts'
 import type { Activation } from './activation.ts'
 import type { Prefetcher, PrefetchRequest } from './prefetch.ts'
@@ -29,11 +29,13 @@ export interface InstallStatus {
   activation?: Activation
   restartReason?: HotRestartReason
   detail?: string
-  /** The command this record ran, in the form a reader can paste into a
-   * terminal to retry it (design 2026-11-02-market-borrowings §5). Present on
-   * a failure only: a success needs no repair. The operand is quoted because
-   * a `github:` spec carries `&` and `#`, which a shell would otherwise read
-   * as its own syntax. */
+  /** The command that retries this record by hand, in the form a reader can
+   * paste into a terminal (design 2026-11-02-market-borrowings §5): the line
+   * it ran on the CLI path, and on the plugin-manager path the CLI line for
+   * the same spec (2026-11-06 amendment). Present on a failure only: a
+   * success needs no repair. The operand is quoted because a `github:` spec
+   * carries `&` and `#`, which a shell would otherwise read as its own
+   * syntax. */
   command?: string
 }
 
@@ -634,9 +636,15 @@ const SAFE_PROFILE = /^[A-Za-z0-9._:-]+$/
  * spawn) — so a quoted `&path:` still splits, and the measured outcome is an
  * install of the repository ROOT that exits 0. A line that installs
  * something else is worse than no line, so that case reports none.
+ *
+ * The desktop profile: none on either platform. dsh's CLI refuses it in any
+ * letter case (`isDesktopProfile`), so the line would fail at once, and a
+ * desktop reader is never handed a `dsh plugin` command. The CLI path never
+ * runs there; the plugin-manager path asks for a line on every profile
+ * (2026-11-06), which is why the refusal lives in this one builder.
  */
 export function retryCommand(platform: NodeJS.Platform, profile: string, verb: string | undefined, target: string): string | undefined {
-  if (verb === undefined || !SAFE_PROFILE.test(profile)) return undefined
+  if (verb === undefined || !SAFE_PROFILE.test(profile) || isDesktopProfile(profile)) return undefined
   if (platform === 'win32') {
     return target.includes('&') ? undefined : `dsh plugin --profile ${profile} ${verb} ${target}`
   }
