@@ -88,6 +88,13 @@ export interface ShopTabInjected {
   state?: () => Promise<ShopStateResult>
   setFavorite?: (args: { key: string; favorite: boolean }) => Promise<{ ok: boolean; detail?: string }>
   rollback?: (args: { key: string }) => Promise<ShopInstallResult>
+  /** Open the shop's own page inside dsh's plugin manager. There a
+   * self-update of the shop runs when the host reports `selfUpdate:
+   * 'dsh-page'` (the desktop profile): dsh's page has the remove → install →
+   * restore operation the shop cannot run on itself. Optional like the rest
+   * — a host or stub without the navigation service offers no move, and the
+   * button is disabled. */
+  openUpdatePage?: () => void
   /** The §4 reload trigger, defaulted once at the tab root to a real page
    * reload. Injected so a test can observe it without touching jsdom's
    * non-writable `location.reload`. */
@@ -1939,7 +1946,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
 /** The shop tab body: browse, search, refresh, and render one card per
  * entry. Data attributes on the e2e-relevant nodes follow the Task 3 list. */
 function ShopTabBody(props: ShopTabProps): ReactNode {
-  const { t, catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, noteUninstalled, restart, version, onRestarted, updateStart, state: readState, setFavorite: writeFavorite, rollback: startRollback, reload: injectedReload, page: injectedPage, onShelfReady } = props
+  const { t, catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, noteUninstalled, restart, version, onRestarted, updateStart, state: readState, setFavorite: writeFavorite, rollback: startRollback, openUpdatePage, reload: injectedReload, page: injectedPage, onShelfReady } = props
   const [catalogState, setCatalogState] = useState<CatalogState>({ kind: 'loading' })
   const [installedState, setInstalledState] = useState<InstalledState>({ kind: 'loading' })
   /** The install gate's own input, or undefined while it is unknown — loading,
@@ -2761,7 +2768,17 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
                 * that is already going, and after a failure every offer
                 * renders that notice ahead of its gate, so a Restart here
                 * would open nothing. An update that landed is never offered
-                * again — Update would reinstall what is on disk. */}
+                * again — Update would reinstall what is on disk.
+                *
+                * One profile gets a fourth control in the Update slot: the
+                * desktop profile, whose host answers `selfUpdate:
+                * 'dsh-page'`. There the shop cannot replace itself — dsh's
+                * plugin manager refuses an in-place update and the CLI cannot
+                * manage that profile — so the button opens the shop's own
+                * page inside dsh's plugin manager, whose Update button runs
+                * remove → install → restore. The host's own update RPC stays
+                * closed to that profile either way (design
+                * 2026-11-06-desktop-updates). */}
               {restartMonitor !== null ? null : selfPending && restartBlocked === null ? (
                 <button
                   type="button"
@@ -2772,19 +2789,32 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
                   {t('restart')}
                 </button>
               ) : !selfPending && selfVersion.outdated && selfVersion.latest !== null && selfUpdate.view.kind === 'idle' ? (
-                <button
-                  type="button"
-                  className={css.updateSelfButton}
-                  data-shop-update-self
-                  onClick={() => {
-                    // outdated implies the check answered; the guard keeps
-                    // the type honest without asserting a value the host
-                    // never produces.
-                    if (selfVersion.latest !== null) void selfUpdate.start({ version: selfVersion.latest })
-                  }}
-                >
-                  {t('update')}
-                </button>
+                selfVersion.selfUpdate === 'dsh-page' ? (
+                  <button
+                    type="button"
+                    className={css.updateSelfButton}
+                    data-shop-update-desktop
+                    title={t('updateInDshPageTitle')}
+                    disabled={openUpdatePage === undefined}
+                    onClick={openUpdatePage}
+                  >
+                    {t('updateInDshPage')}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className={css.updateSelfButton}
+                    data-shop-update-self
+                    onClick={() => {
+                      // outdated implies the check answered; the guard keeps
+                      // the type honest without asserting a value the host
+                      // never produces.
+                      if (selfVersion.latest !== null) void selfUpdate.start({ version: selfVersion.latest })
+                    }}
+                  >
+                    {t('update')}
+                  </button>
+                )
               ) : (
                 <button
                   type="button"

@@ -72,6 +72,15 @@ export const NS = 'settings.shop'
  * 2026-10-16-shop-sidebar-page §4.1). */
 export const SHOP_PANEL = 'shop'
 
+/** The npm package this client belongs to: the bundle dsh's own Plugins page
+ * opens for the desktop self-update. */
+const SHOP_PACKAGE = 'dsh-plugin-shop'
+
+/** dsh's own Plugins page (dsh-client-ui-plugin-manager's `PANEL_ID`), the
+ * surface that updates a package on the desktop profile. The fallback for a
+ * harness without `pluginNavigation`. */
+const DSH_PLUGINS_PANEL = 'plugins'
+
 /** How long a stashed catalog may satisfy a plain open. The host applies the
  * same five-minute freshness window, so the client stash must not outlive it. */
 export const WARM_TTL_MS = 5 * 60 * 1000
@@ -134,6 +143,16 @@ type ShopRemoteNamespace = TypertRemoteNamespaceMap['shop']
  * 2026-10-17). */
 interface ShopLayoutFace {
   selectPanel(panelId: string | null): void
+}
+
+/** What the shop CALLS on dsh's plugin manager's navigation service
+ * (`pluginNavigation`, provided by dsh-client-ui-plugin-manager through the
+ * reflect shop): `openBundle` selects the Plugins panel, switches to its
+ * Installed tab and opens one package's detail page — the page whose Update
+ * button runs `updateBundle`. Shape-checked like `ShopLayoutFace`, because a
+ * harness may provide neither. */
+interface ShopPluginNavigationFace {
+  openBundle(packageName: string): void
 }
 
 /** Mount the shop Remote and contribute the shop's page, its sidebar row and
@@ -366,6 +385,52 @@ export async function apply(ctx: ClientContext): Promise<void> {
   ctx.effect(() => () => { page.dispose() }, 'dsh-plugin-shop: page store')
   restartListeners.add(() => { page.noteRestarted() })
 
+  // dsh's layout service, read through the reflect shop rather than `inject`,
+  // as `modules` is: what needs it degrades without it, and an inject
+  // requirement would hold the whole client back on a harness that lacks it.
+  // Read as a shape to check rather than to trust: a service without
+  // `selectPanel`, as a reshaped one could be, cannot move the reader, so
+  // nothing here calls it or offers to.
+  const layout = (): Partial<ShopLayoutFace> | undefined => ctx.get('layout') as Partial<ShopLayoutFace> | undefined
+  const selectShopPage = (): void => {
+    const service = layout()
+    if (typeof service?.selectPanel !== 'function') return
+    try {
+      service.selectPanel(SHOP_PANEL)
+    } catch {
+      // dsh refuses a key no `main` entry holds, the one throw `selectPanel`
+      // documents: this instance's own entry is gone, a teardown under way,
+      // so there is no page to select.
+    }
+  }
+  /** Open the shop's own page inside dsh's plugin manager, where its Update
+   * button runs the remove → install → restore operation the shop cannot run
+   * on itself. `pluginNavigation.openBundle` is the direct route: it selects
+   * the Plugins panel, switches to Installed and opens this package's detail
+   * page. A harness without that service (before dsh's plugin manager
+   * exported it) falls back to selecting the panel itself — one click further
+   * from the update, but no dead button. */
+  const openDshPluginPage = (): void => {
+    const navigation = ctx.get('pluginNavigation') as Partial<ShopPluginNavigationFace> | undefined
+    if (typeof navigation?.openBundle === 'function') {
+      try {
+        navigation.openBundle(SHOP_PACKAGE)
+        return
+      } catch {
+        // A service whose page is not mounted refuses the call; the panel
+        // selection below is the part that still can work.
+      }
+    }
+    const service = layout()
+    if (typeof service?.selectPanel !== 'function') return
+    try {
+      service.selectPanel(DSH_PLUGINS_PANEL)
+    } catch {
+      // See `selectShopPage`: a key no `main` entry holds is the one throw,
+      // and there is nothing else this button can do about it.
+    }
+  }
+
   const injected = (): ShopTabInjected => ({
     catalog: async args => handOver(await hostCatalog(args)),
     install,
@@ -385,27 +450,9 @@ export async function apply(ctx: ClientContext): Promise<void> {
     state,
     setFavorite,
     rollback,
+    openUpdatePage: openDshPluginPage,
     page,
   })
-
-  // dsh's layout service, read through the reflect shop rather than `inject`,
-  // as `modules` is: what needs it degrades without it, and an inject
-  // requirement would hold the whole client back on a harness that lacks it.
-  // Read as a shape to check rather than to trust: a service without
-  // `selectPanel`, as a reshaped one could be, cannot move the reader, so
-  // nothing here calls it or offers to.
-  const layout = (): Partial<ShopLayoutFace> | undefined => ctx.get('layout') as Partial<ShopLayoutFace> | undefined
-  const selectShopPage = (): void => {
-    const service = layout()
-    if (typeof service?.selectPanel !== 'function') return
-    try {
-      service.selectPanel(SHOP_PANEL)
-    } catch {
-      // dsh refuses a key no `main` entry holds, the one throw `selectPanel`
-      // documents: this instance's own entry is gone, a teardown under way,
-      // so there is no page to select.
-    }
-  }
 
   // The shop's own page in dsh's main column (design
   // 2026-10-16-shop-sidebar-page §4.1), under the key its sidebar row

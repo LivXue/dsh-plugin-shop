@@ -261,7 +261,7 @@ type RunningPhase = Extract<InstallView, { kind: 'running' }>['phase']
  * unions' refusals carry none. A throw is the transport rule above. The two
  * starts differ only in the phase they open on, which is `phaseFor`. */
 function beginBusiness<TArgs, TStarted extends { ok: true; installId: string }>(
-  rpc: (args: TArgs) => Promise<TStarted | { ok: false; detail: string }>,
+  rpc: (args: TArgs) => Promise<TStarted | { ok: false; code?: string; detail: string }>,
   phaseFor: (started: TStarted) => RunningPhase,
 ): (args: TArgs) => Promise<InstallView> {
   return async args => {
@@ -281,8 +281,20 @@ export function beginUninstall(uninstall: (args: { name: string }) => Promise<Sh
   return beginBusiness(uninstall, () => 'installing')
 }
 
-/** The shop's own update's start. Its refusal: a version that is not plain
- * semver. */
+/** The shop's own update's start. Its refusals: a version that is not plain
+ * semver, and the desktop profile, whose update belongs to dsh's Plugins
+ * page. The flow shows the host's own detail for either and never needs
+ * `code`: the version row does not offer this start on that profile. */
 export function beginUpdate(updateStart: (args: { version: string }) => Promise<ShopUpdateResult>): (args: { version: string }) => Promise<InstallView> {
-  return beginBusiness(updateStart, started => phaseOf(started.state))
+  // The started arm is named here: with the adapter's inferred return, TS
+  // resolves the generic from its constraint (where `state` is absent), not
+  // from the host's success answer — the one-place error this annotation
+  // removes.
+  return beginBusiness<{ version: string }, Extract<ShopUpdateResult, { ok: true }>>(
+    async args => {
+      const result = await updateStart(args)
+      return result.ok ? result : { ok: false, detail: result.detail }
+    },
+    started => phaseOf(started.state),
+  )
 }
