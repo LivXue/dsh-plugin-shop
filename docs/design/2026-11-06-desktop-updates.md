@@ -114,9 +114,14 @@ is why the same `updateBundle` is safe there.
 The client learns this from the host rather than guessing:
 `shop/version` gains `selfUpdate: 'dsh-page' | null`. On `'dsh-page'` the
 version row's Update button becomes **在插件页更新 / Update in Plugins**, which
-selects dsh's own `plugins` panel through the layout service. A host older
-than the field sends nothing, which the client reads as "update here", so the
-client and host stay compatible in both directions.
+opens the shop's own page inside dsh's plugin manager — not merely the panel.
+dsh's `dsh-client-ui-plugin-manager` provides `pluginNavigation` through the
+reflect shop (`ctx.reflect.provide`), whose `openBundle(name)` selects the
+`plugins` panel, switches to its Installed tab and sets the view to
+`{ kind: 'package', name }`, the detail page carrying the Update button. A
+harness without that service falls back to `layout.selectPanel('plugins')`.
+A host older than the field sends nothing, which the client reads as "update
+here", so the client and host stay compatible in both directions.
 
 ## 4. Verification
 
@@ -134,8 +139,9 @@ client and host stay compatible in both directions.
 - **Live**, on an isolated desktop host against a copy of the real desktop
   profile: a plugin installed at an older version updates through the shop to
   the catalog's version (the host log shows the manager's remove/install), and
-  the shop's own version row offers **在插件页更新**, which switches to dsh's
-  Plugins page (whose detail offers 更新到 0.9.2).
+  the shop's own version row offers **在插件页更新**, which opens
+  dsh-plugin-shop's own detail page inside dsh's plugin manager — the page
+  whose Update button reads `更新到 0.9.2` once its version check answers.
 
 ## 5. What this does not do
 
