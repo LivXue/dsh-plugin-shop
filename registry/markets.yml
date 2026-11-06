@@ -249,6 +249,11 @@
   by: llm
   reason: "Judged a dsh plugin market from: Visual plugin market inside DeepSeek Harness — browse, search, and one-click install community plugins. · DSH 可视化插件市场：逛一逛，点一下，装好。"
 
+- name: "cctor-dsh-marketplace"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: CCTor plugin marketplace for DeepSeek Harness"
+
 - name: "cqai-dsh-plugin-market"
   market: true
   by: llm
@@ -413,6 +418,11 @@
   market: true
   by: human
   reason: "A community plugin marketplace for DeepSeek Harness, built to the official plugin spec — browse, search and install 4000+ human-curated community plug"
+
+- name: "dsh-plugin-dbgraph-store"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: On-disk index for dsh-plugin-dbgraph: schema, the JavaScript write path kept as the parity reference and fallback, and the read path over the global ~/.dsh/dbgraph index"
 
 - name: "dsh-plugin-github-market"
   market: true
