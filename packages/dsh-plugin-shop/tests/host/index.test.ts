@@ -4682,6 +4682,76 @@ describe("installs and updates through dsh's pluginManager", () => {
     }
   })
 
+  // The retry line (design 2026-11-02-market-borrowings §5, 2026-11-06
+  // amendment). From dsh 0.1.7 every fresh install takes this path, which runs
+  // no command of its own, and 0.9.2 built the line on the CLI path alone, so
+  // on every current dsh a failed install showed none. A failure here now
+  // carries the CLI line that retries the same spec by hand — the command the
+  // README installs with, and the one this path continues a refused update
+  // with.
+  describe('the retry line on a failure through the plugin manager', () => {
+    // dsh 0.1.7-rc.2's answer to a failed `pnpm add`, as the import case above
+    // records it.
+    const notFound = {
+      changed: false, application: 'failed', stage: 'install', target: 'dsh-managed@1.0.0', enabled: true, registries: [null], pendingBuilds: [],
+      packageResult: { exitCode: 1, output: 'ERR_PNPM_FETCH_404', truncated: false, logPath: '/l', kind: 'not-found' },
+      error: { code: 'operation-error', diagnostic: 'ERR_PNPM_FETCH_404' },
+    }
+
+    it('offers the line, single-quoted for a POSIX shell', async () => {
+      const { gateway } = managedGateway(notFound, { lands: false, restart: { platform: 'linux' } })
+      const status = await installAndSettle(gateway, managed)
+      expect(status.state).toBe('failed')
+      expect(status.command).toBe("dsh plugin --profile 'web' add 'dsh-managed@1.0.0'")
+    })
+
+    it("offers the line in Windows' form, with the gateway's platform rather than the test runner's", async () => {
+      const { gateway } = managedGateway(notFound, { lands: false, restart: { platform: 'win32' } })
+      const status = await installAndSettle(gateway, managed)
+      expect(status.state).toBe('failed')
+      expect(status.command).toBe('dsh plugin --profile web add dsh-managed@1.0.0')
+    })
+
+    it('offers no line once the install lands', async () => {
+      const { gateway } = managedGateway(applied, { restart: { platform: 'linux' } })
+      const status = await installAndSettle(gateway, managed)
+      expect(status.state).toBe('done')
+      expect(status).not.toHaveProperty('command')
+    })
+
+    it('offers no line when dsh refuses a fresh install as already installed, whose recovery is to uninstall first', async () => {
+      // The shop saw no such dependency while dsh holds one, so it refuses
+      // rather than continuing through the CLI (the case above). A line would
+      // hand the reader the CLI route the shop declines on purpose, beside a
+      // detail that says to uninstall first.
+      const { gateway } = managedGateway(refusedInPlace('dsh-managed@1.0.0'), { ...beforePnpm, dependencies: {}, restart: { platform: 'linux' } })
+      const status = await installAndSettle(gateway, managed)
+      expect(status.state).toBe('failed')
+      expect(status.detail).toContain('(already-installed)')
+      expect(status).not.toHaveProperty('command')
+    })
+
+    it('offers no line while the install runs, and the line once the deadline fails it', async () => {
+      // A profile of its own, as the deadline case above uses: the queue is
+      // the profile's, and a stalled install must not hold `web`'s.
+      const { gateway, calls } = managedGateway(applied, { hangs: true, profile: 'retry-deadline', restart: { platform: 'linux' } })
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const started = await gateway.install({ name: 'dsh-managed', version: '1.0.0', acknowledged: true })
+        if (!started.ok) throw new Error(started.detail)
+        await vi.waitFor(() => expect(calls).toHaveLength(1), { timeout: 5000 })
+        // A running record carries no instruction to run anything.
+        expect(gateway.installStatus({ installId: started.installId })).not.toHaveProperty('command')
+        await vi.advanceTimersByTimeAsync(INSTALL_TIMEOUT_MS)
+        const status = await finish(gateway, started.installId)
+        expect(status.state).toBe('failed')
+        expect(status.command).toBe("dsh plugin --profile 'retry-deadline' add 'dsh-managed@1.0.0'")
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
+
   it('waits behind a command already running in the profile, warming the store for the catalog spec', async () => {
     const requested: Array<{ profile: string; spec: string }> = []
     const prefetcher: Prefetcher = {
@@ -4961,6 +5031,9 @@ describe("installs and updates through dsh's pluginManager", () => {
     expect(status.state).toBe('failed')
     expect(status.detail).not.toContain('dsh plugin')
     expect(status.detail).toContain('ERR_PNPM_SOMETHING broke')
+    // Nor a retry line: dsh refuses this profile, so the line would fail at
+    // once (2026-11-06, when the plugin-manager path began offering one).
+    expect(status).not.toHaveProperty('command')
   })
 
   it('fails a desktop uninstall without naming dsh plugin, when the service reports a failed pnpm run', async () => {

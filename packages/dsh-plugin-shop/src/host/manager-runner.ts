@@ -55,6 +55,12 @@ export interface ManagerOperationOptions {
   /** The desktop profile, whose readers can run no `dsh plugin` command: a
    * message the service call throws is scrubbed as dsh's answer is. */
   desktop?: boolean
+  /** The CLI line that retries this operation by hand (design
+   * 2026-11-02-market-borrowings §5, 2026-11-06 amendment), or undefined
+   * where none can be offered. Attached to a failure only, as the CLI path's
+   * own line is: on a success or while running it would read as an
+   * instruction. An outcome marked `retry: false` withholds it too. */
+  command?: string
 }
 
 /** What every value this cannot describe reads as. */
@@ -79,7 +85,7 @@ export const messageOf = (error: unknown): string => {
 }
 
 export function startManagerOperation(options: ManagerOperationOptions): RunningInstall {
-  const { profile, requestId, mechanism, logs, run, cancel, outcome, alsoConfirm, prefetcher, spec, env, desktop = false } = options
+  const { profile, requestId, mechanism, logs, run, cancel, outcome, alsoConfirm, prefetcher, spec, env, desktop = false, command } = options
   const timeoutMs = options.timeoutMs ?? INSTALL_TIMEOUT_MS
   const mechanismLine = `${MECHANISM_PREFIX} ${mechanism}`
   const log = createBoundedLog()
@@ -99,6 +105,7 @@ export function startManagerOperation(options: ManagerOperationOptions): Running
     ...(settled?.state === 'done' && settled.activation !== undefined ? { activation: settled.activation } : {}),
     ...(settled?.state === 'done' && settled.restartReason !== undefined ? { restartReason: settled.restartReason } : {}),
     ...(settled?.detail !== undefined ? { detail: settled.detail } : {}),
+    ...(state === 'failed' && command !== undefined && settled?.retry !== false ? { command } : {}),
   })
   // Terminal, not "not running": a line from the download phase belongs in
   // the log, and only a settled record refuses more.

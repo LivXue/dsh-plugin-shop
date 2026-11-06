@@ -1,7 +1,7 @@
 # Market borrowings, third review — design
 
 Status: **built 2026-11-02** (PR #124), **released 2026-11-06 as 0.9.2**; the
-§6.2 amendment of 2026-11-06 is built, not yet released. The catalog fields
+§5 and §6.2 amendments of 2026-11-06 are built, not yet released. The catalog fields
 and the three new RPC methods shipped through `beta` first. A review of the three dsh
 plugin markets — [dsh-market/dsh-market](https://github.com/dsh-market/dsh-market),
 [2BingLing/dsh-market](https://github.com/2BingLing/dsh-market) and
@@ -157,6 +157,22 @@ The client renders it in the failure block with a copy button, beside the
 existing detail, and only where the executor reported one — a spawn failure
 before the command was formed reports none, and so does a Windows operand a
 shell cannot carry.
+
+**Amended 2026-11-06: the plugin-manager path offers it too.** From dsh 0.1.7
+the shop installs through dsh's `pluginManager` (design
+2026-09-26-plugin-manager-delegation), which runs no command, so as built the
+line appeared only on dsh 0.1.5 and on the CLI step that carries a 0.2.1+
+update: on every current dsh a failed fresh install showed none. A failure on
+that path now carries the CLI line for the same spec,
+`dsh plugin --profile <profile> add <spec>` — the command the README installs
+with, and the one the shop itself continues a refused update with — built by
+the same `retryCommand` from an operand that passed the same `gateOperand`,
+quoted for the platform the gateway reads. Two failures carry none. Any on
+the `desktop` profile, whose CLI dsh refuses in any letter case: that is now
+`retryCommand`'s own rule, so no path can hand a desktop reader a
+`dsh plugin` line. And dsh's `already-installed` refusal of a fresh install,
+whose reason says to uninstall first and where the shop declines the CLI
+route on purpose; the outcome marks it `retry: false`.
 
 ## 6. Rollback
 
