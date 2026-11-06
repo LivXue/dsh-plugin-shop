@@ -5066,7 +5066,7 @@ describe("dsh's pluginManager events, through a real cordis Context", () => {
 describe('the profile state RPCs (design 2026-11-02-market-borrowings §6-§7)', () => {
   /** A gateway whose state file is the shared in-memory fs, and a fixture dsh
    * that records what it was asked to run. */
-  function stateGateway(dir: string, seeded?: { favorites?: string[]; previous?: Record<string, { source: 'npm' | 'github'; name: string; repo?: string; subdir?: string; version: string }>; entries?: CatalogEntry[]; dependencies?: Record<string, string> }) {
+  function stateGateway(dir: string, seeded?: { favorites?: string[]; previous?: Record<string, { source: 'npm' | 'github'; name: string; repo?: string; subdir?: string; version: string }>; entries?: CatalogEntry[]; dependencies?: Record<string, string>; profile?: string }) {
     const state = memHotFs()
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-state-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dependencies: seeded?.dependencies ?? {}, dsh: { profile: { bundles: [] } } }))
@@ -5077,7 +5077,7 @@ describe('the profile state RPCs (design 2026-11-02-market-borrowings §6-§7)',
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/',
       cacheDir: join(dir, 'cache'),
-      profile: 'web',
+      profile: seeded?.profile ?? 'web',
       profileDir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: seeded?.entries ?? [], denied: [], stars: {}, icons: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
@@ -5107,6 +5107,23 @@ describe('the profile state RPCs (design 2026-11-02-market-borrowings §6-§7)',
       },
     })
     expect(await gateway.shopState()).toEqual({ favorites: ['npm:a'], rollback: { 'npm:a': '1.0.0' } })
+  })
+
+  it('offers no rollback on the desktop profile, whose CLI the rollback would run', async () => {
+    // `rollbackStart` always runs dsh's CLI, which refuses `desktop` in any
+    // letter case, while an update there goes through the plugin manager and
+    // still writes its record. 0.9.2 offered that record — "Roll back to
+    // 1.0.0" — and the click answered desktop-profile. The stars stay: they
+    // need no CLI.
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-state-desktop-'))
+    const { gateway } = stateGateway(dir, {
+      profile: 'Desktop',
+      favorites: ['npm:a'],
+      previous: { 'npm:a': { source: 'npm', name: 'a', version: '1.0.0' } },
+    })
+    expect(await gateway.shopState()).toEqual({ favorites: ['npm:a'], rollback: {} })
+    // The refusal the offer used to lead to still stands behind it.
+    expect(await gateway.rollbackStart({ key: 'npm:a' })).toMatchObject({ ok: false, code: 'desktop-profile' })
   })
 
   it('saves a star, and refuses one the store would silently drop', async () => {

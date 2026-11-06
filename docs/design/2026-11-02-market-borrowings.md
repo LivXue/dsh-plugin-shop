@@ -1,7 +1,8 @@
 # Market borrowings, third review — design
 
-Status: **built 2026-11-02** (PR #124), not yet released: the catalog fields
-and the three new RPC methods ship through `beta` first. A review of the three dsh
+Status: **built 2026-11-02** (PR #124), **released 2026-11-06 as 0.9.2**; the
+§6.2 amendment of 2026-11-06 is built, not yet released. The catalog fields
+and the three new RPC methods shipped through `beta` first. A review of the three dsh
 plugin markets — [dsh-market/dsh-market](https://github.com/dsh-market/dsh-market),
 [2BingLing/dsh-market](https://github.com/2BingLing/dsh-market) and
 [bradeGithub/DSH-Plugins-Marketplace](https://github.com/bradeGithub/DSH-Plugins-Marketplace) —
@@ -212,6 +213,17 @@ leave. The card therefore carries a small control of its own: it starts the
 RPC, polls `shop/installStatus` at the flow's cadence, and asks the tab to
 re-read the installed list once the host says done. One action, one outcome,
 and no button that would do something other than what it says.
+
+**Amended 2026-11-06: no offer on the desktop profile.** The rollback always
+runs dsh's CLI (above), which refuses the `desktop` profile in any letter
+case, while an update there goes through the plugin manager (design
+2026-09-26-plugin-manager-delegation) and still writes its record. 0.9.2
+forwarded that record, so the card drew "Roll back to `<version>`" and the
+click answered `desktop-profile`. `shop/state` now forwards no record on that
+profile, by the rule it already applies to a record `rollbackSpec` cannot
+spell: an offer the host cannot honour is not drawn. The records stay on
+disk, so a rollback that went through the plugin manager could offer them
+later; the stars are answered as on any profile.
 
 ## 7. Favorites
 
