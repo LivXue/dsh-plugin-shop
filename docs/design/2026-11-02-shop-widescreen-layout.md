@@ -1,6 +1,7 @@
 # The shop page on a wide screen — design
 
-Status: **released 2026-11-02 as 0.9.1.**
+Status: **released 2026-11-02 as 0.9.1**; the §4 amendment of 2026-11-06 (the
+switches' words on one line) is built, not yet released.
 LivXue chose direction A — a filter rail and a two-column card grid — from
 four mockups on 2026-11-02 (`.claude/worktrees/.scratch-shop-ui/mockups.html`,
 never committed). It changes the page's layout only; the catalog, the RPC
@@ -126,6 +127,16 @@ Markup, in this order (the order a screen reader reads and the eye follows):
   drops to a line of its own on every narrow panel (measured 84 px tall
   against 52 px). The rail headings are `display: none`. Apart from §5, this
   is today's page.
+
+  **Amended 2026-11-06: a switch never breaks its words.** Since the
+  favorites switch (design 2026-11-02-market-borrowings §7) the row holds two
+  switches, and a row that cannot fit its items shrinks every one of them:
+  each switch was squeezed below its own content and broke its label
+  mid-word — 只看收 / 藏, 隐藏不兼容 / 3708 — reported on a two-column panel
+  against the live catalog's counts. `white-space: nowrap` on
+  `.incompatibleFilter`, the class both switches carry, makes a label's
+  min-content its whole width, which a flex item's automatic minimum does not
+  shrink below; the squeeze goes to the bar, whose chips wrap.
 - **Wide (`≥ 1140 px`)**: `.shelfBody` is
   `grid-template-columns: 232px minmax(0, 1fr); column-gap: 24px;` with
   `.controls` in the first column and `.results` in the second. `.controls`
@@ -236,7 +247,10 @@ moves to a second line, under the name, and the chevron keeps the right edge:
   layout; the 0.1.5 leg's chrome differs from 0.2.x's. There is no 390 px
   case: the shop is a page inside dsh, whose chrome does not fit there, and
   the narrowest real state is the 662 px column the 2026-10-22 clipping case
-  already guards. Two additions:
+  already guards. Since 2026-11-06 each of the three also asserts that both
+  switches' words sit on one line, counted from their text's line boxes:
+  every box check passed while the labels broke (§4 amendment). Two
+  additions:
   - **the sticky rail**: scroll the page and assert the rail's top edge moved
     by no more than the page's own scroll while the results column scrolled
     under it;

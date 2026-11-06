@@ -771,7 +771,7 @@ async function readPill(pill: Locator) {
  * 0.2.x's. The sticky check runs in the short window the restore case uses,
  * the only one here that makes a six-card shelf scroll. */
 async function checkShelfLayout(app: Page, shop: Locator): Promise<void> {
-  const read = (): Promise<{ panel: number; rail: number; position: string; display: string; tracks: number; overhang: number; unfilled: number; railButton: number; labelGap: number; switchWidth: number; switchRightGap: number; barToSwitch: number }> =>
+  const read = (): Promise<{ panel: number; rail: number; position: string; display: string; tracks: number; overhang: number; unfilled: number; railButton: number; labelGap: number; switchWidth: number; switchRightGap: number; barToSwitch: number; favoritesLines: number; incompatibleLines: number }> =>
     shop.evaluate(el => {
       const tab = el.querySelector('[data-shop-tab]')
       const controls = el.querySelector('[data-shop-controls]')
@@ -790,6 +790,23 @@ async function checkShelfLayout(app: Page, shop: Locator): Promise<void> {
       // is named 插件目录. The switch is the group's SIBLING, so the only
       // group inside the controls row is the category bar.
       const bar = el.querySelector('[data-shop-controls] [role="group"]')
+      // How many lines a switch's words take. A row that cannot fit its items
+      // shrinks EVERY one of them, so a switch squeezed below its own content
+      // broke its label mid-word — 只看收 / 藏 — while every box check above
+      // still passed (reported 2026-11-06). The text's line boxes are counted
+      // by their tops; two fragments of one line sit within a few pixels.
+      const lines = (button: Element | null): number => {
+        if (button === null) return Number.NaN
+        const range = document.createRange()
+        const tops: number[] = []
+        for (const node of button.childNodes) {
+          if (node.nodeType !== Node.TEXT_NODE || (node.textContent ?? '').trim() === '') continue
+          range.selectNodeContents(node)
+          for (const rect of range.getClientRects()) if (rect.width > 0) tops.push(rect.top)
+        }
+        tops.sort((a, b) => a - b)
+        return tops.filter((top, index) => index === 0 || top - (tops[index - 1] ?? top) > 4).length
+      }
       return {
         panel: tab?.getBoundingClientRect().width ?? 0,
         rail: controls?.getBoundingClientRect().width ?? 0,
@@ -818,6 +835,8 @@ async function checkShelfLayout(app: Page, shop: Locator): Promise<void> {
         barToSwitch: filter !== null && bar !== null
           ? filter.getBoundingClientRect().left - bar.getBoundingClientRect().right
           : Number.NaN,
+        favoritesLines: lines(el.querySelector('[data-shop-favorites-filter]')),
+        incompatibleLines: lines(filter),
       }
     })
   // Two frames after a resize: a container query re-evaluates with layout, and
@@ -858,6 +877,9 @@ async function checkShelfLayout(app: Page, shop: Locator): Promise<void> {
       expect(measured.tracks, `${where}: card columns`).toBe(measured.panel >= 872 ? 2 : 1)
       expect(measured.overhang, `${where}: a card pokes out of its column`).toBeLessThanOrEqual(1)
       expect(measured.unfilled, `${where}: a card stops short of its grid cell`).toBeLessThanOrEqual(1)
+      // At every width: each switch's words on one line.
+      expect(measured.favoritesLines, `${where}: the favorites switch's words break across lines`).toBe(1)
+      expect(measured.incompatibleLines, `${where}: the incompatible switch's words break across lines`).toBe(1)
       if (wide) {
         expect(Math.round(measured.rail), `${where}: rail width`).toBe(232)
         // The rail's inside, not only its box: the All button fills the rail
