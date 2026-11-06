@@ -597,6 +597,13 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  /* One line at any panel size. A flex row that cannot fit its items shrinks
+   * every one of them, and a switch squeezed below its own content broke its
+   * words mid-label — 只看收 / 藏, 隐藏不兼容 / 3708 — once the favorites
+   * switch shared the row (reported 2026-11-06). Under `nowrap` the label's
+   * min-content is the whole line, which a flex item's automatic minimum will
+   * not shrink below, so the squeeze goes to the bar: its chips wrap. */
+  white-space: nowrap;
   /* Matches the pills' vertical padding so the bar keeps one line box whether
    * this control wraps onto a row of its own or shares theirs. */
   padding: 3px 0;
