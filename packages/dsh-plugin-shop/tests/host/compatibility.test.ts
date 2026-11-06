@@ -462,6 +462,16 @@ describe('peerVerdictsOf', () => {
     expect(asked).toEqual([{ manifest: { name: 'dsh-pinned', version: '1.2.0', peerDependencies: PINNED }, exemptions }])
   })
 
+  it('reports a refusal on the desktop profile without an exemption command', () => {
+    // The verdict stands — dsh refuses the install there as anywhere — but no
+    // terminal can record the exemption for that profile.
+    const { check } = scriptedCheck({ 'dsh-pinned@1.2.0': refusal('dsh-pinned', '1.2.0') })
+    const verdicts = peerVerdictsOf([{ source: 'npm', name: 'dsh-pinned', version: '1.2.0', dshPeers: PINNED }], check, {}, 'desktop')
+    expect(verdicts).toEqual({
+      'npm:dsh-pinned': { refused: { '@deepseek-ai/dsh': '0.1.5-rc.3' }, running: '0.1.7-rc.2', allowCommand: null },
+    })
+  })
+
   it('says nothing about an install dsh accepts, or one the profile has exempted', () => {
     const { check } = scriptedCheck({ 'exempted@1.0.0': refusal('exempted', '1.0.0', true) })
     expect(peerVerdictsOf([
@@ -624,6 +634,16 @@ describe('allowVersionCommand', () => {
     for (const version of ['^1.0.0', '1.0', 'v1.0.0', ' 1.0.0', '1.0.0 && id', '01.0.0', '']) {
       expect(allowVersionCommand('web', issue('x', version)), JSON.stringify(version)).toBeNull()
       expect(allowVersionCommand('web', issue('x', '1.0.0', version)), `runtime ${JSON.stringify(version)}`).toBeNull()
+    }
+  })
+
+  it('offers no command on the desktop profile, which dsh refuses to run one for', () => {
+    // dsh's CLI rejects `desktop` in any letter case, so this exemption could
+    // never be recorded from a terminal. Since #130 identifies the dsh the
+    // desktop app runs, the card reaches this verdict there (review of #132,
+    // finding 5).
+    for (const profile of ['desktop', 'Desktop', 'DESKTOP']) {
+      expect(allowVersionCommand(profile, issue('dsh-x', '1.0.0')), profile).toBeNull()
     }
   })
 })

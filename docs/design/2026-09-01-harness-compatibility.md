@@ -1445,3 +1445,14 @@ returned version forms a `dsh` range verdict).
 `argv[1]` owns no dsh) is the desktop host's own; a different host that
 does the same and provides `pluginPackages` is answered identically, and
 one that does not keeps reading no harness.
+
+**Amended later the same day: no `allow-version` command on desktop.** The
+verification above saw the refused card carry dsh's `allow-version`
+command. On the desktop profile that command cannot run: dsh's CLI refuses
+`--profile desktop` in any letter case, so the exemption can never be
+recorded from a terminal, and the plugin-manager path's own refusal detail
+already says version exemptions are not available there.
+`allowVersionCommand` now answers null for the desktop profile, so the card
+shows the refusal and its ranges without a remedy, as it does for any
+exemption dsh would refuse (`compatibility.test.ts`; review of #132,
+finding 5).

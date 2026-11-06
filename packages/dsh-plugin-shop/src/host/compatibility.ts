@@ -14,6 +14,7 @@
 
 import { parse, satisfies, valid, validRange } from 'semver'
 import { identityKey, type EntryIdentity } from '../shared/identity.ts'
+import { isDesktopProfile } from './dsh-cli.ts'
 import type { PeerCheck } from './harness.ts'
 
 /** What an author declared in `dsh.compatibility` that this installation does
@@ -382,9 +383,14 @@ function isExactVersion(value: string): boolean {
  * it is pasted into.
  *
  * The profile is written as it is, as dsh prints it: it is the reader's own
- * choice of name, never catalog input.
+ * choice of name, never catalog input. The desktop profile gets none: dsh's
+ * CLI refuses it in any letter case, so the exemption could never be recorded
+ * from a terminal, and since the desktop app's harness is identified (design
+ * 2026-09-01-harness-compatibility, 2026-11-06 amendment) the card reaches
+ * this verdict there.
  */
 export function allowVersionCommand(profile: string, issue: { name: string; version: string; runtimeVersion: string }): string | null {
+  if (isDesktopProfile(profile)) return null
   if (!EXEMPTION_PACKAGE_NAME.test(issue.name) || !isExactVersion(issue.version) || !isExactVersion(issue.runtimeVersion)) return null
   return `dsh plugin --profile ${profile} allow-version ${issue.name}@${issue.version} --dsh-version ${issue.runtimeVersion} --accept-risk`
 }
