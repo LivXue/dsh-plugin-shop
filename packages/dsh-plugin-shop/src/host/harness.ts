@@ -33,7 +33,7 @@ import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { profileTemplatesOf, type ProfileTemplates } from './compatibility.ts'
 import { DSH_PACKAGE } from './dsh-cli.ts'
-import { packageDirectory } from './peers.ts'
+import { packageDirectory, type HarnessPackageLookup } from './peers.ts'
 
 /** The package whose `PROFILE_TEMPLATES` the running dsh composes profiles
  * from. */
@@ -105,6 +105,27 @@ export interface RunningHarness {
    * exports none (before 0.1.7, which refuses no install on peers) or could
    * not be read — no verdict either way. */
   peerCheck: PeerCheck | null
+}
+
+/**
+ * Where to ask for the running dsh when the script this process started with
+ * does not name it (design 2026-09-01-harness-compatibility §9.9, 2026-11-06
+ * amendment).
+ *
+ * The desktop app boots the profile through `@deepseek-ai/dsh-desktop-host`,
+ * so `process.argv[1]` owns no dsh and the script read found nothing — and
+ * on that profile nothing could be found from it, which left the peer check
+ * and the profile verdict silent while the shelf offered installs dsh was
+ * going to refuse. The harness serves its own packages through
+ * `pluginPackages` (`ctx.get('pluginPackages')`, 0.1.7 on), and the dsh
+ * package is one of them: `parentURL` is the profile's `cordis.yml`, the
+ * same anchor the peer resolver walks from, so the answer describes this
+ * installation. Only the script-less case asks, deliberately: a script that
+ * owns a dsh is that dsh, and a service cannot disagree with it.
+ */
+export interface HarnessLocator {
+  packages: HarnessPackageLookup
+  parentURL: string
 }
 
 /** What is known when nothing says which harness runs. */
@@ -291,18 +312,21 @@ function peerCheckOf(exported: { evaluatePluginCompatibility?: unknown; readProf
 
 /**
  * The harness this process runs, identified from `script` — the gateway's
- * `restartScript`, `process.argv[1]` in production — or nothing, never a
- * guess:
+ * `restartScript`, `process.argv[1]` in production — or, when that names no
+ * dsh, from the harness's own package lookup (`locate`, see
+ * `HarnessLocator`). Never a guess:
  *
  * 1. `script` is resolved through symlinks, because `argv[1]` is the path the
  *    shell ran — `<prefix>/bin/dsh`, a link — and only its target lies inside
- *    the dsh package. No script, or one that does not resolve: nothing known.
+ *    the dsh package. No script, or one that does not resolve: the next
+ *    source decides.
  *    An empty path is no script either: `realpathSync('')` answers the
  *    working directory, which says where dsh was started, not what it is.
  * 2. The package that owns it (`owningPackage`) must be `@deepseek-ai/dsh`.
- *    Anything else — a test runner, another host embedding the shop — means
- *    nothing here can say which harness runs, and both halves of the verdict
- *    stay silent.
+ *    A test runner, or another host embedding the shop, names no harness
+ *    this way; the desktop app is that case, and there `locate` answers with
+ *    the dsh package its own `pluginPackages` service serves. Without a
+ *    locator, both halves of the verdict stay silent.
  * 3. `dshVersion` is that manifest's `version` when it is a non-empty string.
  * 4. `templates`, `patchLists` and `peerCheck` come from that dsh's own
  *    app-boot (`appBootFacts`). Any failure there costs all three and keeps
@@ -311,35 +335,80 @@ function peerCheckOf(exported: { evaluatePluginCompatibility?: unknown; readProf
  * Never throws and never rejects: a harness nobody could identify forms no
  * verdict, and must never be the reason the catalog fails to load.
  */
-export async function readRunningHarness(script: string | undefined): Promise<RunningHarness> {
+export async function readRunningHarness(script: string | undefined, locate?: HarnessLocator): Promise<RunningHarness> {
+  const owner = scriptOwner(script)
+  if (owner !== null) return harnessFactsOf(owner.dir, owner.manifest)
+  const located = locate === undefined ? null : locatedHarness(locate)
+  if (located !== null) return harnessFactsOf(located.dir, located.manifest)
+  return noHarness()
+}
+
+/** The package that owns `script`, when that package is the running dsh.
+ * Null — never a throw — for a missing script, one `realpathSync` cannot
+ * resolve, or one owned by anything else. */
+function scriptOwner(script: string | undefined): { dir: string; manifest: unknown } | null {
+  if (script === undefined || script === '') return null
   try {
-    if (script === undefined || script === '') return noHarness()
     const owner = owningPackage(dirname(realpathSync(script)))
-    if (owner === null || typeof owner.manifest !== 'object' || owner.manifest === null) return noHarness()
-    const { name, version } = owner.manifest as { name?: unknown; version?: unknown }
-    if (name !== DSH_PACKAGE) return noHarness()
-    const dshVersion = typeof version === 'string' && version.length > 0 ? version : null
-    let facts: Awaited<ReturnType<typeof appBootFacts>>
-    try {
-      facts = await appBootFacts(owner.dir)
-    } catch {
-      // Swallows every way the running dsh's app-boot can fail to supply a
-      // table — a resolver that cannot enter it, an entry that throws on
-      // import. The profile half then has no templates to judge by, and the
-      // patch-list question has no answer, which is silence; the version was
-      // read apart and stands.
-      facts = null
-    }
-    return {
-      dshVersion,
-      templates: facts?.templates ?? profileTemplatesOf(undefined),
-      patchLists: facts?.patchLists ?? null,
-      peerCheck: facts?.peerCheck ?? null,
-    }
+    return owner !== null && isHarnessManifest(owner.manifest) ? owner : null
   } catch {
     // Swallows a script `realpathSync` cannot resolve (missing, or not a
-    // path at all) — the one other throw on this path. Nothing identifies the
-    // harness then, and the answer for that is silence.
-    return noHarness()
+    // path at all). The locator still gets its turn; without one, nothing
+    // identifies the harness and the answer for that is silence.
+    return null
+  }
+}
+
+/** The dsh package `locate` resolves, with its manifest read from the path
+ * the service answers. Null when the service resolves nothing, the answer
+ * carries no manifest path, or that file cannot be read or parsed as a dsh
+ * manifest — each of which forms no verdict rather than a wrong one. */
+function locatedHarness(locate: HarnessLocator): { dir: string; manifest: unknown } | null {
+  let manifestPath: unknown
+  try {
+    manifestPath = locate.packages.packageOf(DSH_PACKAGE, locate.parentURL)?.manifestPath
+  } catch {
+    // Swallows whatever the service throws for a request it cannot answer —
+    // a profile anchor outside its resolution, a disposed service. No
+    // harness then, never a failed catalog.
+    return null
+  }
+  if (typeof manifestPath !== 'string') return null
+  try {
+    const manifest: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    return isHarnessManifest(manifest) ? { dir: dirname(manifestPath), manifest } : null
+  } catch {
+    // Swallows an unreadable or malformed manifest the service pointed at.
+    // The service's own answer is trusted for WHERE; what it says is read
+    // like any other manifest, and one that does not parse is no harness.
+    return null
+  }
+}
+
+/** Whether `manifest` is `@deepseek-ai/dsh`'s. */
+function isHarnessManifest(manifest: unknown): manifest is { name: string; version?: unknown } {
+  return typeof manifest === 'object' && manifest !== null && (manifest as { name?: unknown }).name === DSH_PACKAGE
+}
+
+/** The verdict for one dsh package directory and its manifest. */
+async function harnessFactsOf(dir: string, manifest: unknown): Promise<RunningHarness> {
+  const { version } = manifest as { version?: unknown }
+  const dshVersion = typeof version === 'string' && version.length > 0 ? version : null
+  let facts: Awaited<ReturnType<typeof appBootFacts>>
+  try {
+    facts = await appBootFacts(dir)
+  } catch {
+    // Swallows every way the running dsh's app-boot can fail to supply a
+    // table — a resolver that cannot enter it, an entry that throws on
+    // import. The profile half then has no templates to judge by, and the
+    // patch-list question has no answer, which is silence; the version was
+    // read apart and stands.
+    facts = null
+  }
+  return {
+    dshVersion,
+    templates: facts?.templates ?? profileTemplatesOf(undefined),
+    patchLists: facts?.patchLists ?? null,
+    peerCheck: facts?.peerCheck ?? null,
   }
 }

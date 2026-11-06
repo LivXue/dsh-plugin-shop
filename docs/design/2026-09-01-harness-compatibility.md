@@ -1154,7 +1154,9 @@ Section 8.2 read the version at the peer check's anchor so that the two
 checks could not describe different installations, but they ask
 different questions: a peer must be importable from the profile, while
 the version is that of whichever dsh is running, and the profile anchor
-answered the second wrongly.
+answered the second wrongly. The first clause has an exception since
+2026-11-06: the desktop app is a host that embeds the shop, and its own
+`pluginPackages` service names the running dsh — see section 12.
 
 A limit, stated not fixed: under a packaged dsh executable
 (`process.pkg`, section 9.3), no version or template table can be read
@@ -1361,3 +1363,85 @@ branch — one whose running version is read from inside the run
 resolution also serves packages carried by the profile's selected bundles,
 and `packageOf` answers for those too; that was not measured. The browser
 stage (§9.1) is unchanged.
+
+## 12. Amendment (2026-11-06): the desktop app's entry names no harness
+
+Measured on the DeepSeek Harness desktop app 0.2.2-rc.1, with the shop
+at 0.9.1 in `~/.dsh/profiles/desktop`:
+
+**What broke.** The desktop app does not start dsh's CLI. Its Electron
+main process runs `@deepseek-ai/dsh-desktop-host`, whose `main()` calls
+`runProfile` from `@deepseek-ai/dsh/profile-boot` and reports the URL the
+window loads. `process.argv[1]` in that process is therefore
+`dsh-desktop-host/lib/index.js`; the package that owns it is
+`@deepseek-ai/dsh-desktop-host`, not `@deepseek-ai/dsh`. §9.9's rule
+stopped there, as written: `dshVersion` null, an empty template table and
+no peer check — on the one profile the desktop app manages.
+
+The consequence was not cosmetic. `catalog()` forms both compatibility
+maps from those facts, and with no peer check `peerVerdictsOf` refuses
+nothing:
+
+- the shelf hid **637** entries, all judged by the peer-presence walk
+  alone, where the same profile judged against its own harness hides
+  **3,680** with the 0.9.1 build on it and **3,708** with this build —
+  the 28 more are the `engines.dsh` declarations 0.9.2 began judging;
+- the roughly 3,000 between them were offered with a working Install
+  button, and dsh refused each one after the click. Reproduced on an
+  isolated desktop host booted against a copy of that profile: the
+  `dsh-plugin-reactive-resume@0.1.0` card rendered no badge and an
+  install button, and the install answered `dsh: installation rejected:
+  Plugin dsh-plugin-reactive-resume@0.1.0 is incompatible with dsh
+  0.2.2-rc.1: requirements {"@deepseek-ai/dsh-mcp-client":"^0.1.0-rc.6",
+  "@deepseek-ai/dsh-system-prompt":"^0.1.0-rc.6"}`. A reader on the
+  desktop app reports that as the shop being unable to install plugins,
+  and for those entries it is right.
+- the `dsh.compatibility.dsh` half was silent too: `compatibilityMap`
+  receives `dshVersion: null`, forms no range verdict, and says nothing
+  about a plugin whose declared range excludes the running harness.
+
+**The fix: ask the harness's own package service when the script names no
+dsh.** §11 already reads harness peers through `pluginPackages`, and dsh
+serves its own package through the same resolution —
+`packageOf('@deepseek-ai/dsh', <profile cordis.yml>)` answered
+`{version: "0.2.2-rc.1", dir: <app.asar>/dsh/node_modules/@deepseek-ai/dsh}`
+on that host. `readRunningHarness` takes an optional locator
+(`HarnessLocator`); when the script's owner is not dsh, it asks
+`pluginPackages` from the profile anchor, reads the manifest path the
+service answers, and accepts it only if that manifest names
+`@deepseek-ai/dsh`. `appBootFacts` then reads app-boot from that package
+directory, unchanged, so the template table and the peer check come from
+the same dsh an import would reach.
+
+The fallback is deliberately second, never first:
+
+- **A script that owns a dsh decides.** The CLI path is unchanged, and the
+  service is not consulted at all (`harness.test.ts` pins the empty call
+  log). The service can only supply an answer where the script supplied
+  none.
+- **The service's answer is trusted for WHERE, not WHAT.** A manifest it
+  points at is parsed and checked for `name === "@deepseek-ai/dsh"` like
+  any other; one that is not, or that cannot be read, is no harness.
+- **A throwing service is no harness.** `readRunningHarness` still never
+  rejects, and a failed catalog must not be its way of saying so.
+- **0.1.5 is unchanged.** It has no `pluginPackages` service; the locator
+  is simply absent, and the desktop host is the only place this mattered.
+
+**Verification.** On the isolated desktop host against the copied
+profile: before, 637 hidden and the entry above offered; after, 3,708
+hidden and the same entry rendered as `[data-shop-refused]` with no
+Install button, carrying the ranges and dsh's `allow-version` command.
+A compatible fixture from the same shelf (`@ego-lite/dsh-plugin@1.0.0`)
+still installed to `已安装并生效，无需重启` on that host.
+The locator is also measured at the unit level (`harness.test.ts`: the
+version, table and peer check come from the located dsh; a script-owned
+dsh wins; no answer, a non-dsh manifest and a throwing service each form
+no harness) and at the gateway level (`index.test.ts`: `catalog()` asks
+`pluginPackages` for `@deepseek-ai/dsh` from the profile anchor and the
+returned version forms a `dsh` range verdict).
+
+**Scope.** Measured on the desktop app and `@deepseek-ai/dsh-desktop-host`
+0.2.2-rc.1. The mechanism (`runProfile` from a host entry whose
+`argv[1]` owns no dsh) is the desktop host's own; a different host that
+does the same and provides `pluginPackages` is answered identically, and
+one that does not keeps reading no harness.
