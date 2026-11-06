@@ -41,6 +41,19 @@ const RC3_TABLE = {
  * that wrote it. */
 const MARKED_EXPORT = { 'fixture-only': ['@dsh-harness-fixture/bundle'] }
 
+/** app-boot 0.1.7's peer-check exports, answering with values no shop code
+ * produces (`fixture:`-prefixed runtime, the manifest's own peers). The
+ * locator cases reuse it so a peer check in their answer can only have come
+ * from the dsh the lookup named. */
+const PEER_CHECK_APP_BOOT = [
+  `export const PROFILE_TEMPLATES = ${JSON.stringify(RC3_EXPORT)}`,
+  'export function evaluatePluginCompatibility(manifest, exemptions, runtimeVersion) {',
+  '  return { name: manifest.name, version: manifest.version, runtimeVersion: `fixture:${runtimeVersion}`, peers: manifest.peerDependencies, exempted: Object.hasOwn(exemptions, manifest.name) }',
+  '}',
+  'export function readProfileVersionExemptions(dir) { return { [dir]: ["fixture-runtime"] } }',
+  '',
+].join('\n')
+
 /**
  * The dsh CLI installed under `<root>/node_modules`, the way npm installs a
  * global package: `@deepseek-ai/dsh/package.json` plus the `lib/bin.js` its
@@ -139,6 +152,35 @@ function readInChild(script: string, cwd?: string): SerializedHarness {
 type SerializedHarness = Omit<RunningHarness, 'peerCheck'> & { peerCheck: boolean }
 
 /**
+ * `readRunningHarness(script, locate)` in a child, with a locator built from
+ * `located` — the manifest path the harness's package service answers for
+ * `@deepseek-ai/dsh` — and every call the service took. The locator cannot be
+ * serialized (its function is the point), so the child constructs it. `answer`
+ * replaces the whole answer when a case needs something other than a manifest
+ * path (none, a wrong package, a throw). Same child contract as
+ * `readInChild`, plus the call log.
+ */
+function readLocatedInChild(
+  script: string,
+  located: string | undefined,
+  answer?: string,
+): SerializedHarness & { calls: Array<[string, string]> } {
+  const packages = answer ?? `specifier === '@deepseek-ai/dsh' ? { manifestPath: ${JSON.stringify(located)} } : undefined`
+  const source = [
+    `const { readRunningHarness } = await import(${JSON.stringify(HARNESS_MODULE)})`,
+    'const calls = []',
+    `const packages = { packageOf: (specifier, parentURL) => { calls.push([specifier, parentURL]); return ${packages} } }`,
+    `const harness = await readRunningHarness(${JSON.stringify(script)}, { packages, parentURL: 'file:///profile/cordis.yml' })`,
+    `console.log(JSON.stringify({ ...harness, peerCheck: harness.peerCheck !== null, calls }))`,
+  ].join('\n')
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', source], { encoding: 'utf8' })
+  if (child.status !== 0) {
+    throw new Error(`readRunningHarness(${JSON.stringify(script)}, located) in a child: status ${child.status}, signal ${child.signal}, error ${child.error?.message ?? 'none'}\n${child.stderr}`)
+  }
+  return JSON.parse(child.stdout) as SerializedHarness & { calls: Array<[string, string]> }
+}
+
+/**
  * What the peer check of the dsh at `bin` answers for each of `manifests`,
  * read in a child `node` for the reason `readInChild` gives: the check is
  * app-boot's own function, which JSON cannot carry out of the child. An answer
@@ -234,6 +276,91 @@ describe('readRunningHarness', () => {
     writeFileSync(join(runner, 'dist', 'entry', 'process.js'), '')
 
     expect(readInChild(join(runner, 'dist', 'entry', 'process.js'))).toEqual({ dshVersion: null, templates: {}, patchLists: null, peerCheck: false })
+  })
+
+  it("asks the harness's own package lookup when the script belongs to another package", () => {
+    // The desktop app, measured 2026-11-06: it boots the profile through
+    // `@deepseek-ai/dsh-desktop-host`, so `process.argv[1]` owns no dsh — and
+    // the script read alone left the version, the peer check and the profile
+    // verdict all silent. The shelf then hid only 637 entries instead of
+    // 3,680 and offered the rest for install, where dsh refused them. dsh's
+    // `pluginPackages` service serves the dsh package this process runs, and
+    // the lookup turns those answers back on.
+    const root = mkdtempSync(join(TEMP_ROOT, 'located-'))
+    const { dshDir } = installDsh(root, { version: '0.2.2-rc.1' })
+    installAppBoot(join(dshDir, 'node_modules'), null, PEER_CHECK_APP_BOOT)
+    const host = join(root, 'node_modules', '@deepseek-ai', 'dsh-desktop-host')
+    mkdirSync(join(host, 'lib'), { recursive: true })
+    writeFileSync(join(host, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-desktop-host', version: '0.2.2-rc.1' }))
+    writeFileSync(join(host, 'lib', 'index.js'), '')
+
+    expect(readLocatedInChild(join(host, 'lib', 'index.js'), join(dshDir, 'package.json'))).toEqual({
+      dshVersion: '0.2.2-rc.1',
+      templates: RC3_TABLE,
+      patchLists: false,
+      peerCheck: true,
+      calls: [['@deepseek-ai/dsh', 'file:///profile/cordis.yml']],
+    })
+  })
+
+  it('lets a script that owns a dsh decide, and asks the lookup nothing', () => {
+    // The CLI path is unchanged: the package that owns `argv[1]` IS the
+    // running dsh, and a service's answer must never override it. The two
+    // fixtures carry different versions and different tables, so a mixed
+    // answer is visible, and the call log proves the service was not
+    // consulted at all.
+    const script = installDsh(mkdtempSync(join(TEMP_ROOT, 'script-wins-')), { version: '0.1.7-rc.2' })
+    installAppBoot(join(script.dshDir, 'node_modules'), MARKED_EXPORT)
+    const other = installDsh(mkdtempSync(join(TEMP_ROOT, 'lookup-loses-')), { version: '0.2.2-rc.1' })
+    installAppBoot(join(other.dshDir, 'node_modules'), RC3_EXPORT)
+
+    expect(readLocatedInChild(script.bin, join(other.dshDir, 'package.json'))).toEqual({
+      dshVersion: '0.1.7-rc.2',
+      templates: MARKED_EXPORT,
+      patchLists: false,
+      peerCheck: false,
+      calls: [],
+    })
+  })
+
+  it('knows nothing when the lookup resolves no dsh package', () => {
+    // The service answered, and its answer names no package. That is the
+    // pre-0.1.7 harness and the disposed service alike: silence, never a
+    // guess — and the question was still asked, which is what this pins.
+    const root = mkdtempSync(join(TEMP_ROOT, 'located-none-'))
+    const host = join(root, 'node_modules', '@deepseek-ai', 'dsh-desktop-host')
+    mkdirSync(join(host, 'lib'), { recursive: true })
+    writeFileSync(join(host, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-desktop-host', version: '0.2.2-rc.1' }))
+    writeFileSync(join(host, 'lib', 'index.js'), '')
+
+    expect(readLocatedInChild(join(host, 'lib', 'index.js'), undefined, 'undefined')).toEqual({
+      dshVersion: null,
+      templates: {},
+      patchLists: null,
+      peerCheck: false,
+      calls: [['@deepseek-ai/dsh', 'file:///profile/cordis.yml']],
+    })
+  })
+
+  it('knows nothing when the lookup answers a manifest that is not dsh\'s, or throws', () => {
+    // The service's answer is trusted for WHERE a package is, not for WHAT it
+    // is: a manifest it points at is read and checked like any other, and a
+    // service that throws answers no harness rather than failing the catalog.
+    const root = mkdtempSync(join(TEMP_ROOT, 'located-bad-'))
+    const host = join(root, 'node_modules', '@deepseek-ai', 'dsh-desktop-host')
+    mkdirSync(join(host, 'lib'), { recursive: true })
+    writeFileSync(join(host, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-desktop-host', version: '0.2.2-rc.1' }))
+    writeFileSync(join(host, 'lib', 'index.js'), '')
+    const expected = {
+      dshVersion: null,
+      templates: {},
+      patchLists: null,
+      peerCheck: false,
+      calls: [['@deepseek-ai/dsh', 'file:///profile/cordis.yml']],
+    }
+
+    expect(readLocatedInChild(join(host, 'lib', 'index.js'), join(host, 'package.json'))).toEqual(expected)
+    expect(readLocatedInChild(join(host, 'lib', 'index.js'), undefined, '(() => { throw new Error("disposed") })()')).toEqual(expected)
   })
 
   it('stops at the first manifest above the script, and never climbs past it to a dsh', () => {

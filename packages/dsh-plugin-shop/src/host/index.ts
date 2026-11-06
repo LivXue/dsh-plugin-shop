@@ -43,7 +43,7 @@ import {
   type PeerVersionResolver,
 } from './peers.ts'
 import { compatibilityMap, peerVerdictsOf, type HarnessVerdict, type PeerVerdict } from './compatibility.ts'
-import { readRunningHarness, type RunningHarness } from './harness.ts'
+import { readRunningHarness, type HarnessLocator, type RunningHarness } from './harness.ts'
 import { continueAfter, ManagerLogs, messageOf, startManagerOperation } from './manager-runner.ts'
 import { asPluginManager, codeReason, forDesktopReader, managerOutcome, readChange, thrownTail, type ManagerChange, type ManagerOutcome, type OutcomeContext, type PluginManagerLike } from './plugin-manager.ts'
 
@@ -116,10 +116,12 @@ export interface ShopGatewayOptions {
    * harness for the `dsh.compatibility` verdict: the package that owns this
    * script, through symlinks, is the dsh actually running, and its own
    * app-boot supplies the profile templates (`harness.ts`). A script owned by
-   * anything else — a test runner, another host — leaves both halves of that
-   * verdict silent. The tests about where the running version comes from pass
-   * a fixture install here, which is the production path; the rest inject
-   * `readHarness`. */
+   * anything else — a test runner, the desktop app's host entry — falls back
+   * to the harness's `pluginPackages` service, which names the dsh this
+   * process runs (2026-11-06 amendment); without that service both halves of
+   * the verdict stay silent. The tests about where the running version comes
+   * from pass a fixture install here, which is the production path; the rest
+   * inject `readHarness`. */
   restartScript?: string
   /** Test-only injection: how the running harness is read from
    * `restartScript`; production uses `readRunningHarness`. It exists because
@@ -821,9 +823,28 @@ export class ShopGateway extends TypertRemoteService {
 
   /** The harness this process runs, read once (see `harnessRead`). */
   private runningHarness(): Promise<RunningHarness> {
-    const read = this.options.readHarness ?? readRunningHarness
-    this.harnessRead ??= read(this.restartScript)
+    this.harnessRead ??= this.options.readHarness === undefined
+      ? readRunningHarness(this.restartScript, this.harnessLocator())
+      : this.options.readHarness(this.restartScript)
     return this.harnessRead
+  }
+
+  /** Where to ask for the running dsh when the script this process started
+   * with does not name it: the desktop app boots the profile through
+   * `@deepseek-ai/dsh-desktop-host`, whose entry owns no dsh, so
+   * `process.argv[1]` names the host rather than the harness. dsh serves its
+   * own packages through `pluginPackages` (0.1.7 on), and the profile's
+   * `cordis.yml` is the anchor the peer resolver already walks from, so the
+   * service answers with this installation's dsh (design
+   * 2026-09-01-harness-compatibility, 2026-11-06 amendment). Null when the
+   * harness offers no such service (0.1.5) or no profile was found — the
+   * script read alone then decides, as before. */
+  private harnessLocator(): HarnessLocator | undefined {
+    const packages = this.harnessPackages()
+    if (packages === null) return undefined
+    const profileDir = this.profileDirOrNone()
+    if (profileDir === null) return undefined
+    return { packages, parentURL: this.profileAnchor(profileDir) }
   }
 
   /** The inventory, through the wire remote: an envelope `{ ok, value }` or

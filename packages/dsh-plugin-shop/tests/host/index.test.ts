@@ -474,6 +474,55 @@ describe('ShopGateway.catalog', () => {
     expect(result.stale).toBe(true)
   })
 
+  it("identifies the running harness through pluginPackages when the script belongs to a host, not dsh", async () => {
+    // The desktop app's shape, measured 2026-11-06: `process.argv[1]` is
+    // `@deepseek-ai/dsh-desktop-host`'s entry, so the script read names no
+    // harness and every `dsh.compatibility` verdict went silent — the shelf
+    // offered installs dsh then refused. The gateway asks the harness's own
+    // `pluginPackages` service from the profile anchor instead, and the
+    // version it answers with is what forms the verdict below.
+    const root = mkdtempSync(join(TEMP_ROOT, 'catalog-located-'))
+    const dshDir = join(root, 'node_modules', '@deepseek-ai', 'dsh')
+    mkdirSync(dshDir, { recursive: true })
+    writeFileSync(join(dshDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.2.2-rc.1' }))
+    const host = join(root, 'node_modules', '@deepseek-ai', 'dsh-desktop-host')
+    mkdirSync(join(host, 'lib'), { recursive: true })
+    writeFileSync(join(host, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-desktop-host', version: '0.2.2-rc.1' }))
+    const hostEntry = join(host, 'lib', 'index.js')
+    writeFileSync(hostEntry, '')
+
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'catalog-located-profile-'))
+    writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    const calls: Array<[string, string]> = []
+    const pluginPackages = {
+      packageOf: (specifier: string, parentURL: string) => {
+        calls.push([specifier, parentURL])
+        return specifier === '@deepseek-ai/dsh' ? { manifestPath: join(dshDir, 'package.json') } : undefined
+      },
+    }
+    const ctx = {
+      get: (name: string) => name === 'pluginPackages' ? pluginPackages : undefined,
+      reflect: { provide: () => {} },
+    } as never
+    const declared = { ...snapshot.entries[0]!, compatibility: { dsh: '^0.1.0' } }
+    const gateway = new ShopGateway(ctx, {
+      catalogUrl: 'https://shop.test/v1/',
+      cacheDir: '/cache',
+      profile: 'desktop',
+      profileDir,
+      restartScript: hostEntry,
+      loadCatalog: async () => ({ snapshot: { ...snapshot, entries: [declared] }, stale: false }) as CatalogResult,
+    })
+
+    const result = await gateway.catalog({})
+    expect(result.incompatibleHarness['npm:dsh-hello-plugin']).toEqual({ dsh: { range: '^0.1.0', running: '0.2.2-rc.1' } })
+    // The load-time self-check asks the same service about the shop's own
+    // peers first, so the dsh question is pinned as present rather than as
+    // the only call — the anchor is what proves it asked about THIS profile.
+    expect(calls).toContainEqual(['@deepseek-ai/dsh', pathToFileURL(join(profileDir, 'cordis.yml')).href])
+  })
+
   it('rejects loudly when the shop row is missing its config', async () => {
     const gateway = new ShopGateway({
       get: () => undefined,
