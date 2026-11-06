@@ -75,6 +75,25 @@ function installAppBoot(nodeModules: string, templates: unknown, entry?: string)
   return dir
 }
 
+/**
+ * `@deepseek-ai/dsh-official-bundles` in `nodeModules`, where 0.2.2-rc.1 keeps
+ * the template table: app-boot only imports it from there, so the reader has
+ * to fall back to this package (measured 2026-11-06).
+ */
+function installOfficialBundles(nodeModules: string, templates: unknown): string {
+  const dir = join(nodeModules, '@deepseek-ai', 'dsh-official-bundles')
+  mkdirSync(join(dir, 'lib'), { recursive: true })
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: '@deepseek-ai/dsh-official-bundles',
+    version: '0.2.2-rc.1',
+    type: 'module',
+    main: 'lib/index.js',
+    exports: { '.': { default: './lib/index.js' }, './package.json': './package.json' },
+  }))
+  writeFileSync(join(dir, 'lib', 'index.js'), `export const PROFILE_TEMPLATES = ${JSON.stringify(templates)}\n`)
+  return dir
+}
+
 /** `harness.ts` as a file URL, which is how a child process imports it. */
 const HARNESS_MODULE = new URL('../../src/host/harness.ts', import.meta.url).href
 
@@ -273,6 +292,26 @@ describe('readRunningHarness', () => {
       stage(dshDir)
       expect(readInChild(bin), label).toEqual({ dshVersion: '0.1.5-rc.3', templates: {}, patchLists, peerCheck: false })
     }
+  })
+
+  it('reads the template table from the bundles package when app-boot no longer exports it', () => {
+    // 0.2.2-rc.1 moved `PROFILE_TEMPLATES` into @deepseek-ai/dsh-official-bundles
+    // and app-boot only imports it. Reading app-boot alone left the table empty,
+    // which is no verdict rather than a wrong one: a plugin declaring a profile
+    // this harness does not have simply lost its badge — the 0.2.2-rc.1 e2e
+    // caught it, and this is the fallback that restores the verdict.
+    const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'moved-table-')), { version: '0.2.2-rc.1' })
+    installAppBoot(join(dshDir, 'node_modules'), null, 'export const SOMETHING_ELSE = {}\n')
+    installOfficialBundles(join(dshDir, 'node_modules'), RC3_EXPORT)
+    expect(readInChild(bin)).toEqual({ dshVersion: '0.2.2-rc.1', templates: RC3_TABLE, patchLists: false, peerCheck: false })
+  })
+
+  it('keeps app-boot\'s own table when it still exports one, whatever a bundles package says', () => {
+    // The older harnesses must not change: their app-boot export wins.
+    const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'own-table-')))
+    installAppBoot(join(dshDir, 'node_modules'), RC3_EXPORT)
+    installOfficialBundles(join(dshDir, 'node_modules'), { other: ['other-bundle'] })
+    expect(readInChild(bin)).toEqual({ dshVersion: '0.1.5-rc.3', templates: RC3_TABLE, patchLists: false, peerCheck: false })
   })
 
   it('reads whether the running dsh takes a list-valued bundle patch off its app-boot\'s exports', () => {

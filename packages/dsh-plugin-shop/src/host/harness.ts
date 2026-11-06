@@ -186,10 +186,36 @@ async function appBootFacts(dshDir: string): Promise<{ templates: ProfileTemplat
     readProfileVersionExemptions?: unknown
   }
   return {
-    templates: profileTemplatesOf(exported.PROFILE_TEMPLATES),
+    templates: profileTemplatesOf(await profileTemplatesExport(appBootDir, exported)),
     patchLists: typeof exported.bundlePatchFiles === 'function',
     peerCheck: peerCheckOf(exported, appBootDir),
   }
+}
+
+/**
+ * The template table the running dsh composes profiles from, wherever this
+ * dsh keeps it (measured 2026-11-06).
+ *
+ * Through 0.2.1-rc.5 `dsh-app-boot` exported `PROFILE_TEMPLATES` itself. From
+ * 0.2.2-rc.1 it only imports it, from `@deepseek-ai/dsh-official-bundles`,
+ * and exports nothing by that name — so reading app-boot alone left the table
+ * empty and the shop's whole `dsh.compatibility.profiles` verdict silent: no
+ * badge for a plugin declaring a profile this harness does not have, which is
+ * the failure the 0.2.2-rc.1 e2e caught. The bundles package is resolved with
+ * the same walk, from app-boot's own directory, so the copy dsh loads is the
+ * one read; a dsh that has neither still answers undefined, which
+ * `profileTemplatesOf` reads as "no table", never a wrong one.
+ */
+async function profileTemplatesExport(
+  appBootDir: string,
+  appBoot: { PROFILE_TEMPLATES?: unknown },
+): Promise<unknown> {
+  if (appBoot.PROFILE_TEMPLATES !== undefined) return appBoot.PROFILE_TEMPLATES
+  const bundlesDir = packageDirectory(appBootDir, '@deepseek-ai/dsh-official-bundles')
+  if (bundlesDir === null) return undefined
+  const entry = createRequire(import.meta.url).resolve(bundlesDir)
+  const bundles = await import(pathToFileURL(entry).href) as { PROFILE_TEMPLATES?: unknown }
+  return bundles.PROFILE_TEMPLATES
 }
 
 /** `value` when it is a non-null object, else null. */
