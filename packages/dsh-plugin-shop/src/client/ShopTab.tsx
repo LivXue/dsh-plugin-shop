@@ -183,7 +183,7 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay, installed, missing, harness, nameTakenBy, t, flow, uninstallFlow, restart, restartBlocked, reload, setEnabled, inInstalledView, page, favorite, onFavorite, rollback }: {
+const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay, installed, missing, harness, nameTakenBy, t, flow, uninstallFlow, restart, restartBlocked, reload, setEnabled, inInstalledView, page, favorite, onFavorite, rollback, shopVersion }: {
   entry: CatalogEntry
   /** The entry's icon as a data URL, or undefined to draw the default. */
   icon: string | undefined
@@ -234,6 +234,9 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
     status: (args: { installId: string }) => Promise<ShopInstallStatusResult>
     onSettled: () => void
   }
+  /** The running shop's version, for the failure report its panels build
+   * (design 2026-11-05-failure-report.md §1). */
+  shopVersion?: string
 }): ReactNode {
   const key = entryKey(entry)
   // A rollback's receipt, held here rather than in the control: the control is
@@ -536,7 +539,7 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
               * is still browsable, and a live Install button beside its
               * uninstall receipt is the intended pairing. */}
             {!inInstalledView && (
-              <InstallPanel key="install" target={installTarget} tier={entry.tier} blockers={blockers} blockersStated github={githubSlugOf(entry.repo, entry.repository)} flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
+              <InstallPanel key="install" target={installTarget} tier={entry.tier} blockers={blockers} blockersStated github={githubSlugOf(entry.repo, entry.repository)} shopVersion={shopVersion} flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
             )}
           </>
         ) : (
@@ -554,7 +557,7 @@ const EntryCard = memo(function EntryCard({ entry, icon, stars, order, shelfDay,
               // The update button drives the same install flow for the
               // catalog's latest version; a completed flow stays mounted
               // after installed() catches up so its outcome remains visible.
-              <InstallPanel key="install" target={installTarget} tier={entry.tier} variant={installed.outdated ? 'update' : 'install'} locked={uninstalling} blockers={blockers} blockersStated github={githubSlugOf(entry.repo, entry.repository)} flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
+              <InstallPanel key="install" target={installTarget} tier={entry.tier} variant={installed.outdated ? 'update' : 'install'} locked={uninstalling} blockers={blockers} blockersStated github={githubSlugOf(entry.repo, entry.repository)} shopVersion={shopVersion} flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
             ) : (
               // No button on this branch, so the badge follows the label that
               // takes its place: an installed plugin whose modules are absent
@@ -942,7 +945,7 @@ function RollbackControl({ identity, version, t, start, status, onSettled, onDon
   )
 }
 
-function InstallPanel({ target, tier, blockers, blockersStated = false, variant = 'install', locked = false, github = null, flow, t, restart, restartBlocked, reload }: {
+function InstallPanel({ target, tier, blockers, blockersStated = false, variant = 'install', locked = false, github = null, shopVersion, flow, t, restart, restartBlocked, reload }: {
   /** The install request this panel drives, identity included. */
   target: InstallArgs
   tier: CatalogEntry['tier']
@@ -967,6 +970,10 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
   /** The plugin's GitHub `owner/slug`, when one is known: what a failed
    * install offers to report against (design 2026-11-05-failure-report.md). */
   github?: string | null
+  /** The version of the shop this page runs (`shop/version`'s `installed`),
+   * which a failure report names (same design, §1). Undefined until that
+   * check answers, and the report then says `unknown` rather than guess. */
+  shopVersion?: string
   /** Shared by every panel rendering this install identity. */
   flow: InstallFlow
   t: ShopTabProps['t']
@@ -1061,6 +1068,7 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
       repo: github,
       detail: view.detail === '' ? t('installTransportFailed') : view.detail,
       log: view.log,
+      shopVersion,
     })
     return (
       <div className={css.installPanel}>
@@ -1653,7 +1661,7 @@ function EnabledSwitch({ row, surface, page, t, setEnabled, restart, restartBloc
  * carry a `latest` string — a catalog truth to compare against; §C10's
  * shadowed rows hold `latest: null` and never reach this control, so the
  * field is narrowed at the parameter. */
-function OutdatedRow({ row, icon, tier, missing, harness, github, t, setEnabled, flowFor, locked, restart, restartBlocked, reload, page }: {
+function OutdatedRow({ row, icon, tier, missing, harness, github, shopVersion, t, setEnabled, flowFor, locked, restart, restartBlocked, reload, page }: {
   row: ShopInstalledEntry & { latest: string }
   /** The row's catalog entry's icon, or undefined when the entry is gone. */
   icon: string | undefined
@@ -1662,6 +1670,8 @@ function OutdatedRow({ row, icon, tier, missing, harness, github, t, setEnabled,
   harness: HarnessVerdict | undefined
   /** The plugin's GitHub `owner/slug`, for the failure report. */
   github: string | null
+  /** The running shop's version, for the same report. */
+  shopVersion?: string
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   flowFor: (key: string) => InstallFlow
@@ -1700,7 +1710,7 @@ function OutdatedRow({ row, icon, tier, missing, harness, github, t, setEnabled,
         <EnabledSwitch row={row} surface="row" page={page} t={t} setEnabled={setEnabled} restart={restart} restartBlocked={restartBlocked} reload={reload} locked={locked} />
         <InstallPanel
           target={{ name: row.name, version: row.latest, source: row.source, repo: row.repo, subdir: row.subdir }}
-          tier={tier} variant="update" locked={locked} github={github}
+          tier={tier} variant="update" locked={locked} github={github} shopVersion={shopVersion}
           blockers={stateBlockers(blockersOf(missing, harness, undefined), t)}
           flow={flowFor(identityKey(row))} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload}
         />
@@ -1729,7 +1739,7 @@ const UPDATABLE_HEADING_ID = 'dsh-shop-updatable-heading'
  * community entry's does); an entry absent from the catalog is read as
  * community, so its request acknowledges, which the host accepts for any
  * tier. */
-function OutdatedSection({ state, entriesByKey, icons, missingByKey, harnessVerdicts, nameTakenByKey, t, setEnabled, flowFor, uninstallFor, restart, restartBlocked, reload, page }: {
+function OutdatedSection({ state, entriesByKey, icons, missingByKey, harnessVerdicts, nameTakenByKey, shopVersion, t, setEnabled, flowFor, uninstallFor, restart, restartBlocked, reload, page }: {
   state: InstalledState
   entriesByKey: ReadonlyMap<string, CatalogEntry>
   /** sha256 → data URL, from the catalog result. */
@@ -1742,6 +1752,8 @@ function OutdatedSection({ state, entriesByKey, icons, missingByKey, harnessVerd
    * The batch action needs it to skip a row the host would refuse; the rows
    * themselves never show it (a row IS this installation). */
   nameTakenByKey: ReadonlyMap<string, string>
+  /** The running shop's version, for each row's failure report. */
+  shopVersion?: string
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   flowFor: (key: string) => InstallFlow
@@ -1816,6 +1828,7 @@ function OutdatedSection({ state, entriesByKey, icons, missingByKey, harnessVerd
               missing={missingByKey.get(identityKey(row)) ?? []}
               harness={harnessVerdictOf(harnessVerdicts, identityKey(row))}
               github={githubSlugOf(entriesByKey.get(identityKey(row))?.repo, entriesByKey.get(identityKey(row))?.repository) ?? row.repo ?? null}
+              shopVersion={shopVersion}
               t={t}
               setEnabled={setEnabled}
               flowFor={flowFor}
@@ -3155,6 +3168,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
                         setEnabled={setEnabled}
                         inInstalledView={category === 'installed'}
                         page={page}
+                        shopVersion={selfVersion?.installed}
                         {...(writeFavorite !== undefined ? { favorite: favorites.has(key), onFavorite: () => { void toggleFavorite(key) } } : {})}
                         {...(rollbackOffer(key) !== undefined
                           ? {
@@ -3188,6 +3202,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
             missingByKey={missingByKey}
             harnessVerdicts={harnessVerdicts}
             nameTakenByKey={nameTakenByKey}
+            shopVersion={selfVersion?.installed}
             t={t}
             setEnabled={setEnabled}
             flowFor={flows.flowFor}

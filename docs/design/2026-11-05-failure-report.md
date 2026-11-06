@@ -1,6 +1,7 @@
 # Reporting a failure, and a catalogue that keeps up — design
 
-Status: **released 2026-11-06 as 0.9.2.** Two borrowings from the market scan of that day:
+Status: **released 2026-11-06 as 0.9.2**; the §2 amendment of the same day (the
+shop's version in the report) is built, not yet released. Two borrowings from the market scan of that day:
 dshplugin/dsh-plugin-hub files failures as prefilled GitHub issues, and
 kingOfSoySauce/dsh-skin-market re-reads its catalogue when the page comes back
 to the front. English only, per convention.
@@ -47,6 +48,16 @@ rarer and its repository is not always known from the row.
 The card and the outdated row pass the slug they can see: the card from its
 catalogue entry, the row from its entry (falling back to the row's own `repo`).
 
+**Amended 2026-11-06: the shop's version is handed down too.** §1 puts it in
+the body and `failureReportUrl` takes it, but no panel was ever given it, so
+0.9.2 filed every report as `dsh-plugin-shop: unknown`. Only `present.test.ts`
+passed one, by calling the builder directly. The tab now hands every panel
+that builds a link — the card's two and the outdated row's — the version
+`shop/version` answers as `installed`, the one the header prints. Until that
+check answers, the line still reads `unknown`: a guessed version would send
+the report down the wrong path, which is also why the body never claims a
+harness version.
+
 ## 3. The catalogue refreshes when the tab comes back
 
 A shop left open in a background tab showed the catalogue it loaded that
@@ -69,6 +80,10 @@ shop already had.
 - `ShopTab.client.spec.tsx`: the link on a failed install against the fixture's
   repository, its absence when the entry names none, and the focus refresh —
   none inside the window, one request past it, with the stale shelf kept.
+- `ShopTab.client.spec.tsx`, 2026-11-06: the version the header shows is in the
+  body built by the card's panel on a failed install, and by the outdated row's
+  and the card's on a failed update — the rendered check the 0.9.2 defect
+  lacked.
 
 Client-only: no catalogue field changes, so this rides the next shop release
 without a beta-first requirement of its own.

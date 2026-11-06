@@ -115,6 +115,11 @@ function nodeAt(root: ParentNode | null | undefined, selector: string): Element 
   return node
 }
 
+/** The prefilled issue body a report link carries, decoded from its URL. */
+function reportBody(link: Element): string {
+  return new URL(link.getAttribute('href') ?? '').searchParams.get('body') ?? ''
+}
+
 describe('the tab survives the browser and its own render errors (C3)', () => {
   it('tells the browser not to translate the tab, in each of its three states', async () => {
     // A browser's page translation rewrites the text nodes React owns, and
@@ -1579,6 +1584,40 @@ describe('ShopTab', () => {
     await waitFor(() => expect(container.querySelector('[data-shop-log]')).toBeTruthy(), { timeout: 5000 })
     expect(screen.getByText(en.installFailed)).toBeTruthy()
     expect(container.querySelector('[data-shop-report]')).toBeNull()
+  })
+
+  // The report names the shop that failed (design 2026-11-05-failure-report.md
+  // §1). 0.9.2 filed every one as "dsh-plugin-shop: unknown": the version the
+  // header shows never reached the panel that builds the link. Both panels
+  // that build one are covered — the card's and the Updates section row's.
+  it("names the running shop's version in the report of a failed install", async () => {
+    const { injected, installStatus, version } = bench(snapshot({ tier: 'verified' }))
+    version.mockResolvedValue({ installed: '9.8.7', latest: '9.8.7', outdated: false, restartBlocked: null, pendingVersion: null })
+    installStatus.mockResolvedValue({ found: true, state: 'failed', log: ['pnpm failed'], detail: 'pnpm failed' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-version]')?.textContent).toBe('v9.8.7'))
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-report]')).toBeTruthy(), { timeout: 3000 })
+    const body = reportBody(nodeAt(container, '[data-shop-report]'))
+    expect(body).toContain('- dsh-plugin-shop: 9.8.7')
+    expect(body).not.toContain('dsh-plugin-shop: unknown')
+  })
+
+  it("names the running shop's version in the report of a failed update, on the row and on its card", async () => {
+    const { injected, installStatus, version } = bench(snapshot({ tier: 'verified' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
+    version.mockResolvedValue({ installed: '9.8.7', latest: '9.8.7', outdated: false, restartBlocked: null, pendingVersion: null })
+    installStatus.mockResolvedValue({ found: true, state: 'failed', log: ['pnpm failed'], detail: 'pnpm failed' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-version]')?.textContent).toBe('v9.8.7'))
+    fireEvent.click(nodeAt(container, '[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-update]'))
+    const link = '[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-report]'
+    await waitFor(() => expect(container.querySelector(link)).toBeTruthy(), { timeout: 3000 })
+    const body = reportBody(nodeAt(container, link))
+    expect(body).toContain('`Update` `dsh-hello-plugin@1.2.0`')
+    expect(body).toContain('- dsh-plugin-shop: 9.8.7')
+    // The card's own update panel shares the row's flow, so it shows the same
+    // failure and builds the same link.
+    expect(reportBody(nodeAt(container, '[data-shop-entry="dsh-hello-plugin"] [data-shop-report]'))).toContain('- dsh-plugin-shop: 9.8.7')
   })
 
   it('asks the catalogue again when the tab comes back to the front, once per window', async () => {
