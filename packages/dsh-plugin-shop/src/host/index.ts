@@ -2077,7 +2077,13 @@ export class ShopGateway extends TypertRemoteService {
       return { favorites: [], rollback: {} }
     }
     const rollback: Record<string, string> = {}
-    for (const [key, record] of Object.entries(state.previous)) {
+    // No offer at all on the desktop profile (2026-11-06): `rollbackStart`
+    // runs dsh's CLI, which refuses that profile in any letter case, while an
+    // update there goes through the plugin manager and still writes a record.
+    // Forwarding it drew "Roll back to 1.0.0" and the click could only answer
+    // `desktop-profile`. The records stay on disk; the stars are answered as
+    // on any profile.
+    for (const [key, record] of isDesktopProfile(this.profile) ? [] : Object.entries(state.previous)) {
       // Only a record `rollbackSpec` can turn into a spec is offered. A
       // release-rescued entry's version is a tag, which no spec form installs:
       // forwarding it drew "Roll back to v1.0.0" and then answered
