@@ -167,12 +167,30 @@ that path now carries the CLI line for the same spec,
 `dsh plugin --profile <profile> add <spec>` — the command the README installs
 with, and the one the shop itself continues a refused update with — built by
 the same `retryCommand` from an operand that passed the same `gateOperand`,
-quoted for the platform the gateway reads. Two failures carry none. Any on
-the `desktop` profile, whose CLI dsh refuses in any letter case: that is now
-`retryCommand`'s own rule, so no path can hand a desktop reader a
-`dsh plugin` line. And dsh's `already-installed` refusal of a fresh install,
-whose reason says to uninstall first and where the shop declines the CLI
-route on purpose; the outcome marks it `retry: false`.
+quoted for the platform the gateway reads.
+
+**Amended again 2026-11-06, after review: the line is for a failure that left
+nothing installed.** Running the same `add` again is the way back only when
+nothing landed: pnpm failed, dsh refused, the deadline cancelled it. Once the
+package is on disk the recovery is to remove it, and a line beside that
+advice would add the same package back. So none is offered:
+
+- on the `desktop` profile, whose CLI dsh refuses in any letter case. That is
+  `retryCommand`'s own rule, so neither path offers a desktop reader a retry
+  line;
+- for dsh's `already-installed` refusal of a fresh install, whose reason says
+  to uninstall first and where the shop declines the CLI route on purpose;
+- for a failure whose package is on disk: a manager answer whose profile
+  changed (an enable stage that failed), and on either path a post-install
+  check that objects to the bundle that landed or cannot read it — the
+  entry-id collision, whose detail says to uninstall.
+
+On the manager path the outcome marks the last two `retry: false`. On the CLI
+path the landed check runs apart from the activation confirm
+(`confirmLanded`), so a bundle that never landed keeps its line. And the
+shop's own failed update shows the line in its panel as a plugin's failed
+install does: 0.9.2's self-update panel drew the log and the detail and
+dropped it.
 
 ## 6. Rollback
 

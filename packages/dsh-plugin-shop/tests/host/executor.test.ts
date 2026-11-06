@@ -219,6 +219,43 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
     expect(status.detail).toContain('loader entry id "shop"')
   })
 
+  // The retry line (design 2026-11-02-market-borrowings §5, 2026-11-06
+  // amendments) retries a failure that left nothing installed. A collision
+  // alsoConfirm finds is on a bundle that landed, whose way back is to remove
+  // it; a bundle the confirm does not find never landed, and is retried.
+  it('offers no retry line when alsoConfirm objects to a bundle that landed', async () => {
+    const home = confirmHome(['dsh-hello-fixture'], { 'dsh-hello-fixture': '1.0.0' })
+    const install = startInstall({
+      profile: 'web',
+      spec: 'dsh-hello-fixture@1.0.0',
+      dshBin: fixtureDsh(0),
+      env: { ...process.env, DSH_HOME: home },
+      expectedName: 'dsh-hello-fixture',
+      alsoConfirm: () => 'dsh-plugin-shop: declares the loader entry id "shop", which dsh-plugin-shop already declares',
+    })
+    const status = await install.finished
+    expect(status.state).toBe('failed')
+    expect(status).not.toHaveProperty('command')
+  })
+
+  it('keeps the retry line when the bundle never landed', async () => {
+    const home = confirmHome([], {})
+    const install = startInstall({
+      profile: 'web',
+      spec: 'dsh-hello-fixture@1.0.0',
+      dshBin: fixtureDsh(0),
+      env: { ...process.env, DSH_HOME: home },
+      expectedName: 'dsh-hello-fixture',
+      alsoConfirm: () => 'the collision check must not run for a bundle that never landed',
+    })
+    const status = await install.finished
+    expect(status.state).toBe('failed')
+    expect(status.detail).not.toContain('collision check')
+    expect(status.command).toBe(process.platform === 'win32'
+      ? 'dsh plugin --profile web add dsh-hello-fixture@1.0.0'
+      : "dsh plugin --profile 'web' add 'dsh-hello-fixture@1.0.0'")
+  })
+
   it('reports done when alsoConfirm finds nothing', async () => {
     const home = confirmHome(['dsh-hello-fixture'], { 'dsh-hello-fixture': '1.0.0' })
     const install = startInstall({

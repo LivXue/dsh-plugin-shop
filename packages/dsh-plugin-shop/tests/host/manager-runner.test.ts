@@ -136,6 +136,58 @@ describe('startManagerOperation', () => {
     expect(status.detail).toContain('"dup"')
   })
 
+  // The retry line (design 2026-11-02-market-borrowings §5, 2026-11-06
+  // amendments): it retries a failure that left nothing installed. Once the
+  // package is on disk the recovery is to uninstall it, and a line beside that
+  // advice would add the same package back.
+  const line = "dsh plugin --profile 'web' add 'x@1.0.0'"
+
+  it('carries the retry line on a failure that left nothing installed', async () => {
+    const running = startManagerOperation({
+      profile: 'runner-29', requestId: 'r29', mechanism: 'install x', logs: new ManagerLogs(),
+      run: async () => { throw new Error('ERR_PNPM_FETCH_404') }, outcome: () => done,
+      command: line,
+    })
+    const status = await running.finished
+    expect(status.state).toBe('failed')
+    expect(status.command).toBe(line)
+  })
+
+  it('withholds the retry line when the post-install check objects to the package that landed', async () => {
+    const running = startManagerOperation({
+      profile: 'runner-30', requestId: 'r30', mechanism: 'install x', logs: new ManagerLogs(),
+      run: async () => ({}), outcome: () => done,
+      alsoConfirm: () => 'x declares the loader entry id "dup", which y already declares. It is on disk: uninstall it from the shop to undo this install.',
+      command: line,
+    })
+    const status = await running.finished
+    expect(status.state).toBe('failed')
+    expect(status).not.toHaveProperty('command')
+  })
+
+  it('withholds it when the post-install check cannot read the package that landed', async () => {
+    const running = startManagerOperation({
+      profile: 'runner-31', requestId: 'r31', mechanism: 'install x', logs: new ManagerLogs(),
+      run: async () => ({}), outcome: () => done,
+      alsoConfirm: () => { throw new Error('ENOENT: no such file, package.json') },
+      command: line,
+    })
+    const status = await running.finished
+    expect(status.state).toBe('failed')
+    expect(status).not.toHaveProperty('command')
+  })
+
+  it('withholds it for a failure its outcome marks as no retry', async () => {
+    const running = startManagerOperation({
+      profile: 'runner-32', requestId: 'r32', mechanism: 'install x', logs: new ManagerLogs(),
+      run: async () => ({}), outcome: () => ({ state: 'failed', detail: 'dsh refused it', retry: false }),
+      command: line,
+    })
+    const status = await running.finished
+    expect(status.state).toBe('failed')
+    expect(status).not.toHaveProperty('command')
+  })
+
   it('drops a download-phase log line that arrives after the record has settled', async () => {
     // Built outside the queued task itself so `release` is assigned the
     // moment this promise is constructed, not on the microtask that later

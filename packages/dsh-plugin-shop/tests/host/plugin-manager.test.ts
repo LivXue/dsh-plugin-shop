@@ -103,6 +103,27 @@ const removalRejected = (restoration: string, changed = false) => {
 const uninstall: OutcomeContext = { ...context, operation: 'uninstall' }
 
 describe('managerOutcome', () => {
+  // The retry line's rule (design 2026-11-02-market-borrowings §5, 2026-11-06
+  // amendments): a failure whose profile changed has its package on disk,
+  // where the way back is to uninstall it, so the line must not offer to add
+  // it again. One that changed nothing stays open to a retry.
+  it('marks a failure that left its package on disk as one no retry line repeats', () => {
+    const notEnabled = {
+      changed: true, application: 'failed', stage: 'enable', target: 'dsh-managed', enabled: true, bundle: 'dsh-managed', registries: [null],
+      packageResult: { exitCode: 0, output: 'Packages: +1\n', truncated: false, logPath: '/l' },
+      error: { code: 'operation-error', diagnostic: 'duplicate entry id' },
+    }
+    const outcome = managerOutcome(notEnabled, context)
+    expect(outcome.state).toBe('failed')
+    expect(outcome.retry).toBe(false)
+  })
+
+  it('leaves a failure that changed nothing open to a retry', () => {
+    const outcome = managerOutcome(refused, context)
+    expect(outcome.state).toBe('failed')
+    expect(outcome).not.toHaveProperty('retry')
+  })
+
   it('builds the refusal from the structured list, with the exemption command', () => {
     // Rule 1. Nothing is parsed: the list is dsh's own record.
     const outcome = managerOutcome(refused, context)

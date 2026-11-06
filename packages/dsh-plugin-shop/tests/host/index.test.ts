@@ -4138,6 +4138,21 @@ describe("installs and updates through dsh's pluginManager", () => {
   // hold, and one of a name it did, which carries no `warnings` key.
   const applied = { changed: true, application: 'applied', stage: 'enable', target: 'dsh-managed', enabled: true, bundle: 'dsh-managed', registries: [null], packageResult: { exitCode: 0, output: 'Packages: +1\n', truncated: false, logPath: '/l' }, warnings: [] }
   const restartRequired = { changed: true, application: 'restart-required', stage: 'enable', target: 'dsh-managed', enabled: true, bundle: 'dsh-managed', registries: [null], packageResult: { exitCode: 0, output: 'Packages: +1\n', truncated: false, logPath: '/l' } }
+  // dsh 0.1.7-rc.2's answer to a failed `pnpm add`: it throws the output as a
+  // plain error, which it codes `operation-error`. pnpm failed, so dsh put the
+  // profile back and nothing landed.
+  const notFound = {
+    changed: false, application: 'failed', stage: 'install', target: 'dsh-managed@1.0.0', enabled: true, registries: [null], pendingBuilds: [],
+    packageResult: { exitCode: 1, output: 'ERR_PNPM_FETCH_404', truncated: false, logPath: '/l', kind: 'not-found' },
+    error: { code: 'operation-error', diagnostic: 'ERR_PNPM_FETCH_404' },
+  }
+  // An install dsh made but could not enable. The enable stage is where dsh
+  // loads the package, so it is on disk and in Node's cache all the same.
+  const notEnabled = {
+    changed: true, application: 'failed', stage: 'enable', target: 'dsh-managed', enabled: true, bundle: 'dsh-managed', registries: [null],
+    packageResult: { exitCode: 0, output: 'Packages: +1\n', truncated: false, logPath: '/l' },
+    error: { code: 'operation-error', diagnostic: 'duplicate entry id' },
+  }
   const managedPatch = "- insert:\n    - id: managed-row\n      name: 'dsh-managed'\n"
   /** The patch of each package the fake can land: a row of its own apiece. */
   const patches = new Map([['dsh-managed', managedPatch], ['dsh-other', "- insert:\n    - id: other-row\n      name: 'dsh-other'\n"]])
@@ -4593,19 +4608,12 @@ describe("installs and updates through dsh's pluginManager", () => {
   })
 
   it('leaves the name unimported when an install never reached the enable stage', async () => {
-    // pnpm failed, so dsh put the profile back and loaded nothing. The answer
-    // is the one dsh 0.1.7-rc.2 gives a failed `pnpm add`: it throws the
-    // output as a plain error, which it codes `operation-error`.
-    const pnpmFailed = {
-      changed: false, application: 'failed', stage: 'install', target: 'dsh-managed@1.0.0', enabled: true, registries: [null], pendingBuilds: [],
-      packageResult: { exitCode: 1, output: 'ERR_PNPM_FETCH_404', truncated: false, logPath: '/l', kind: 'not-found' },
-      error: { code: 'operation-error', diagnostic: 'ERR_PNPM_FETCH_404' },
-    }
+    // pnpm failed, so dsh put the profile back and loaded nothing (`notFound`).
     // The fake answers every install of one gateway alike, so the second
     // install runs on a second gateway sharing the first one's record, as
     // every gateway in one process does.
     const imported = new Set<string>()
-    const failing = managedGateway(pnpmFailed, { lands: false, importedModules: imported })
+    const failing = managedGateway(notFound, { lands: false, importedModules: imported })
     expect((await installAndSettle(failing.gateway, managed)).state).toBe('failed')
     const later = managedGateway(applied, { importedModules: imported })
     expect(await installAndSettle(later.gateway, managed)).toMatchObject({ state: 'done', activation: 'live' })
@@ -4614,11 +4622,6 @@ describe("installs and updates through dsh's pluginManager", () => {
   it('reads a name dsh installed but could not enable as imported', async () => {
     // The enable stage is where dsh loads the package, so a failure there has
     // filled Node's cache all the same. dsh leaves such a package installed.
-    const notEnabled = {
-      changed: true, application: 'failed', stage: 'enable', target: 'dsh-managed', enabled: true, bundle: 'dsh-managed', registries: [null],
-      packageResult: { exitCode: 0, output: 'Packages: +1\n', truncated: false, logPath: '/l' },
-      error: { code: 'operation-error', diagnostic: 'duplicate entry id' },
-    }
     const imported = new Set<string>()
     const failing = managedGateway(notEnabled, { importedModules: imported })
     expect((await installAndSettle(failing.gateway, managed)).state).toBe('failed')
@@ -4690,14 +4693,6 @@ describe("installs and updates through dsh's pluginManager", () => {
   // README installs with, and the one this path continues a refused update
   // with.
   describe('the retry line on a failure through the plugin manager', () => {
-    // dsh 0.1.7-rc.2's answer to a failed `pnpm add`, as the import case above
-    // records it.
-    const notFound = {
-      changed: false, application: 'failed', stage: 'install', target: 'dsh-managed@1.0.0', enabled: true, registries: [null], pendingBuilds: [],
-      packageResult: { exitCode: 1, output: 'ERR_PNPM_FETCH_404', truncated: false, logPath: '/l', kind: 'not-found' },
-      error: { code: 'operation-error', diagnostic: 'ERR_PNPM_FETCH_404' },
-    }
-
     it('offers the line, single-quoted for a POSIX shell', async () => {
       const { gateway } = managedGateway(notFound, { lands: false, restart: { platform: 'linux' } })
       const status = await installAndSettle(gateway, managed)
@@ -4716,6 +4711,14 @@ describe("installs and updates through dsh's pluginManager", () => {
       const { gateway } = managedGateway(applied, { restart: { platform: 'linux' } })
       const status = await installAndSettle(gateway, managed)
       expect(status.state).toBe('done')
+      expect(status).not.toHaveProperty('command')
+    })
+
+    it('offers no line when dsh installed the package but could not enable it: it is on disk', async () => {
+      // Adding it again is not the way back from a package already there.
+      const { gateway } = managedGateway(notEnabled, { restart: { platform: 'linux' } })
+      const status = await installAndSettle(gateway, managed)
+      expect(status.state).toBe('failed')
       expect(status).not.toHaveProperty('command')
     })
 
@@ -4880,12 +4883,16 @@ describe("installs and updates through dsh's pluginManager", () => {
     // refuses in the desktop profile.
     const { gateway, profileDir } = managedGateway(applied)
     fixturePackage(profileDir, 'dsh-holder', "- insert:\n    - id: managed-row\n      name: 'dsh-holder'\n")
-    expect(await installAndSettle(gateway, managed)).toMatchObject({
+    const status = await installAndSettle(gateway, managed)
+    expect(status).toMatchObject({
       state: 'failed',
       detail: 'dsh-plugin-shop: dsh-managed and dsh-holder use the same plugin entry ID, "managed-row".'
         + ' dsh cannot start this profile while both plugins are installed.'
         + ' It is on disk: uninstall it from the shop to undo this install.',
     })
+    // And no retry line beside that advice: it would add the package again
+    // (design 2026-11-02-market-borrowings §5, 2026-11-06 amendments).
+    expect(status).not.toHaveProperty('command')
   })
 
   it('uninstalls through removeBundle, with the mechanism line and the final output', async () => {
