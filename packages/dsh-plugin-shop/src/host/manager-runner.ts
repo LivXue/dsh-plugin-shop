@@ -181,14 +181,17 @@ export function startManagerOperation(options: ManagerOperationOptions): Running
       return status()
     }
     if (result.state === 'done' && alsoConfirm !== undefined) {
+      // Both failures below follow an install that LANDED: the way back is
+      // to uninstall it, so neither carries a retry line (design
+      // 2026-11-02-market-borrowings §5, 2026-11-06 amendments).
       try {
         const objection = alsoConfirm()
-        if (objection !== null) result = { state: 'failed', detail: objection }
+        if (objection !== null) result = { state: 'failed', detail: objection, retry: false }
       } catch (error) {
         // The shop's own post-install check threw (it cannot read the
         // package, say), not the answer itself being unreadable: a
         // distinct message, so a published reason is never misattributed.
-        result = { state: 'failed', detail: `dsh-plugin-shop: could not verify the installed plugin: ${messageOf(error)}` }
+        result = { state: 'failed', detail: `dsh-plugin-shop: could not verify the installed plugin: ${messageOf(error)}`, retry: false }
       }
     }
     settled = result

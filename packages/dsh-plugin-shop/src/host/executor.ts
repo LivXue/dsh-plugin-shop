@@ -757,13 +757,19 @@ function spawnPluginCli(options: {
    * install whose prefetch fails or is refused simply installs cold. */
   prefetcher?: Prefetcher
   confirm?: (home: string | undefined) => string | null
+  /** A post-exit check on a bundle that LANDED, run only once `confirm` has
+   * passed. A detail it returns fails the record as `confirm`'s does, but
+   * carries no retry line: the package is on disk, and the way back is to
+   * remove it, not to add it again (design 2026-11-02-market-borrowings §5,
+   * 2026-11-06 amendments). */
+  confirmLanded?: (home: string | undefined) => string | null
   afterDone?: (home: string | undefined) => Promise<{ activation: Activation; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
   timeoutMs?: number
 }): RunningInstall {
   const {
     profile, argv, dshBin, env, platform = process.platform,
-    beforeSpawn, prefetcher, confirm, afterDone, onStatus, timeoutMs = INSTALL_TIMEOUT_MS,
+    beforeSpawn, prefetcher, confirm, confirmLanded, afterDone, onStatus, timeoutMs = INSTALL_TIMEOUT_MS,
   } = options
   // Argv smuggling and shell punctuation, refused before anything spawns or
   // queues (see `gateOperand`).
@@ -790,6 +796,8 @@ function spawnPluginCli(options: {
   let activationOnDone: Activation = 'restart'
   let restartReason: HotRestartReason | undefined
   let detail: string | undefined
+  /** The record failed on `confirmLanded`: its package is on disk. */
+  let landedFailure = false
 
   const status = (): InstallStatus => ({
     state,
@@ -798,8 +806,9 @@ function spawnPluginCli(options: {
     ...(detail !== undefined ? { detail } : {}),
     // A failure carries the line that failed, so the page can offer it for a
     // manual retry (design 2026-11-02-market-borrowings §5). Never on a
-    // success or while running: it would read as an instruction.
-    ...(state === 'failed' && command !== undefined ? { command } : {}),
+    // success or while running: it would read as an instruction. Nor on a
+    // failure `confirmLanded` raised, whose package is on disk.
+    ...(state === 'failed' && command !== undefined && !landedFailure ? { command } : {}),
   })
 
   // lineSink holds a trailing partial until the next chunk completes it, then
@@ -885,9 +894,14 @@ function spawnPluginCli(options: {
         detail = installTimeoutDetail(profile, timeoutMs)
       } else if (exitCode === 0) {
         const confirmDetail = confirm?.(env?.DSH_HOME)
+        const landedDetail = confirmDetail == null ? confirmLanded?.(env?.DSH_HOME) : null
         if (confirmDetail != null) {
           state = 'failed'
           detail = confirmDetail
+        } else if (landedDetail != null) {
+          state = 'failed'
+          detail = landedDetail
+          landedFailure = true
         } else if (afterDone !== undefined) {
           try {
             const outcome = await afterDone(env?.DSH_HOME)
@@ -989,7 +1003,7 @@ export function startInstall(options: {
   /** A further post-exit check, run only once the bundle-activation confirm
    * has passed. Returning a detail fails the install with it. The package is
    * on disk by then, so this is for facts that are unreadable until it is —
-   * see `collidingEntryId`. */
+   * see `collidingEntryId` — and the failure carries no retry line. */
   alsoConfirm?: (home: string | undefined) => string | null
   afterDone?: (home: string | undefined) => Promise<{ activation: Activation; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
@@ -1018,12 +1032,12 @@ export function startInstall(options: {
       ? (home) => { before = readProfileDependencies(profile, home) }
       : undefined,
     prefetcher,
-    // `??` chains on null, and a returned detail is a non-empty string, so
-    // the activation confirm — which can now name what actually landed —
-    // still speaks first when both would fail.
+    // The activation confirm speaks first; the collision check runs only on a
+    // bundle that landed, and its failure offers no retry line.
     confirm: expectedName !== undefined
-      ? home => confirmBundleActivation(profile, home, expectedName, before) ?? alsoConfirm?.(home) ?? null
-      : alsoConfirm,
+      ? home => confirmBundleActivation(profile, home, expectedName, before)
+      : undefined,
+    confirmLanded: alsoConfirm,
     afterDone,
     onStatus,
     timeoutMs,

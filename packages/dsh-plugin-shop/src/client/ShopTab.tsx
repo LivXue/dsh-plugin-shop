@@ -2913,6 +2913,10 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
               TRANSPORT failure and falls back to the localized line; a
               non-empty detail is the host's published copy. */}
           <p className={css.failedDetail}>{selfUpdate.view.detail === '' ? t('updateTransportFailed') : selfUpdate.view.detail}</p>
+          {/* The line that retries the update by hand, when the host built
+              one — the same block a plugin's failed install shows (design
+              2026-11-02-market-borrowings §5). */}
+          {selfUpdate.view.command !== undefined && <CommandLine command={selfUpdate.view.command} t={t} />}
           {/* The version row offers Update only from idle, and the page store
               keeps this view for the page's life (design
               2026-10-16-shop-sidebar-page §5.2). Dismissing it resets a failed

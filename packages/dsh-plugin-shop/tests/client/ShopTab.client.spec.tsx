@@ -5980,6 +5980,23 @@ describe('the page keeps the reader\'s place across leaving and returning (desig
     await waitFor(() => expect(second.container.querySelector('[data-shop-update-self]')).toBeTruthy())
     expect(second.container.querySelector('[data-shop-self-update-failed]')).toBeNull()
   })
+
+  it("offers a failed self-update's retry line, as a plugin's failed install does", async () => {
+    // The host attaches the line to the shop's own update record as to any
+    // other (design 2026-11-02-market-borrowings §5); 0.9.2's self-update
+    // panel drew the log and the detail and dropped it.
+    const b = bench(snapshot())
+    b.version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: null })
+    b.installStatus.mockResolvedValue({
+      found: true, state: 'failed', log: ['npm ERR! network'], detail: 'the registry could not be reached',
+      command: "dsh plugin --profile 'web' add 'dsh-plugin-shop@0.4.4'",
+    })
+    const { container } = renderTab(b.injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-update-self]')).toBeTruthy())
+    fireEvent.click(nodeAt(container, '[data-shop-update-self]'))
+    await waitFor(() => expect(container.querySelector('[data-shop-self-update-failed]')).toBeTruthy(), { timeout: 3000 })
+    expect(nodeAt(container, '[data-shop-self-update-failed] [data-shop-command]').textContent).toContain("add 'dsh-plugin-shop@0.4.4'")
+  })
 })
 
 describe('the card and the rows draw the entry icon (design 2026-10-23 §8)', () => {

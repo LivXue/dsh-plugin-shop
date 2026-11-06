@@ -251,11 +251,12 @@ export interface ManagerOutcome {
   detail?: string
   /** False when the answer's own recovery is something other than the same
    * command again, so the failure offers no CLI retry line (design
-   * 2026-11-02-market-borrowings §5, 2026-11-06 amendment). Set for
-   * `already-installed` alone: its reason says to uninstall first, and where
-   * the shop refuses rather than continues — a fresh install dsh holds as
-   * installed — it declines the CLI route on purpose, which a line would
-   * hand straight back to the reader. */
+   * 2026-11-02-market-borrowings §5, 2026-11-06 amendments). Set for
+   * `already-installed`, whose reason says to uninstall first and where the
+   * shop refuses rather than continues — a fresh install dsh holds as
+   * installed — on purpose; and for any failure whose profile changed, whose
+   * package is on disk (an enable stage that failed), where adding it again
+   * is not the way back. */
   retry?: false
 }
 
@@ -425,6 +426,10 @@ export function managerOutcome(raw: unknown, context: OutcomeContext): ManagerOu
     const needsPeriod = !/[.!?]$/.test(outcome.detail)
     return { ...outcome, detail: `${outcome.detail}${needsPeriod ? '.' : ''} ${switchedOff}` }
   }
+  // A failed install or update that changed the profile left its package on
+  // disk — an enable stage that failed, say — and the way back from that is
+  // to uninstall it, never to add it again: no retry line.
+  if (outcome.state === 'failed' && change.changed === true) return { ...outcome, retry: false }
   return outcome
 }
 
