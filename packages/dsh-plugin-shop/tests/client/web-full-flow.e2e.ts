@@ -889,24 +889,39 @@ async function checkShelfLayout(app: Page, shop: Locator): Promise<void> {
     // is spent holding its edge. A static rail moves exactly as far as the
     // results do, which is the failure `overflow: clip` could cause if it
     // had made the panel a scrollport.
-    const positions = (): Promise<{ rail: number; results: number }> => shop.evaluate(el => ({
+    const positions = (): Promise<{ rail: number; results: number; top: number; height: number }> => shop.evaluate(el => ({
       rail: el.querySelector('[data-shop-controls]')?.getBoundingClientRect().top ?? Number.NaN,
       results: el.querySelector('[data-shop-identity]')?.getBoundingClientRect().top ?? Number.NaN,
+      top: el.scrollTop,
+      height: el.scrollHeight,
     }))
+    const start = await positions()
     await shop.evaluate(el => {
       if (el instanceof HTMLElement) el.scrollTop = el.scrollHeight - el.clientHeight
     })
     await settle()
     const bottom = await positions()
+    // 100px above where the page IS, never re-derived from scrollHeight. The
+    // cards are `content-visibility: auto`: one that last rendered at another
+    // of the widths above keeps that height until it comes into range, the
+    // scroll to the bottom brings it there, and the page grows between the
+    // two reads. A second position taken from the grown scrollHeight sits
+    // that much lower than meant — on Windows against dsh 0.2.1-rc.5 the
+    // results moved 6px of the 100 (2026-11-06), and a bare page switching
+    // six such cards from one column to two shows the same arithmetic.
     await shop.evaluate(el => {
-      if (el instanceof HTMLElement) el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - 100)
+      if (el instanceof HTMLElement) el.scrollTop = Math.max(0, el.scrollTop - 100)
     })
     await settle()
     const up = await positions()
     const resultsMoved = Math.abs(up.results - bottom.results)
     const railMoved = Math.abs(up.rail - bottom.rail)
-    expect(resultsMoved, 'the results did not move, so the comparison proves nothing').toBeGreaterThan(90)
-    expect(railMoved, 'the rail moved with the results').toBeLessThan(resultsMoved - 2)
+    // Printed on a pass too: whether the page grew under the first scroll
+    // shows nowhere else in a CI log.
+    const scrolled = `scrollHeight ${String(start.height)} -> ${String(bottom.height)} -> ${String(up.height)}, scrollTop ${String(start.top)} -> ${String(bottom.top)} -> ${String(up.top)}`
+    console.log(`sticky check: ${scrolled}`)
+    expect(resultsMoved, `the results did not move, so the comparison proves nothing (${scrolled})`).toBeGreaterThan(90)
+    expect(railMoved, `the rail moved with the results (${scrolled})`).toBeLessThan(resultsMoved - 2)
     await shop.evaluate(el => { if (el instanceof HTMLElement) el.scrollTop = 0 })
   } finally {
     await app.setViewportSize({ width: 1680, height: 1000 })
