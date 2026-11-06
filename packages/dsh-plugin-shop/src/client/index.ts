@@ -72,8 +72,13 @@ export const NS = 'settings.shop'
  * 2026-10-16-shop-sidebar-page §4.1). */
 export const SHOP_PANEL = 'shop'
 
+/** The npm package this client belongs to: the bundle dsh's own Plugins page
+ * opens for the desktop self-update. */
+const SHOP_PACKAGE = 'dsh-plugin-shop'
+
 /** dsh's own Plugins page (dsh-client-ui-plugin-manager's `PANEL_ID`), the
- * surface that updates a package on the desktop profile. */
+ * surface that updates a package on the desktop profile. The fallback for a
+ * harness without `pluginNavigation`. */
 const DSH_PLUGINS_PANEL = 'plugins'
 
 /** How long a stashed catalog may satisfy a plain open. The host applies the
@@ -138,6 +143,16 @@ type ShopRemoteNamespace = TypertRemoteNamespaceMap['shop']
  * 2026-10-17). */
 interface ShopLayoutFace {
   selectPanel(panelId: string | null): void
+}
+
+/** What the shop CALLS on dsh's plugin manager's navigation service
+ * (`pluginNavigation`, provided by dsh-client-ui-plugin-manager through the
+ * reflect shop): `openBundle` selects the Plugins panel, switches to its
+ * Installed tab and opens one package's detail page — the page whose Update
+ * button runs `updateBundle`. Shape-checked like `ShopLayoutFace`, because a
+ * harness may provide neither. */
+interface ShopPluginNavigationFace {
+  openBundle(packageName: string): void
 }
 
 /** Mount the shop Remote and contribute the shop's page, its sidebar row and
@@ -388,13 +403,24 @@ export async function apply(ctx: ClientContext): Promise<void> {
       // so there is no page to select.
     }
   }
-  /** dsh's own Plugins page, the one surface that can update the shop on the
-   * desktop profile (`updateBundle`: remove, install, restore). The panel id
-   * is dsh-client-ui-plugin-manager 0.2.2-rc.1's own `PANEL_ID`; a harness
-   * that names it differently refuses the key in `selectPanel`, which the
-   * catch below reads as "no such page" — the same degradation a missing
-   * service gets. */
-  const openDshPluginsPage = (): void => {
+  /** Open the shop's own page inside dsh's plugin manager, where its Update
+   * button runs the remove → install → restore operation the shop cannot run
+   * on itself. `pluginNavigation.openBundle` is the direct route: it selects
+   * the Plugins panel, switches to Installed and opens this package's detail
+   * page. A harness without that service (before dsh's plugin manager
+   * exported it) falls back to selecting the panel itself — one click further
+   * from the update, but no dead button. */
+  const openDshPluginPage = (): void => {
+    const navigation = ctx.get('pluginNavigation') as Partial<ShopPluginNavigationFace> | undefined
+    if (typeof navigation?.openBundle === 'function') {
+      try {
+        navigation.openBundle(SHOP_PACKAGE)
+        return
+      } catch {
+        // A service whose page is not mounted refuses the call; the panel
+        // selection below is the part that still can work.
+      }
+    }
     const service = layout()
     if (typeof service?.selectPanel !== 'function') return
     try {
@@ -424,7 +450,7 @@ export async function apply(ctx: ClientContext): Promise<void> {
     state,
     setFavorite,
     rollback,
-    openPluginsPage: openDshPluginsPage,
+    openUpdatePage: openDshPluginPage,
     page,
   })
 
