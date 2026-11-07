@@ -159,6 +159,11 @@
   by: llm
   reason: "Judged a dsh plugin market from: 劳博士专属 DSH 插件市场：在 Web GUI 与对话工具中查询（支持正则筛选）、下载安装、上传发布 GitHub dsh-plugin 生态插件。"
 
+- name: "@liangjiehappy/dsh-deepseekbase-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Adds the deepseekbase plugin market index to DeepSeek Harness: 4,367 DSH plugins with real sandbox install verdicts. Installs the Discover tab and points it at the index, so no manual configuration is needed."
+
 - name: "@lovstudio/dsh-plugin-marketplace"
   market: true
   by: human
@@ -443,6 +448,11 @@
   market: true
   by: human
   reason: "7 repos publish this name; all are plugin markets. A loud GitHub plugin radar for DeepSeek Harness."
+
+- name: "dsh-plugin-market-entry"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: Adds a plugin market entry button to the left sidebar of DeepSeek Harness."
 
 - name: "dsh-plugin-market-index"
   market: true
