@@ -1,7 +1,7 @@
 # Reporting a failure, and a catalogue that keeps up — design
 
 Status: **released 2026-11-06 as 0.9.2**; the §2 amendment of the same day (the
-shop's version in the report) is built, not yet released. Two borrowings from the market scan of that day:
+shop's version in the report) is released in 0.9.3 (2026-11-07). Two borrowings from the market scan of that day:
 dshplugin/dsh-plugin-hub files failures as prefilled GitHub issues, and
 kingOfSoySauce/dsh-skin-market re-reads its catalogue when the page comes back
 to the front. English only, per convention.

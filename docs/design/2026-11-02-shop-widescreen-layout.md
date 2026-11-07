@@ -1,7 +1,7 @@
 # The shop page on a wide screen — design
 
 Status: **released 2026-11-02 as 0.9.1**; the §4 amendment of 2026-11-06 (the
-switches' words on one line) is built, not yet released.
+switches' words on one line) is released in 0.9.3 (2026-11-07).
 LivXue chose direction A — a filter rail and a two-column card grid — from
 four mockups on 2026-11-02 (`.claude/worktrees/.scratch-shop-ui/mockups.html`,
 never committed). It changes the page's layout only; the catalog, the RPC

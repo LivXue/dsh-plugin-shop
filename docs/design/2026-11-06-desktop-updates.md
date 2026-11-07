@@ -1,8 +1,8 @@
 # Desktop updates: dsh's own update operation, and the page that owns it
 
 Date: 2026-11-06
-Status: implemented on `fix/desktop-harness-detection` (with the running-harness
-fix), unreleased.
+Status: **released 2026-11-07 as 0.9.3.** Implemented on
+`fix/desktop-harness-detection` (with the running-harness fix).
 Amends: [2026-10-19-dsh-021-readiness.md](2026-10-19-dsh-021-readiness.md) §2
 (updates dsh refuses in place) and the self-update section of
 [2026-08-18-dsh-plugin-shop-design.md](2026-08-18-dsh-plugin-shop-design.md) §7.3.

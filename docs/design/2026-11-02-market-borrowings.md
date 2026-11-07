@@ -1,7 +1,7 @@
 # Market borrowings, third review — design
 
 Status: **built 2026-11-02** (PR #124), **released 2026-11-06 as 0.9.2**; the
-§5 and §6.2 amendments of 2026-11-06 are built, not yet released. The catalog fields
+§5 and §6.2 amendments of 2026-11-06 are released in 0.9.3 (2026-11-07). The catalog fields
 and the three new RPC methods shipped through `beta` first. A review of the three dsh
 plugin markets — [dsh-market/dsh-market](https://github.com/dsh-market/dsh-market),
 [2BingLing/dsh-market](https://github.com/2BingLing/dsh-market) and
