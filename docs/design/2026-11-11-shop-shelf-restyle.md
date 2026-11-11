@@ -2,7 +2,8 @@
 
 **Date:** 2026-11-11
 **Status:** accepted
-**Amends:** `2026-10-23-shop-plugin-icons.md` §4 (option E) and §8.4
+**Amends:** `2026-10-23-shop-plugin-icons.md` §4 (option E) and §8.4;
+`2026-11-02-shop-widescreen-layout.md` §2 (decision 2) and §6 (DOM order)
 
 The shop's shelf is functional and dense and correct, and it reads as a list of
 settings rather than as a market. This document states what that costs, what
@@ -179,7 +180,7 @@ The arrangement is not touched. The shelf stays `repeat(auto-fill, minmax(min(43
 100%), 1fr))` — two columns under the rail on a wide tab, one below it. The card
 edge stays `border-l2`, because `border-l1` reads as no edge at all (the
 stylesheet's own measurement, re-measured in the live app: 1.09:1 against
-white, where `l2` is 1.25:1). The hover edge stays the brand mix. No resting
+white, where `l2` is 1.26:1). The hover edge stays the brand mix. No resting
 shadow is added to a card, because
 the one line in this stylesheet is that a shadow belongs to the hover lift
 alone.
@@ -229,3 +230,35 @@ only as an `<img>`'s `src` (§8.5).
   a different design, with a different set of trade-offs, and is not this one.
 - **The `分类` and `筛选` headings**, which are hidden below 1140px because the
   rail is not there to carry them. The chips' own counts say what they are.
+
+## 6. Review corrections, 2026-11-12
+
+Five details from the max-effort review changed what §2 through §4 describe.
+They are recorded here because the reasons are measurements, not taste.
+
+- **The count's quiet step is 90%, not 75%.** The count is 11px and the file
+  holds 4.5:1 for 11px text. At 75% it measured 3.37:1 on the light theme's
+  white; at 90% it measures 4.63:1 and the name stays at 5.80:1. The pressed
+  count inherits that 0.9 over the 22% fill and measures 4.53:1 at the `ui`
+  hue, the worst of the seven. The dark theme was never the constraint.
+- **The pressed sort pill's edge is `border-l2`.** §2.2 asks for a one-pixel
+  edge; `border-l1` is 1.09:1 against the page and §3 already calls it no
+  edge at all, so the wash was the only thing drawing the state.
+- **The search glyph is markup, not a background image.** A `url()` data URI
+  passes through the client build's CSS-modules rewrite, which replaced the
+  `.w3` in `www.w3.org` with a hashed class name and shipped an SVG namespace
+  Chromium refuses; the field drew no glyph. An `aria-hidden` SVG is still
+  not announced, and `currentColor` fixes a second defect the fixed gray had:
+  it stayed a light-theme gray in the dark palette.
+- **A pressed tab's count may not declare a second opacity.** The base rule
+  owns the 0.9 step; the pressed rule changes colour only, and the
+  colour-only guard now covers it.
+- **Forced colours get the badge's shape back.** The system palette erases
+  the 15% tint, so the chip became a plain run of text. An inside outline
+  restores the shape in that mode without moving the box; the word, and so
+  the information, was never at risk.
+
+The DOM order also changed: the count and Refresh now follow the version row
+and GitHub link, so tab order is row-major (search, version row, count, sort,
+categories, cards) instead of jumping down-left before crossing right. The
+grid areas still paint search/version above count/sort.

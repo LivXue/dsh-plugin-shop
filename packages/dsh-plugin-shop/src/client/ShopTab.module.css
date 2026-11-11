@@ -83,11 +83,11 @@
    * unless the element clips on both. Clipping x alone left the margin doing
    * nothing — measured against the live app on 0.7.1, the ring reached 0 of
    * its 3px on the left at every device pixel ratio (1, 1.25, 1.5, 2), while
-   * keeping the full 3px on the right, where the 280px input stops short of
-   * the panel and never meets the clip edge. Raising the margin to 6px
-   * changed nothing; clipping both axes with the SAME 3px restored the whole
-   * ring. A test that reads declarations cannot see that difference, which is
-   * why the first attempt at this shipped broken.
+   * keeping the full 3px on the right, where the search track is capped at
+   * 320px and stops short of the panel, never meeting the clip edge. Raising
+   * the margin to 6px changed nothing; clipping both axes with the SAME 3px
+   * restored the whole ring. A test that reads declarations cannot see that
+   * difference, which is why the first attempt at this shipped broken.
    *
    * `clip` is not a scroll container, so this does not bring back the
    * accidental scrolling `hidden` caused by coercing the other axis to
@@ -376,10 +376,18 @@
 }
 
 /* The count and the refresh beside it: what the query found, and the way to
- * ask again. Under the search box, because that is what it belongs to. */
+ * ask again. Under the search box, because that is what it belongs to.
+ *
+ * `flex-wrap: wrap` is not optional. The track is 160–320px and the count and
+ * Refresh already fill most of it; the refresh-failure sentence is a third
+ * item that then had 24px of width in Chinese and 42px in English, so it
+ * stood 10 lines tall inside the toolbar and pushed the shelf down. The
+ * stats row this replaced carried the same declaration for the same reason
+ * (review, 2026-11-11). */
 .queryMeta {
   grid-area: count;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   min-width: 0;
@@ -486,8 +494,32 @@
   margin-top: 8px;
 }
 
-.searchInput {
+/* The search field and its glyph. The glyph is markup rather than a `url()`
+ * background: the client build's CSS-modules rewrite replaces every `.word`
+ * in the stylesheet, comments included, and a data URI carrying the SVG
+ * namespace URL had the two dotted tokens in that URL turned into class
+ * selectors, so the shipped bundle drew nothing at all (review, 2026-11-11).
+ * An `aria-hidden` SVG is not announced, keeps the glyph out of the CSS, and
+ * takes `currentColor` — the fixed gray the URI carried did not follow the
+ * dark theme. */
+.searchBox {
   grid-area: search;
+  position: relative;
+  min-width: 0;
+}
+
+.searchGlyph {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
+  color: var(--dsw-alias-label-secondary);
+  pointer-events: none;
+}
+
+.searchInput {
   box-sizing: border-box;
   width: 100%;
   height: 32px;
@@ -495,15 +527,6 @@
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
   background-color: var(--dsw-alias-bg-base);
-  /* A mark inside the field, so it reads as a search box and not as a text
-   * box that happens to be near the categories. The glyph is the label token
-   * at its own size — it is an affordance, not a text run, so it is drawn as
-   * a background image rather than as markup the reader's screen reader
-   * would announce. */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%2361666b'%3E%3Cpath fill-rule='evenodd' d='M10 2a4 4 0 100 8 4 4 0 000-8zM2 6a5 5 0 110 10A5 5 0 012 6zm11.7 9.7a1 1 0 001.4 0l1.6-1.6a1 1 0 00-1.4-1.4l-1.6 1.6a1 1 0 000 1.4z'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: 9px center;
-  background-size: 14px;
   color: var(--dsw-alias-label-primary);
   font-size: 13px;
 }
@@ -575,12 +598,22 @@
  * count line up with the digits of another — the reader compares these
  * numbers down the bar. Secondary, because the count qualifies the name and
  * does not announce itself; the pressed state blends it with the word
- * instead, which is why the rule below reads the inherited colour. */
+ * instead, which is why the rule below reads the inherited colour.
+ *
+ * The quiet step is 90%, not 75%. At 75% the count measured 3.37:1 on the
+ * light theme's white — under the 4.5:1 floor this file holds for 11px text.
+ * The dark theme was never the constraint (6.49:1 at 75%). `opacity`
+ * composites over whatever ground the pill has, so one declaration covers
+ * the resting, hover and pressed states; at 90% the count is 4.63:1 resting
+ * and 4.53:1 pressed at the worst hue (`ui`), and the label itself stays at
+ * 5.80:1, which leaves the count a visible step quieter (computed from the
+ * live theme tokens, 2026-11-12). */
 .categoryButton > span:last-child {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: color-mix(in srgb, var(--dsw-alias-label-secondary) 75%, transparent);
+  color: var(--dsw-alias-label-secondary);
+  opacity: 0.9;
 }
 
 /* Blend text with the theme foreground: darker on light backgrounds, lighter
@@ -620,13 +653,16 @@
   color: color-mix(in srgb, var(--category-hue) 45%, var(--dsw-alias-label-primary) 55%);
 }
 
-/* The count on a PRESSED tab takes the word's colour, one step quieter — the
- * word says which category, the count says how many, and the two must not
- * read as two different kinds of thing. Colour and opacity only, like every
- * other state rule on a pill: a length here would reflow the bar. */
+/* The count on a PRESSED tab takes the word's colour — the word says which
+ * category, the count says how many, and the two must not read as two
+ * different kinds of thing. The quiet step is the base rule's `opacity: 0.9`
+ * and it composites over the pressed fill too, so this rule only changes the
+ * colour. A second opacity here measured 3.36:1 over the 22% fill at 0.75
+ * (computed for `ui`, the worst hue; review, 2026-11-11). Colour and opacity
+ * only, like every other state rule on a pill: a length here would reflow
+ * the bar. */
 .categoryButton.categoryButtonOn > span:last-child {
   color: inherit;
-  opacity: 0.75;
 }
 
 /* Forced colours replace every colour above with the system palette, which
@@ -802,8 +838,13 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* The edge is `border-l2`, not `border-l1`: l1 measures 1.09:1 against the
+ * page and the card's own rule calls it "no edge at all" (design
+ * 2026-11-11-shop-shelf-restyle §3). §2.2 asks the pressed pill for "a
+ * one-pixel edge", and l1 drew nothing the wash did not already say (review,
+ * 2026-11-11). */
 .sortGroup .categoryButton.categoryButtonOn {
-  border-color: var(--dsw-alias-border-l1);
+  border-color: var(--dsw-alias-border-l2);
   background: color-mix(in srgb, var(--dsw-alias-label-primary) 7%, transparent);
   color: var(--dsw-alias-label-primary);
 }
@@ -915,9 +956,9 @@
   /* The page and the card are both bg-layer-1 — the light theme resolves
    * every layer token to white — so this border is the card's only edge.
    * border-l1 is 4% black on white (#f5f5f5), which reads as no edge; l2 is
-   * 10% (#e6e6e6, 1.25:1 against white where l1 was 1.09:1 — both measured
-   * in the live app, 2026-11-11), and in dark it goes from 6% to 12% white
-   * on #232324. */
+   * 10% (#e5e5e5, 1.26:1 against white where l1 is 1.09:1 — both computed
+   * from the live theme's `#0000001a` and `#0000000a`, 2026-11-12), and in
+   * dark it goes from 6% to 12% white on #232324. */
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 10px;
   background: var(--dsw-alias-bg-layer-1);
@@ -996,7 +1037,8 @@
  * token"), and the seven category hues were never brought under that rule. The
  * mix inverts with the theme, so the dark theme gets a light word on a dark
  * tint. Every hue clears 4.5:1 over the 15% ground below: the worst is `ui` at
- * 5.39:1.
+ * 5.14:1 and `workflow` reaches 5.61:1 (computed from the live theme tokens,
+ * 2026-11-12).
  *
  * The GROUND is 15% of the hue. It is a fill and not the only affordance —
  * the word is there in a colour that clears the floor against it — so the
@@ -1015,6 +1057,17 @@
   background: color-mix(in srgb, var(--category-hue, #8B8E96) 15%, transparent);
   color: color-mix(in srgb, var(--category-hue, #8B8E96) 50%, var(--dsw-alias-label-primary));
   white-space: nowrap;
+}
+
+/* Forced colours replace the 15% tint with the system palette, so the chip
+ * loses its shape and its word becomes a plain run of text. The word still
+ * says which category, so this restores the chip, not the information. An
+ * outline draws inside the box, so it does not reflow the badge row. */
+@media (forced-colors: active) {
+  .categoryBadge {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
 }
 
 /* One entry's icon: a 32px tile holding a 24px image (design
@@ -1110,7 +1163,10 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding: 9px 14px 11px;
+  /* 12px, the header's and the body's inset: at 14px every card's buttons sat
+   * 2px further in than the name and the summary above them (review,
+   * 2026-11-11). */
+  padding: 9px 12px 11px;
   /* One hairline above the actions, so the card has a FOOTER: the buttons
    * were floating in the description, with nothing to say where the prose
    * stopped (design 2026-11-11-shop-shelf-restyle §2.3). The rule is

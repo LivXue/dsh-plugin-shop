@@ -35,8 +35,10 @@ the window's (see §3).
    the 1280 px cap, a 232 px rail and a 24 px gap the results column is 1024
    px, and three 430 px cards plus two gaps need 1314.
 2. **The rail holds categories and the hide-incompatible switch.** Sorting
-   stays beside the count, the build date and Refresh — one home at every
-   width, because it is a property of the result set rather than a filter.
+   stays in the toolbar at every width — since 2026-11-11 in its right
+   column, on the same row as the count and Refresh rather than beside them
+   (design `2026-11-11-shop-shelf-restyle.md` §2.6) — because it is a
+   property of the result set rather than a filter.
 3. **One DOM tree for both arrangements.** The rail is today's category group
    and switch, reflowed by CSS; no control is rendered twice, so every
    `data-shop-*` hook appears once and the tests that select them keep their
@@ -97,9 +99,10 @@ Markup, in this order (the order a screen reader reads and the eye follows):
 .page
   header.pageHead                      h1 + intro; no control, the drag region
   .panel                               the tab root; the container; capped 1280
-    .toolbar                           search + count/Refresh on the left,
-                                       version/Check + GitHub + sort on the right
-                                       (amended 2026-11-11, §4 note)
+    .toolbar                           search, then version/Check + GitHub,
+                                       then count/Refresh, then sort
+                                       (two grid rows: search | version,
+                                       count | sort; amended 2026-11-11)
     .shelfBody
       .controls                        the category group + the switch
         h2.railHeading                 "分类" — wide only
@@ -234,8 +237,10 @@ moves to a second line, under the name, and the chevron keeps the right edge:
   heading — a boolean modifier was never one of the categories — and its own
   state and behaviour are unchanged. It is still absent in the Installed view,
   and the "筛选" heading is absent with it.
-- DOM order is controls before results at every width, so tab order follows
-  the eye in both arrangements: categories → switch → stats → cards.
+- DOM order is toolbar, then controls, then results at every width. The
+  toolbar's own order is row-major — search → version/Check + GitHub →
+  count/Refresh → sort (amended 2026-11-11) — so tab order follows the eye:
+  search, version row, count, sort, categories → switch → cards.
 - The sticky rail takes no focus of its own and does not trap scrolling; its
   `overflow: auto` exists only for a rail taller than the window.
 - The counts in the rail are the same text the chips carry, so a screen
@@ -343,8 +348,9 @@ specified, with these builder calls:
   `bg-layer-1` — the light theme resolves every layer token to white — so
   the border is the card's only edge, and `border-l1` (4% black on white,
   #f5f5f5) read as no edge. `border-l2` is 10% (#e5e5e5), lifting the edge's
-  contrast against white from 1.08:1 to 1.19:1, and in dark from 6% to 12%
-  white on #232324. The hover mix follows the same base.
+  contrast against white from 1.09:1 to 1.26:1 (recomputed from the live
+  tokens, 2026-11-12), and in dark from 6% to 12% white on #232324. The hover
+  mix follows the same base.
 - The e2e derives its three windows from the chrome it measures once (at
   1024, below every breakpoint): tab widths of 1180, 1000 and 804. A fixed
   window pair would assert the host's sidebar width, and the 0.1.5 leg's
