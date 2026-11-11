@@ -726,6 +726,17 @@ async function readPill(pill: Locator) {
     const style = getComputedStyle(el)
     const fg = luminance(over(rgba(style.color), background))
     const bg = luminance(background)
+    // The count is a span inside the pill and carries its own colour and
+    // opacity, so the pill's `color` does not describe it: at 75% alpha the
+    // count composited to 3.4:1 while the label cleared 5.8:1 (review,
+    // 2026-11-11). Measure the text the reader actually sees.
+    const countEl = el.querySelector(':scope > span:last-child')
+    const countStyle = countEl === null ? null : getComputedStyle(countEl)
+    const countOpacity = countStyle === null ? 1 : Number(countStyle.opacity)
+    const countColor = countStyle === null ? null : rgba(countStyle.color)
+    const countFg = countColor === null
+      ? null
+      : over([countColor[0], countColor[1], countColor[2], countColor[3] * countOpacity], background)
     const border = rgba(style.borderTopColor)
     const read = (name: string): Rgba | null => {
       const value = style.getPropertyValue(name).trim()
@@ -739,6 +750,7 @@ async function readPill(pill: Locator) {
     const trackStyle = trackEl === null ? null : getComputedStyle(trackEl)
     return {
       contrast: ratio(fg, bg),
+      countContrast: countFg === null ? null : ratio(luminance(countFg), bg),
       width: el.getBoundingClientRect().width,
       border,
       borderContrast: ratio(luminance(over(border, background)), luminance(surround)),
@@ -771,7 +783,7 @@ async function readPill(pill: Locator) {
  * 0.2.x's. The sticky check runs in the short window the restore case uses,
  * the only one here that makes a six-card shelf scroll. */
 async function checkShelfLayout(app: Page, shop: Locator): Promise<void> {
-  const read = (): Promise<{ panel: number; rail: number; position: string; display: string; tracks: number; overhang: number; unfilled: number; railButton: number; labelGap: number; switchWidth: number; switchRightGap: number; barToSwitch: number; favoritesLines: number; incompatibleLines: number }> =>
+  const read = (): Promise<{ panel: number; rail: number; position: string; display: string; tracks: number; overhang: number; unfilled: number; railButton: number; glyphWidth: number; labelGap: number; switchWidth: number; switchRightGap: number; barToSwitch: number; favoritesLines: number; incompatibleLines: number }> =>
     shop.evaluate(el => {
       const tab = el.querySelector('[data-shop-tab]')
       const controls = el.querySelector('[data-shop-controls]')
@@ -786,6 +798,11 @@ async function checkShelfLayout(app: Page, shop: Locator): Promise<void> {
       const all = el.querySelector('[data-shop-category-all]')
       const spans = [...(all?.querySelectorAll(':scope > span') ?? [])]
       const filter = el.querySelector('[data-shop-hide-incompatible]')
+      // The search glyph is inline SVG. It replaced a `url()` background whose
+      // SVG namespace the client build's CSS-modules rewrite corrupted, so
+      // the shipped field drew nothing (review, 2026-11-11); a box is what
+      // that failure would have left behind either way, so its size is read.
+      const glyph = el.querySelector('[data-shop-search-glyph]')
       // By position, not aria-label: this page runs in zh-CN, where the group
       // is named 插件目录. The switch is the group's SIBLING, so the only
       // group inside the controls row is the category bar.
@@ -825,6 +842,7 @@ async function checkShelfLayout(app: Page, shop: Locator): Promise<void> {
           return card === null ? 0 : item.getBoundingClientRect().bottom - card.getBoundingClientRect().bottom
         })),
         railButton: all?.getBoundingClientRect().width ?? 0,
+        glyphWidth: glyph?.getBoundingClientRect().width ?? 0,
         labelGap: spans.length === 2
           ? (spans[1]?.getBoundingClientRect().left ?? 0) - (spans[0]?.getBoundingClientRect().right ?? 0)
           : Number.NaN,
@@ -877,6 +895,8 @@ async function checkShelfLayout(app: Page, shop: Locator): Promise<void> {
       expect(measured.tracks, `${where}: card columns`).toBe(measured.panel >= 872 ? 2 : 1)
       expect(measured.overhang, `${where}: a card pokes out of its column`).toBeLessThanOrEqual(1)
       expect(measured.unfilled, `${where}: a card stops short of its grid cell`).toBeLessThanOrEqual(1)
+      // The glyph lives at every width and is inline, not a rewritten `url()`.
+      expect(measured.glyphWidth, `${where}: the search glyph's box`).toBe(14)
       // At every width: each switch's words on one line.
       expect(measured.favoritesLines, `${where}: the favorites switch's words break across lines`).toBe(1)
       expect(measured.incompatibleLines, `${where}: the incompatible switch's words break across lines`).toBe(1)
@@ -898,12 +918,42 @@ async function checkShelfLayout(app: Page, shop: Locator): Promise<void> {
         expect(measured.barToSwitch, `${where}: no room between the bar and the switch`).toBeGreaterThan(20)
       }
     }
-    // Sticky: in a 480px-tall window, compare the rail's movement with the
+    // Sticky: in a short window, compare the rail's movement with the
     // results' over the same 100px of scroll. A stuck rail moves less; a
     // static one moves exactly as far, which is the failure `.panel`'s
     // `overflow: clip` could cause if `clip` had made it a scrollport.
+    //
+    // The window must be short enough that the page can scroll PAST the point
+    // where the rail reaches its sticky offset, or the comparison proves
+    // nothing: both columns move together and the assertion reads 100 vs 100.
+    // A fixed 480px worked before the 2026-11-11 restyle put one more toolbar
+    // row above the rail and removed the stats row; the page then had 149px
+    // of room and the rail needed more, so it never stuck (review,
+    // 2026-11-11). Measure the gap instead of guessing a height, and leave
+    // the rail stuck for at least the whole 100px it scrolls back.
     await app.setViewportSize({ width: wideWidth, height: 480 })
     await settle()
+    const stickyPlan = await shop.evaluate(el => {
+      const controls = el.querySelector('[data-shop-controls]')
+      if (controls === null) throw new Error('the shelf has no controls rail')
+      const style = getComputedStyle(controls)
+      return {
+        position: style.position,
+        railTop: controls.getBoundingClientRect().top,
+        stickyTop: Number.parseFloat(style.top),
+        room: el.scrollHeight - el.clientHeight,
+      }
+    })
+    expect(stickyPlan.position, 'the controls are not sticky at this width').toBe('sticky')
+    expect(Number.isFinite(stickyPlan.stickyTop), 'the sticky offset is not a length').toBe(true)
+    const neededRoom = stickyPlan.railTop - stickyPlan.stickyTop + 110
+    if (stickyPlan.room < neededRoom) {
+      const height = Math.max(240, 480 - Math.ceil(neededRoom - stickyPlan.room))
+      await app.setViewportSize({ width: wideWidth, height })
+      await settle()
+      const grown = await shop.evaluate(el => el.scrollHeight - el.clientHeight)
+      expect(grown, `the page did not grow enough room for the rail to stick (height ${String(height)})`).toBeGreaterThanOrEqual(neededRoom)
+    }
     const room = await shop.evaluate(el => el.scrollHeight - el.clientHeight)
     expect(room, 'the shelf does not scroll, so the sticky edge is not exercised').toBeGreaterThan(120)
     // At the bottom, then 100px above it. The results move the full 100px
@@ -964,6 +1014,11 @@ async function checkCategoryBar(app: Page, shop: Locator): Promise<void> {
   const check = async (pill: Locator, label: string, selected: boolean, width?: number): Promise<void> => {
     const measured = await readPill(pill)
     expect(measured.contrast, `${label}: text contrast`).toBeGreaterThanOrEqual(4.5)
+    // The count is 11px text on the same pill and has its own colour and
+    // opacity; measuring the label alone left it free to fall to 3.4:1
+    // (review, 2026-11-11).
+    expect(measured.countContrast, `${label}: no count span to measure`).not.toBeNull()
+    expect(measured.countContrast ?? 0, `${label}: count contrast`).toBeGreaterThanOrEqual(4.5)
     if (width !== undefined) expect(measured.width, `${label}: width changed`).toBe(width)
     if (selected) {
       // The border carries category identity, mixed 30% toward the theme

@@ -2743,37 +2743,31 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   return (
     <div className={PANEL_ROOT} translate="no" data-shop-tab>
       <div className={css.toolbar}>
-        <input
-          type="search"
-          className={css.searchInput}
-          aria-label={t('search')}
-          placeholder={t('search')}
-          value={query}
-          onChange={event => { page.setView({ query: event.target.value, visibleCount: SHOP_VISIBLE_BATCH }) }}
-        />
+        <div className={css.searchBox}>
+          {/* The glyph is markup rather than a `url()` background: the client
+            * build's CSS-modules rewrite walks every `.word` in the stylesheet,
+            * and a data URI carrying `www.w3.org` had its SVG namespace rewritten
+            * into two class selectors, so the shipped bundle drew nothing
+            * (review, 2026-11-11). `aria-hidden` keeps it out of the
+            * accessibility tree, and `currentColor` makes it follow the theme —
+            * the fixed gray it replaced did not follow the dark palette. */}
+          <svg className={css.searchGlyph} viewBox="0 0 16 16" aria-hidden="true" fill="currentColor" data-shop-search-glyph>
+            <path fillRule="evenodd" d="M10 2a4 4 0 100 8 4 4 0 000-8zM2 6a5 5 0 110 10A5 5 0 012 6zm11.7 9.7a1 1 0 001.4 0l1.6-1.6a1 1 0 00-1.4-1.4l-1.6 1.6a1 1 0 000 1.4z" />
+          </svg>
+          <input
+            type="search"
+            className={css.searchInput}
+            aria-label={t('search')}
+            placeholder={t('search')}
+            value={query}
+            onChange={event => { page.setView({ query: event.target.value, visibleCount: SHOP_VISIBLE_BATCH }) }}
+          />
+        </div>
         {expansionMemo.intents.length > 0 && (
           <p data-shop-expansion-note className={css.expansionNote}>
             {t('zhExpansionNote', { terms: expansionMemo.terms.slice(1).map(term => term.startsWith('#') ? term.slice(1) : term).join(', ') })}
           </p>
         )}
-        {/* The count, and the way to ask again — under the search box,
-         * because that is what they are about: what the query found (design
-         * 2026-11-11-shop-shelf-restyle §2.6). They used to share a row with
-         * the sort pills, which put the shelf's own arrangement on the same
-         * line as the catalog's size and date. */}
-        <div className={css.queryMeta}>
-          <p className={css.catalogStats} data-shop-catalog-stats>{t('catalogStats', { count: String(browsable.length), date: result.builtAt.slice(0, 10) })}</p>
-          <button
-            type="button"
-            className={css.catalogRefreshButton}
-            data-shop-catalog-refresh
-            disabled={reloading}
-            onClick={() => { setReloading(true); setReloadFailed(false); setRequest({ kind: 'refresh', reverdicts: pendingReverdict() }); setVersionReload(current => current + 1) }}
-          >
-            {reloading ? t('refreshing') : t('refresh')}
-          </button>
-          {reloadFailed && <span className={css.catalogRefreshFailed} data-shop-catalog-refresh-failed>{t('refreshFailed')}</span>}
-        </div>
         <div className={css.toolbarRight}>
           {/* Status only. The reload ACTION lives once, beside the build
             * date — two identical Refresh buttons on one screen made the
@@ -2884,6 +2878,31 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
               <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
             </svg>
           </a>
+        </div>
+        {/* The count, and the way to ask again — under the search box,
+         * because that is what they are about: what the query found (design
+         * 2026-11-11-shop-shelf-restyle §2.6). They used to share a row with
+         * the sort pills, which put the shelf's own arrangement on the same
+         * line as the catalog's size and date.
+         *
+         * In the DOM this follows the version row rather than the search box:
+         * the grid puts it on the second row, left, so reading it before the
+         * first row's version row and GitHub link made tab order jump
+         * down-left before crossing right — one row out of step with the eye
+         * (review, 2026-11-11). The grid areas decide the picture; this order
+         * decides the reading, and both are row-major. */}
+        <div className={css.queryMeta}>
+          <p className={css.catalogStats} data-shop-catalog-stats>{t('catalogStats', { count: String(browsable.length), date: result.builtAt.slice(0, 10) })}</p>
+          <button
+            type="button"
+            className={css.catalogRefreshButton}
+            data-shop-catalog-refresh
+            disabled={reloading}
+            onClick={() => { setReloading(true); setReloadFailed(false); setRequest({ kind: 'refresh', reverdicts: pendingReverdict() }); setVersionReload(current => current + 1) }}
+          >
+            {reloading ? t('refreshing') : t('refresh')}
+          </button>
+          {reloadFailed && <span className={css.catalogRefreshFailed} data-shop-catalog-refresh-failed>{t('refreshFailed')}</span>}
         </div>
         {/* The shelf's order control, at the right end of the toolbar's second
          * row — beside the shop's version row rather than a row of its own

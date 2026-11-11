@@ -325,8 +325,9 @@ describe('class references', () => {
     // The middle column is the gutter, and it can shrink to nothing.
     expect(toolbar).toMatch(/minmax\(0, 1fr\)/)
     // The count travels WITH the search box, because it is what the query
-    // found.
-    expect(rules.get('.searchInput') ?? '').toMatch(/grid-area:\s*search/)
+    // found. The search cell belongs to the glyph's wrapper now: the glyph is
+    // markup beside the input rather than a background image on it.
+    expect(rules.get('.searchBox') ?? '').toMatch(/grid-area:\s*search/)
     expect(rules.get('.queryMeta') ?? '').toMatch(/grid-area:\s*count/)
     // And the sort pills travel with the version row.
     expect(rules.get('.toolbarRight') ?? '').toMatch(/grid-area:\s*meta/)
@@ -374,9 +375,9 @@ describe('class references', () => {
     // every layer token to white), so the border is the card's only edge.
     // border-l1 is 4% black on white (#f5f5f5) and reads as no edge at all;
     // border-l2 is 10% (#e5e5e5), which lifts the edge's contrast against
-    // white from 1.08:1 to 1.19:1. Dark goes from 6% to 12% white on
+    // white from 1.09:1 to 1.26:1. Dark goes from 6% to 12% white on
     // #232324 (2026-11-02, after the beta hand-check asked for a deeper
-    // edge).
+    // edge; recomputed from the live theme tokens, 2026-11-12).
     expect(rules.get('.card') ?? '').toMatch(/border:\s*1px solid var\(--dsw-alias-border-l2\)/)
     expect(rules.get('.card:hover') ?? '')
       .toMatch(/border-color:\s*color-mix\(in srgb, var\(--dsw-alias-brand-primary\) 45%, var\(--dsw-alias-border-l2\)\)/)
@@ -524,7 +525,9 @@ describe('category hues', () => {
     // The band is what clears 4.5:1 over the badge's own 15% ground in the
     // LIGHT theme, where the hue is the darkest it gets: at 60% the `ui` hue
     // falls to 4.08:1, and at 30% it is 9.19:1. Measured over that ground at
-    // 50%: `ui` 5.39:1, `workflow` 5.62:1, and every other hue higher.
+    // 50%: `ui` 5.14:1, `workflow` 5.61:1, and every other hue higher.
+    // Recomputed from the live theme tokens on 2026-11-12; the design's
+    // figures are the ones that hold.
     expect(Number(share)).toBeGreaterThanOrEqual(40)
     expect(Number(share)).toBeLessThanOrEqual(55)
     // The ground is a fill, and the word is what carries the badge — a fill
@@ -612,6 +615,10 @@ describe('a pressed tab occupies the same box as an unpressed one', () => {
   for (const selector of [
     '.categoryButton.categoryButtonOn',
     '.categoryButton:hover',
+    // The pressed count is a state rule too. It borrows the word's colour,
+    // and a `font-weight` or a `font-size` here would reflow the bar exactly
+    // as the same declaration on the pill did (review, 2026-11-11).
+    '.categoryButton.categoryButtonOn > span:last-child',
   ]) {
     it(`${selector} declares colour only`, () => {
       const body = rules.get(selector)
@@ -835,9 +842,10 @@ describe('focus rings are not clipped by their container', () => {
     // the margin to 6px changed nothing; clipping both axes with the same 3px
     // restored the whole ring.
     //
-    // The right edge cannot catch this: the input is `min(280px, 100%)` and
-    // the panel is far wider, so the ring's right side never meets the clip
-    // edge and measures correct however badly the left is failing.
+    // The right edge cannot catch this: the search track is
+    // `minmax(160px, 320px)` and the panel is far wider, so the ring's right
+    // side never meets the clip edge and measures correct however badly the
+    // left is failing.
     const panel = rules.get('.panel') ?? ''
     expect(panel, 'no .panel rule').not.toBe('')
     const reach = outwardReach('.searchInput')
@@ -859,6 +867,24 @@ describe('focus rings are not clipped by their container', () => {
     const margin = /overflow-clip-margin:\s*(\d+)px/.exec(panel)?.[1]
     expect(margin, '.panel clips without granting the ring a margin').toBeDefined()
     expect(Number(margin)).toBeGreaterThanOrEqual(reach)
+  })
+})
+
+describe('the search glyph', () => {
+  it('is markup with a theme colour, not a url() the build rewrite can corrupt', () => {
+    // The field's glyph was a `url("data:image/svg+xml,...")`; the client
+    // build's class-name rewrite replaced the `.w3` in `www.w3.org` inside
+    // that URI, so the shipped bundle carried a namespace Chromium refuses
+    // and drew no icon (review, 2026-11-11). It is now an inline SVG whose
+    // box the e2e measures, painted with the label token so it follows the
+    // theme instead of a fixed light-theme gray.
+    expect(rules.get('.searchBox') ?? '').toMatch(/grid-area:\s*search/)
+    const input = rules.get('.searchInput') ?? ''
+    expect(input, 'no .searchInput rule').not.toBe('')
+    expect(input, '.searchInput must not carry a background image').not.toMatch(/background-image/)
+    const glyph = rules.get('.searchGlyph') ?? ''
+    expect(glyph, 'no .searchGlyph rule').not.toBe('')
+    expect(glyph).toMatch(/color:\s*var\(--dsw-alias-label-secondary\)/)
   })
 })
 

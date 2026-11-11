@@ -35,14 +35,42 @@ export function classNameFor(filename: string, local: string): string {
   return `s${hashOf(`${filename}:${local}`).slice(0, 6)}_${local}`
 }
 
+/** Every `.word` the blind rewrite treats as a class name. A selector and a
+ * `url()` value are both plain text to this regex, which is the defect the
+ * guard in `css-names.client.spec.ts` exists for; the function is exported so
+ * the guard can use the real thing. */
+export function localClassNames(css: string): Set<string> {
+  const locals = new Set<string>()
+  for (const match of css.matchAll(/\.([a-zA-Z_][\w-]*)/g)) {
+    const name = match[1]
+    if (name !== undefined) locals.add(name)
+  }
+  return locals
+}
+
+/** The rewrite `load()` applies to a stylesheet, exported so the guard runs
+ * the transform the build runs rather than a copy of its regex. */
+export function rewriteLocalClassNames(css: string, names: Map<string, string>): string {
+  return css.replace(/\.([a-zA-Z_][\w-]*)/g, (match, local: string) => {
+    const mapped = names.get(local)
+    return mapped === undefined ? match : `.${mapped}`
+  })
+}
+
 /** CSS modules for the browser half, resolved the way the dsh pipeline does
  * it (`/tmp/dsh/packages/client/tsdown.client.ts`): every local class name is
  * mapped to `[hash]_[local]`, the same names replace the selectors in the
  * injected stylesheet, and the style tag lands at factory execution — scoped
  * so a collision with another plugin's classes cannot leak styles. The dsh
  * pipeline transforms with lightningcss; this rewrite covers the selector
- * subset the shop tab emits (`.local` class selectors only — no class names
- * inside string/url() values, which this package's css never does). */
+ * subset the shop tab emits (`.local` class selectors only).
+ *
+ * It is a blind regex, so a dotted token inside a `url()` value is rewritten
+ * too: a data URI carrying `www.w3.org` became `www.[hash]_w3.[hash]_org`,
+ * an SVG namespace Chromium refuses, and the shipped field drew no icon
+ * (review, 2026-11-11). The rewrite is exported and run over the source by
+ * `css-names.client.spec.ts`, which fails on any `url()` value it would
+ * corrupt. Keep values out of this stylesheet, or extend that guard. */
 const CSS_MODULE = '\0dsh-plugin-shop-css:'
 // Virtual ids must not end in `.css`: tsdown's built-in css-guard matches the
 // extension and demands @tsdown/css before this plugin's load hook can run.
@@ -113,19 +141,11 @@ export default {
         const filename = cssPaths.get(id)
         if (filename === undefined) return null
         const css = readFileSync(filename, 'utf8')
-        const locals = new Set<string>()
-        for (const match of css.matchAll(/\.([a-zA-Z_][\w-]*)/g)) {
-          const name = match[1]
-          if (name !== undefined) locals.add(name)
-        }
         const names = new Map<string, string>()
-        for (const local of locals) {
+        for (const local of localClassNames(css)) {
           names.set(local, classNameFor(filename, local))
         }
-        const rewritten = css.replace(/\.([a-zA-Z_][\w-]*)/g, (match, local: string) => {
-          const mapped = names.get(local)
-          return mapped === undefined ? match : `.${mapped}`
-        })
+        const rewritten = rewriteLocalClassNames(css, names)
         const tagKey = hashOf(filename).slice(0, 8)
         return [
           `const css = ${JSON.stringify(rewritten)};`,
