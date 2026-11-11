@@ -97,7 +97,9 @@ Markup, in this order (the order a screen reader reads and the eye follows):
 .page
   header.pageHead                      h1 + intro; no control, the drag region
   .panel                               the tab root; the container; capped 1280
-    .toolbar                           search, version/Check, GitHub (unchanged)
+    .toolbar                           search + count/Refresh on the left,
+                                       version/Check + GitHub + sort on the right
+                                       (amended 2026-11-11, §4 note)
     .shelfBody
       .controls                        the category group + the switch
         h2.railHeading                 "分类" — wide only
@@ -105,12 +107,25 @@ Markup, in this order (the order a screen reader reads and the eye follows):
         h2.railHeading                 "筛选" — wide only, only with the switch
         button[data-shop-hide-incompatible]
       .results
-        .catalogStatsRow               count/date, Refresh, sort
         ul.cards                       the grid
         empty / showing lines
         OutdatedSection                installed view only
         ShadowedSection                installed view only
 ```
+
+> **2026-11-11 note.** The count, the Refresh button and the sort left
+> `.results` for the toolbar, which became a grid of two paired columns: the
+> search box and the count it found on the left, the shop's version row and
+> the sort on the right. The three rows the page read as are now two, and the
+> hole between the search box and the version row is the gutter between two
+> columns that mean something. The count is what the QUERY found and the sort
+> is how the list is ARRANGED; beside each other in the results column they
+> read as one more row of shelf furniture. Design:
+> `2026-11-11-shop-shelf-restyle.md` §2.6.
+>
+> The consequence on a wide tab: the toolbar spans both columns, so the count
+> now sits above the rail rather than above the cards, and the sort above the
+> cards where it already was. The rail's own headings stay where they are.
 
 - **Vertical rhythm is unchanged.** `.panel`'s 14 px gap stays between
   `.toolbar` and `.shelfBody`; `.shelfBody` and `.results` each carry
@@ -151,7 +166,12 @@ Markup, in this order (the order a screen reader reads and the eye follows):
     heading.
   - Two visually quiet `<h2>` headings ("分类", "筛选"); "排序" is absent — see
     decision 2 — and "筛选" is rendered only when the switch is.
-- **Sort** stays in `.catalogStatsRow`, as pills, at every width.
+- **Sort** stays visible, as pills, at every width. It left `.catalogStatsRow`
+  for the toolbar on 2026-11-11 (the note above): the sort is how the list is
+  ARRANGED, and it moved with the count rather than on its own. Its pills
+  also stopped wearing the category tabs' chrome, so three sort pills beside
+  eight category tabs no longer read as three more categories (design
+  `2026-11-11-shop-shelf-restyle.md` §2.2).
 - **The sticky rail must actually stick.** `.panel` already carries
   `overflow: clip`, which is not a scroll container, so the page remains the
   scrollport; but that is a property to prove, not assume. The e2e scrolls the

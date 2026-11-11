@@ -1123,7 +1123,7 @@ async function checkStandInText(app: Page, shop: Locator, entry: string): Promis
   // reviewed line in its detail, and neither of those has a fill of its own.
   const standIns: StandIn[] = [
     { label: 'stale badge', local: 'staleBadge', tag: 'span', container: 'toolbarRight' },
-    { label: 'refresh failed', local: 'catalogRefreshFailed', tag: 'span', container: 'catalogStatsRow' },
+    { label: 'refresh failed', local: 'catalogRefreshFailed', tag: 'span', container: 'queryMeta' },
     { label: 'verified tier', local: 'tierBadge', tag: 'span', container: null, tier: 'verified' },
     { label: 'verified-stale tier', local: 'tierBadge', tag: 'span', container: null, tier: 'verified-stale' },
     { label: 'reviewed line', local: 'reviewedLine', tag: 'p', container: null },

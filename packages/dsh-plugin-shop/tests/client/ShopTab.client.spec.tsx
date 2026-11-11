@@ -1946,9 +1946,14 @@ describe('ShopTab', () => {
     expect(results.parentElement).toBe(shelf)
     expect(controls.nextElementSibling).toBe(results)
     expect(container.querySelectorAll('[data-shop-shelf]').length).toBe(1)
-    // The bar is a control; the stats row and the shelf are results.
+    // The bar is a control; the shelf is results. The count and the sort
+    // left the results column for the toolbar: the count is what the QUERY
+    // found and the sort is how the list is ARRANGED, and neither belongs to
+    // the rail's column beside them (design 2026-11-11-shop-shelf-restyle
+    // §2.6, which amends 2026-11-02-shop-widescreen-layout §4).
     expect(nodeAt(container, '[data-shop-category-all]').closest('[data-shop-results]')).toBeNull()
-    expect(nodeAt(container, '[data-shop-catalog-stats]').closest('[data-shop-results]')).toBe(results)
+    expect(nodeAt(container, '[data-shop-catalog-stats]').closest('[data-shop-results]')).toBeNull()
+    expect(nodeAt(container, '[data-shop-sort]').closest('[data-shop-results]')).toBeNull()
     expect(nodeAt(container, '[data-shop-entry]').closest('[data-shop-results]')).toBe(results)
   })
 
