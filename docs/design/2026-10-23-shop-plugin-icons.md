@@ -61,6 +61,17 @@ the bytes (1.66 of 1.93 MB). 17 are larger than 32 KiB, the catalog's bound
    artwork drawn at 24px with `object-fit: contain`. No backplate, in either
    theme, as on dsh's own page; the cost is stated in §8.4. Chosen from four
    options shot on dsh 0.2.1-rc.2 with shop 0.9.0 (§13).
+   > **Amended 2026-11-11** (design `2026-11-11-shop-shelf-restyle.md` §4).
+   > The tile keeps its size, its hairline border and its radius. It gains a
+   > **ground**: 15% of the category's own hue, behind the artwork. This is
+   > **option E**, and it is **decoration, not a fix** — §8.4 below is about
+   > the icon's visibility in the dark theme, and a hue tint does nothing
+   > there, because at 15% over a dark card the ground is a shade lighter than
+   > the card and a black `currentColor` SVG is as invisible on it as it was
+   > on the card. What the ground does is give the category a colour that
+   > reads at a glance in the light theme, where the hue is the only colour
+   > the page has. The hairline border stays, because it is what keeps the
+   > tile's edge visible in the dark theme, where the ground does nothing.
 5. **dsh 0.2.1's reading rule.** The shop shows the icon dsh 0.2.1-rc.2 would
    draw for the package (§3.1, §4): the manifest found through `exports`, its
    `icon` first, the `./icon` export otherwise, a bad `icon` fatal; SVG, PNG,
@@ -504,6 +515,15 @@ the alternative, a light plate with `color-scheme: light` forced on the image
 (measured: the plate's darkest pixel under openviking's mark went from 240 to
 10), and LivXue chose B without it. The author-facing docs say how to make an
 icon read on both themes (§11).
+
+**Option E, added 2026-11-11** (design `2026-11-11-shop-shelf-restyle.md` §4):
+a tint of the card's category hue behind the artwork, at 15%. It is a fifth
+option and it is **not a solution to this section's problem** — it is
+decoration. In the light theme it gives the tile a category colour that reads
+at a glance, which is the one thing this page has no other way of saying. In
+the dark theme it is invisible, and the icon's own visibility here is exactly
+where it was. A ground that carried the icon would have to be light in the
+dark theme, and that is option D, priced and declined above.
 
 ### 8.5 Untrusted bytes stay images
 

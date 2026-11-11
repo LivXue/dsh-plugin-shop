@@ -307,18 +307,33 @@ describe('class references', () => {
     expect(rule).toMatch(/gap:\s*\d+px/)
   })
 
-  it('lets the stats row wrap rather than overflow once the order control joins it', () => {
-    // jsdom applies no layout, so the declaration is the only place a test can
-    // see this: the row holds the catalog line, the refresh button and now
-    // three pills, and a non-wrapping flex row overflows a narrow window.
-    const row = rules.get('.catalogStatsRow') ?? ''
-    expect(row, 'no .catalogStatsRow rule').not.toBe('')
-    expect(row).toMatch(/display:\s*flex/)
-    expect(row).toMatch(/flex-wrap:\s*wrap/)
-
-    const group = rules.get('.sortGroup') ?? ''
-    expect(group, 'no .sortGroup rule').not.toBe('')
-    expect(group).toMatch(/margin-left:\s*auto/)
+  it('gives the toolbar two paired columns: the query on the left, the order on the right', () => {
+    // The stats row and the sort pills were a third row of their own, and the
+    // toolbar held a search box at one end of a void and the version row at
+    // the other — three ragged rows for one set of controls. The toolbar is
+    // now a grid: what you can FIND on the left (the search box, and under it
+    // the count that query found), what the list is ARRANGED on the right (the
+    // version row, and under it the sort). The hole became the gutter
+    // (design 2026-11-11-shop-shelf-restyle §2.6).
+    //
+    // jsdom applies no layout, so the declarations are the only place a test
+    // can see this.
+    const toolbar = rules.get('.toolbar') ?? ''
+    expect(toolbar, 'no .toolbar rule').not.toBe('')
+    expect(toolbar).toMatch(/display:\s*grid/)
+    expect(toolbar).toMatch(/grid-template-areas:/)
+    // The middle column is the gutter, and it can shrink to nothing.
+    expect(toolbar).toMatch(/minmax\(0, 1fr\)/)
+    // The count travels WITH the search box, because it is what the query
+    // found.
+    expect(rules.get('.searchInput') ?? '').toMatch(/grid-area:\s*search/)
+    expect(rules.get('.queryMeta') ?? '').toMatch(/grid-area:\s*count/)
+    // And the sort pills travel with the version row.
+    expect(rules.get('.toolbarRight') ?? '').toMatch(/grid-area:\s*meta/)
+    expect(rules.get('.sortGroup') ?? '').toMatch(/grid-area:\s*sort/)
+    // The stats row is gone: it held the count, the refresh and the sort, and
+    // those two live in the toolbar now.
+    expect(rules.get('.catalogStatsRow'), 'the stats row is gone').toBeUndefined()
   })
 
   it('ends a long release tag in an ellipsis instead of widening the badge row', () => {
@@ -487,6 +502,83 @@ describe('category hues', () => {
     expect(on).not.toMatch(/brand-primary/)
     // The fallback for All/Installed, which have no category and no hue.
     expect(rules.get('.categoryButton')).toMatch(/--category-hue:\s*var\(--dsw-alias-brand-primary\)/)
+  })
+
+  it('blends the badge\'s word toward the foreground, never the raw hue', () => {
+    // The word that says which of the seven categories a plugin belongs to was
+    // painted in the raw hue. Measured in the live app on 2026-11-11, at
+    // 11px/600 on white: `ui` 1.86:1, `integration` 1.92:1, `workflow`
+    // 2.15:1, `theme` 2.65:1, `provider` 2.72:1, `tool` 3.20:1, `other`
+    // 3.28:1 — every one under the 4.5:1 floor for 11px text. This is the
+    // defect class the reds, the ambers and the greens were already fixed for
+    // ("never paints text with the raw error token"), and the seven category
+    // hues were never brought under that rule.
+    //
+    // The fix is the rule the reds follow: blend the hue toward
+    // label-primary, the theme's foreground pole, so the word darkens on a
+    // light surface and lightens on a dark one.
+    const badge = rules.get('.categoryBadge') ?? ''
+    expect(badge, 'no .categoryBadge rule').not.toBe('')
+    const share = /color:\s*color-mix\(in srgb, var\(--category-hue[^)]*\) (\d+)%, var\(--dsw-alias-label-primary\)\)/.exec(badge)?.[1]
+    expect(share, 'the badge word must be a stated share of the hue, blended toward the foreground').toBeDefined()
+    // The band is what clears 4.5:1 over the badge's own 15% ground in the
+    // LIGHT theme, where the hue is the darkest it gets: at 60% the `ui` hue
+    // falls to 4.08:1, and at 30% it is 9.19:1. Measured over that ground at
+    // 50%: `ui` 5.39:1, `workflow` 5.62:1, and every other hue higher.
+    expect(Number(share)).toBeGreaterThanOrEqual(40)
+    expect(Number(share)).toBeLessThanOrEqual(55)
+    // The ground is a fill, and the word is what carries the badge — a fill
+    // alone would be invisible in the light theme, where every bg layer is the
+    // same white.
+    expect(badge).toMatch(/background:\s*color-mix\(in srgb, var\(--category-hue[^)]*\) \d+%, transparent\)/)
+  })
+
+  it('takes the Latin typography off a Chinese word', () => {
+    // `uppercase` does nothing to a Chinese category name, and
+    // `letter-spacing: 0.08em` pulled its glyphs apart — the badge read loose
+    // for a reason that had nothing to do with the design.
+    const badge = rules.get('.categoryBadge') ?? ''
+    expect(badge).toMatch(/letter-spacing:\s*0/)
+    expect(badge).not.toMatch(/text-transform:\s*uppercase/)
+  })
+})
+
+describe('a sort pill is not a category tab', () => {
+  // The three sort pills wore the category tabs' own class, so three pills
+  // sat a row below eight tabs and looked like three more categories. They
+  // keep the class — the pressed rule it carries is pinned to colour only, so
+  // the row cannot reflow on a click — and lose the CHROME instead.
+  it('takes the pill chrome off the sort pills', () => {
+    const rule = rules.get('.sortGroup .categoryButton') ?? ''
+    expect(rule, 'no .sortGroup .categoryButton rule').not.toBe('')
+    expect(rule).toMatch(/border-color:\s*transparent/)
+    expect(rule).toMatch(/background:\s*transparent/)
+  })
+
+  it('picks the pressed sort pill in the foreground, not in a hue', () => {
+    // A hue on a sort pill would claim it filters by a category.
+    const rule = rules.get('.sortGroup .categoryButton.categoryButtonOn') ?? ''
+    expect(rule, 'no pressed sort pill rule').not.toBe('')
+    expect(rule).toMatch(/background:\s*color-mix\(in srgb, var\(--dsw-alias-label-primary\)/)
+    expect(rule).not.toMatch(/--category-hue/)
+  })
+
+  it('declares colour only on every sort pill state', () => {
+    // The same contract the category pills' state rules carry: a length here
+    // would reflow the row.
+    const COLOUR_ONLY = [
+      'color', 'background', 'background-color', 'background-image',
+      'border-color', 'outline-color', 'opacity',
+    ]
+    for (const selector of [
+      '.sortGroup .categoryButton:hover',
+      '.sortGroup .categoryButton.categoryButtonOn',
+    ]) {
+      const body = rules.get(selector)
+      expect(body, `no rule for ${selector}`).toBeDefined()
+      const declared = [...(body ?? '').matchAll(/(^|;)\s*([a-z-]+)\s*:/g)].map(m => m[2])
+      expect(declared.filter(prop => prop !== undefined && !COLOUR_ONLY.includes(prop))).toEqual([])
+    }
   })
 })
 

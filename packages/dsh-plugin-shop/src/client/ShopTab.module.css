@@ -353,15 +353,41 @@
   outline-offset: 1px;
 }
 
+/* The toolbar is two paired columns: what you can FIND on the left (the
+ * search box, and under it the count that query found), and how the list is
+ * ARRANGED on the right (the shop's version row, and under it the sort).
+ * The hole that sat between the search box and the version row is now the
+ * gutter between two columns that mean something (design
+ * 2026-11-11-shop-shelf-restyle §2.6).
+ *
+ * The middle column is `minmax(0, 1fr)` so it can shrink to nothing; the
+ * left one cannot go below 160px because the search box has a width of its
+ * own, and the right one is `auto` because the version row and the sort
+ * pills are as wide as they are. */
 .toolbar {
+  display: grid;
+  grid-template-columns: minmax(160px, 320px) minmax(0, 1fr) auto;
+  grid-template-areas:
+    'search . meta'
+    'count  . sort';
+  align-items: center;
+  column-gap: 16px;
+  row-gap: 6px;
+}
+
+/* The count and the refresh beside it: what the query found, and the way to
+ * ask again. Under the search box, because that is what it belongs to. */
+.queryMeta {
+  grid-area: count;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
 }
 
 .toolbarRight {
+  grid-area: meta;
+  justify-self: end;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -461,11 +487,23 @@
 }
 
 .searchInput {
-  width: min(280px, 100%);
-  padding: 6px 10px;
+  grid-area: search;
+  box-sizing: border-box;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px 0 30px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-layer-1);
+  border-radius: 8px;
+  background-color: var(--dsw-alias-bg-base);
+  /* A mark inside the field, so it reads as a search box and not as a text
+   * box that happens to be near the categories. The glyph is the label token
+   * at its own size — it is an affordance, not a text run, so it is drawn as
+   * a background image rather than as markup the reader's screen reader
+   * would announce. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%2361666b'%3E%3Cpath fill-rule='evenodd' d='M10 2a4 4 0 100 8 4 4 0 000-8zM2 6a5 5 0 110 10A5 5 0 012 6zm11.7 9.7a1 1 0 001.4 0l1.6-1.6a1 1 0 00-1.4-1.4l-1.6 1.6a1 1 0 000 1.4z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 9px center;
+  background-size: 14px;
   color: var(--dsw-alias-label-primary);
   font-size: 13px;
 }
@@ -476,9 +514,12 @@
 }
 
 /* Subdued line under the search box when a dictionary intent fired (design
- * 2026-10-08-search-query-expansion §4). One fact, no badge. */
+ * 2026-10-08-search-query-expansion §4). One fact, no badge. It spans the
+ * toolbar's width because the grid's two columns are taken; it is a rare
+ * state, and the fact is about the query as a whole. */
 .expansionNote {
-  margin: 4px 0 0;
+  grid-column: 1 / -1;
+  margin: 0;
   font-size: 12px;
   color: var(--dsw-alias-label-secondary);
 }
@@ -513,6 +554,14 @@
    * buttons override it from the shared hue table below, so a pressed Tool tab
    * turns the same blue as a tool card's spine. */
   --category-hue: var(--dsw-alias-brand-primary);
+  /* The label and the count are two spans, and they are one word in two
+   * sizes: a baseline flex row puts the count on the label's line instead of
+   * leaving the two to the browser's inline layout, where the count sits a
+   * fraction lower and the gap between them is whatever the space in the
+   * markup left. Six pixels is the gap the sort row's own label wants too. */
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
   padding: 3px 10px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
@@ -520,6 +569,18 @@
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
   cursor: pointer;
+}
+
+/* The count beside a category's name. Mono and tabular, so the digits of one
+ * count line up with the digits of another — the reader compares these
+ * numbers down the bar. Secondary, because the count qualifies the name and
+ * does not announce itself; the pressed state blends it with the word
+ * instead, which is why the rule below reads the inherited colour. */
+.categoryButton > span:last-child {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--dsw-alias-label-secondary) 75%, transparent);
 }
 
 /* Blend text with the theme foreground: darker on light backgrounds, lighter
@@ -557,6 +618,15 @@
   border-color: color-mix(in srgb, var(--category-hue) 70%, var(--dsw-alias-label-primary));
   background: color-mix(in srgb, var(--category-hue) 22%, transparent);
   color: color-mix(in srgb, var(--category-hue) 45%, var(--dsw-alias-label-primary) 55%);
+}
+
+/* The count on a PRESSED tab takes the word's colour, one step quieter — the
+ * word says which category, the count says how many, and the two must not
+ * read as two different kinds of thing. Colour and opacity only, like every
+ * other state rule on a pill: a length here would reflow the bar. */
+.categoryButton.categoryButtonOn > span:last-child {
+  color: inherit;
+  opacity: 0.75;
 }
 
 /* Forced colours replace every colour above with the system palette, which
@@ -696,25 +766,46 @@
   outline-offset: 1px;
 }
 
-.catalogStatsRow {
-  display: flex;
-  align-items: center;
-  /* The row holds the catalog line, the refresh button and the shelf order's
-   * three pills (design 2026-10-12-shelf-orders §4). Without wrapping, the
-   * last of them overflows the tab at a narrow width. */
-  flex-wrap: wrap;
-  gap: 10px;
-  margin: 6px 0 0;
-}
-
-/* The shelf's order control, at the right end of the stats row. `margin-left:
- * auto` is what puts it there while the line and the refresh button stay
- * left — and it is safe on a wrapping row, unlike a width. */
+/* The shelf's order control, at the right end of the toolbar's second row
+ * (design 2026-11-11-shop-shelf-restyle §2.6). It used to sit at the right
+ * end of the catalog stats row, a third row of its own, and it wore the
+ * category tabs' own class — so three sort pills sat a row below eight
+ * category tabs and looked like three more categories.
+ *
+ * The pills keep that class: the pressed rule it carries is pinned to colour
+ * only, so the row cannot reflow on a click, and the class is what gives the
+ * pressed sort pill its state. What changes is the CHROME, below. */
 .sortGroup {
+  grid-area: sort;
+  justify-self: end;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
+  min-width: 0;
+}
+
+/* The sort pills stop wearing the category tabs' clothes. A filter and an
+ * ordering are different acts, and a row of pills that all look the same says
+ * they are the same. These take the pill chrome off — no border, no fill —
+ * and the pressed one takes a foreground wash instead of the category hue,
+ * because a hue on a sort pill would claim it filters by a category.
+ *
+ * COLOUR ONLY, like every other state rule on a pill: the row cannot
+ * reflow. */
+.sortGroup .categoryButton {
+  border-color: transparent;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.sortGroup .categoryButton:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.sortGroup .categoryButton.categoryButtonOn {
+  border-color: var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 7%, transparent);
+  color: var(--dsw-alias-label-primary);
 }
 
 .sortLabel {
@@ -824,8 +915,9 @@
   /* The page and the card are both bg-layer-1 — the light theme resolves
    * every layer token to white — so this border is the card's only edge.
    * border-l1 is 4% black on white (#f5f5f5), which reads as no edge; l2 is
-   * 10% (#e5e5e5, 1.19:1 against white where l1 was 1.08:1), and in dark it
-   * goes from 6% to 12% white on #232324. */
+   * 10% (#e6e6e6, 1.25:1 against white where l1 was 1.09:1 — both measured
+   * in the live app, 2026-11-11), and in dark it goes from 6% to 12% white
+   * on #232324. */
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 10px;
   background: var(--dsw-alias-bg-layer-1);
@@ -870,8 +962,13 @@
   top: 0;
   bottom: 0;
   left: 0;
-  width: 3px;
-  background: var(--category-hue, #8B8E96);
+  /* Four pixels, not three. At three the spine does not read as a colour at
+   * all — it is a hairline in the category's hue on the card's left edge, and
+   * the eye takes it for a border. It is the shop's signature (design
+   * 2026-11-02-shop-widescreen-layout §5), so it grows rather than goes
+   * (design 2026-11-11-shop-shelf-restyle §2.4). */
+  width: 4px;
+  background: color-mix(in srgb, var(--category-hue, #8B8E96) 85%, transparent);
 }
 
 /* The hue table, keyed by `data-category` and read by BOTH surfaces that
@@ -888,25 +985,49 @@
 .card[data-category='theme'], .categoryButton[data-category='theme'] { --category-hue: #F472B6; }
 .card[data-category='other'], .categoryButton[data-category='other'] { --category-hue: #8B8E96; }
 
-/* The category sits in the badge row as a quiet chip in the category's own
- * hue — the border carries it where the light theme's white layers cannot
- * (the same lesson as the check button). */
+/* The category sits in the badge row as a chip in the category's own hue.
+ *
+ * The WORD is the hue blended 50% toward `label-primary`, the theme's
+ * foreground pole. It used to be the raw hue, and the raw hue is unreadable:
+ * measured in the live app on 2026-11-11, at 11px/600 on white, `ui` measured
+ * 1.86:1, `integration` 1.92:1 and `workflow` 2.15:1 — every one of the seven
+ * under the 4.5:1 floor. This is the same defect the reds, the ambers and the
+ * greens were already fixed for ("never paints text with the raw error
+ * token"), and the seven category hues were never brought under that rule. The
+ * mix inverts with the theme, so the dark theme gets a light word on a dark
+ * tint. Every hue clears 4.5:1 over the 15% ground below: the worst is `ui` at
+ * 5.39:1.
+ *
+ * The GROUND is 15% of the hue. It is a fill and not the only affordance —
+ * the word is there in a colour that clears the floor against it — so the
+ * light theme's white layers cannot swallow it.
+ *
+ * The Latin typography is gone: `uppercase` does nothing to a Chinese word,
+ * and `letter-spacing: 0.08em` pulled its glyphs apart. */
 .categoryBadge {
-  padding: 1px 7px;
-  border: 1px solid color-mix(in srgb, var(--category-hue, #8B8E96) 45%, transparent);
-  border-radius: 999px;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 6px;
   font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--category-hue, #8B8E96);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  background: color-mix(in srgb, var(--category-hue, #8B8E96) 15%, transparent);
+  color: color-mix(in srgb, var(--category-hue, #8B8E96) 50%, var(--dsw-alias-label-primary));
   white-space: nowrap;
 }
 
 /* One entry's icon: a 32px tile holding a 24px image (design
  * 2026-10-23-shop-plugin-icons §8.3). The border and radius are dsh's own
  * (`PackageArtwork`'s .cardIcon), so a card's icon reads the same here as on
- * dsh's Plugins page. No backplate in either theme (§8.4). */
+ * dsh's Plugins page.
+ *
+ * The GROUND is new, and it is option E of that design's §4/§8.4: a 15% tint
+ * of the category's hue behind the artwork. It is DECORATION, not a fix: in
+ * the dark theme it is nearly invisible, and the icon's own visibility there
+ * — the problem §8.4 is about — is exactly where it was. The half-pixel
+ * border stays, because it is what keeps the tile's edge visible in the dark
+ * theme, where the tint does nothing. */
 .entryIcon {
   box-sizing: border-box;
   flex: none;
@@ -917,6 +1038,7 @@
   height: 32px;
   border: 0.5px solid var(--dsw-alias-border-l3);
   border-radius: var(--dsw-radius-md);
+  background: color-mix(in srgb, var(--category-hue, #8B8E96) 15%, transparent);
   overflow: hidden;
 }
 
@@ -962,8 +1084,9 @@
  * intact on the row under it. */
 .name {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 600;
+  letter-spacing: -0.005em;
   flex: 1 1 auto;
   min-width: 0;
   white-space: nowrap;
@@ -987,7 +1110,13 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px 10px;
+  padding: 9px 14px 11px;
+  /* One hairline above the actions, so the card has a FOOTER: the buttons
+   * were floating in the description, with nothing to say where the prose
+   * stopped (design 2026-11-11-shop-shelf-restyle §2.3). The rule is
+   * `border-l1`, the same one the expanded detail's own divider uses
+   * (`.detail`), and it is one line like every other line in this file. */
+  border-top: 1px solid var(--dsw-alias-border-l1);
   /* Grid rows stretch every card to the tallest one, and the card is a flex
    * column: this takes the leftover height above the buttons, so two cards
    * in one row end their action rows on the same line (design
@@ -1187,8 +1316,13 @@
 .summary {
   margin: 0;
   font-size: 13px;
-  line-height: 1.5;
-  color: var(--dsw-alias-label-primary);
+  line-height: 1.55;
+  /* The SECONDARY label, not the primary one. The name is the identity and
+   * the description is the author's prose; both were `label-primary`, so the
+   * eye could not tell which of the two was the plugin (design
+   * 2026-11-11-shop-shelf-restyle §2.3). `label-secondary` measures 5.80:1
+   * on white, so this is a demotion, not a dimming. */
+  color: var(--dsw-alias-label-secondary);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -1224,8 +1358,25 @@
    only the explicit \n survives. */
 .incompatibleDetail {
   margin: 0;
+  /* Four pixels, and not more: the e2e reads this block's height against its
+   * own line height and holds the fold to "about two lines" — an upper bound
+   * of 2.6 lines, which at 12px/1.55 is 48.36px. Two lines plus the padding
+   * is 45.2px, and seven pixels of padding was 51.2px, over the bound. */
+  padding: 4px 9px;
+  border-radius: 6px;
+  /* A ground for the notice, so it reads as a block of text about ONE
+   * plugin rather than as a hole cut in the card: 3,572 of the 26,265 entries
+   * carry one, and nothing else on the page is red (design
+   * 2026-11-11-shop-shelf-restyle §2.7). The word stays `--shop-error`, which
+   * measures 5.31:1 on the card and 4.73:1 on this ground — the same red,
+   * with a floor under it that the plain surface did not need. */
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 7%, transparent);
+  /* One line, like every other line in this file: a two-pixel edge would be
+   * the first control here to draw more than one, and the e2e's one-line scan
+   * reads the computed width. */
+  border-left: 1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 55%, transparent);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.55;
   white-space: pre-line;
   color: var(--shop-error);
 }
@@ -1265,7 +1416,7 @@
 .foldBlockExpanded { display: block; }
 
 /* The toggle. Geometry and quiet voice are the Refresh pill's
- * (`catalogStatsRow` right beside it on the same screen): one 1px border,
+ * (`catalogRefreshButton` right beside it on the same screen): one 1px border,
  * 11px text, secondary label, no fill. It is the only one of its kind here,
  * so a class of its own means one function of its own. */
 .foldToggle {

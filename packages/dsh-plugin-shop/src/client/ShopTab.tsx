@@ -2756,6 +2756,24 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
             {t('zhExpansionNote', { terms: expansionMemo.terms.slice(1).map(term => term.startsWith('#') ? term.slice(1) : term).join(', ') })}
           </p>
         )}
+        {/* The count, and the way to ask again — under the search box,
+         * because that is what they are about: what the query found (design
+         * 2026-11-11-shop-shelf-restyle §2.6). They used to share a row with
+         * the sort pills, which put the shelf's own arrangement on the same
+         * line as the catalog's size and date. */}
+        <div className={css.queryMeta}>
+          <p className={css.catalogStats} data-shop-catalog-stats>{t('catalogStats', { count: String(browsable.length), date: result.builtAt.slice(0, 10) })}</p>
+          <button
+            type="button"
+            className={css.catalogRefreshButton}
+            data-shop-catalog-refresh
+            disabled={reloading}
+            onClick={() => { setReloading(true); setReloadFailed(false); setRequest({ kind: 'refresh', reverdicts: pendingReverdict() }); setVersionReload(current => current + 1) }}
+          >
+            {reloading ? t('refreshing') : t('refresh')}
+          </button>
+          {reloadFailed && <span className={css.catalogRefreshFailed} data-shop-catalog-refresh-failed>{t('refreshFailed')}</span>}
+        </div>
         <div className={css.toolbarRight}>
           {/* Status only. The reload ACTION lives once, beside the build
             * date — two identical Refresh buttons on one screen made the
@@ -2867,6 +2885,34 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
             </svg>
           </a>
         </div>
+        {/* The shelf's order control, at the right end of the toolbar's second
+         * row — beside the shop's version row rather than a row of its own
+         * (design 2026-11-11-shop-shelf-restyle §2.6). */}
+        <span className={css.sortGroup} role="group" aria-labelledby={sortLabelId} data-shop-sort>
+          {/* A visible label, not only an accessible name: three bare pills
+            * beside the category bar read as three more categories. The
+            * group is named by this text through `aria-labelledby` rather than
+            * an `aria-label`, so a screen reader does not hear it twice. */}
+          <span className={css.sortLabel} id={sortLabelId}>{t('sortLabel')}</span>
+          {SHELF_ORDERS.map(name => (
+            <button
+              key={name}
+              type="button"
+              // The category pills' own classes: a choice among a few, which
+              // is what this is — and the pressed rule they carry is already
+              // pinned to colour only, so the row cannot reflow on a click.
+              // The chrome comes off by a rule scoped to `.sortGroup`, which
+              // is what tells a sort pill from a category tab (design
+              // 2026-11-11-shop-shelf-restyle §2.2).
+              className={order === name ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
+              aria-pressed={order === name}
+              data-shop-order={name}
+              onClick={() => { page.setView({ order: name, visibleCount: SHOP_VISIBLE_BATCH }) }}
+            >
+              {t(shelfOrderLocaleKey(name))}
+            </button>
+          ))}
+        </span>
       </div>
       {restartMonitor?.kind === 'not-restarted' && (
         <NotRestartedNotice t={t} pid={restartMonitor.pid} logFile={restartMonitor.logFile} />
@@ -3067,42 +3113,6 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
           )}
         </div>
         <div className={css.results} data-shop-results>
-          <div className={css.catalogStatsRow}>
-            <p className={css.catalogStats} data-shop-catalog-stats>{t('catalogStats', { count: String(browsable.length), date: result.builtAt.slice(0, 10) })}</p>
-            <button
-              type="button"
-              className={css.catalogRefreshButton}
-              data-shop-catalog-refresh
-              disabled={reloading}
-              onClick={() => { setReloading(true); setReloadFailed(false); setRequest({ kind: 'refresh', reverdicts: pendingReverdict() }); setVersionReload(current => current + 1) }}
-            >
-              {reloading ? t('refreshing') : t('refresh')}
-            </button>
-            {reloadFailed && <span className={css.catalogRefreshFailed} data-shop-catalog-refresh-failed>{t('refreshFailed')}</span>}
-            <span className={css.sortGroup} role="group" aria-labelledby={sortLabelId} data-shop-sort>
-              {/* A visible label, not only an accessible name: three bare pills
-                * beside the category bar read as three more categories. The
-                * group is named by this text through `aria-labelledby` rather
-                * than an `aria-label`, so a screen reader does not hear it
-                * twice. */}
-              <span className={css.sortLabel} id={sortLabelId}>{t('sortLabel')}</span>
-              {SHELF_ORDERS.map(name => (
-                <button
-                  key={name}
-                  type="button"
-                  // The category pills' own classes: a choice among a few, which
-                  // is what this is — and the pressed rule they carry is already
-                  // pinned to colour only, so the row cannot reflow on a click.
-                  className={order === name ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
-                  aria-pressed={order === name}
-                  data-shop-order={name}
-                  onClick={() => { page.setView({ order: name, visibleCount: SHOP_VISIBLE_BATCH }) }}
-                >
-                  {t(shelfOrderLocaleKey(name))}
-                </button>
-              ))}
-            </span>
-          </div>
           {result.plugins.length === 0 ? (
             <p className={css.emptyLine}>{t('empty')}</p>
           ) : filtered.length === 0 ? (

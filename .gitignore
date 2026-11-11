@@ -24,3 +24,7 @@ packages/dsh-plugin-shop/test-results/
 .playwright-mcp/
 .claude/settings.local.json
 .claude/worktrees/
+# Scratch spikes. These hold runtime state — a booted server's authenticated
+# URL, a temporary home directory, captured screenshots — and none of it
+# belongs in a commit. `git add -A` must never pick one up.
+.scratch-*/
