@@ -232,6 +232,19 @@ These block a real launch, not the code.
     leg now runs rc.2.
     [2026-11-12-dsh-022-rc2.md](../design/2026-11-12-dsh-022-rc2.md).
     No open item.
+14. **A second artifact in dsh's own market-index format — proposed
+    2026-11-12, not built.** dsh ships `@deepseek-ai/dsh-plugin-market-index`
+    (a shared validator for readers and generators) and
+    `@deepseek-ai/dsh-plugin-market`, the host reader behind the Discover
+    page and the `plugin_market` tool. Mapping the published catalog onto
+    format 1 and running it through that validator gives **17,389 plugins in
+    9.8 MiB** with today's data; the harness accepts it. Three decisions
+    wait: a `DECLARATIONS_RULE` 6 re-read so a github entry keeps its
+    manifest version without a declaration (**+6,738 entries**), whether
+    icons are inlined (17.9 MiB) or published per file, and whether the 443
+    tag-pinned entries resolve to commits at harvest.
+    [2026-11-12-market-index-format-1.md](../design/2026-11-12-market-index-format-1.md).
+    Open: the three decisions in its §8.
 
 ## P1 — the Host half (done 2026-08-25)
 
