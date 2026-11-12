@@ -155,8 +155,9 @@ quality 11:
 
 All five validate. **The cost that matters is the compressed column.** GitHub
 Pages and jsDelivr serve with `Content-Encoding`, and the reader's `fetch`
-asks for gzip and brotli and decompresses transparently, so a reader pays one
-and a half to two and a half MiB for the no-icons shapes, not ten.
+asks for gzip and brotli and decompresses transparently. The shape this
+document settles on (§8) is the first row, so a reader pays 6.92 MiB
+rather than the 18.76 MiB the raw number suggests.
 
 The size question is almost entirely the icons: inlining them adds **4.5 MiB
 of gzip**, more than every other field in the document combined. Our 6,317
@@ -167,14 +168,17 @@ the most expensive thing the format lets us write.
 Trimming is real but small once compressed. Dropping the `homepage` that only
 repeats `repository.url`, and omitting empty `keywords` and `labels` instead
 of writing `[]`, saves 1.26 MiB raw and 0.11 MiB of gzip: a repeated URL
-compresses to almost nothing. Both are worth doing because they cost nothing,
-and neither should be counted on for the budget.
+compresses to almost nothing.
 
 Format 1 is one document per source URL with no sharding, so the whole index
-arrives in one request inside the reader's 15-second budget. A first cut
-publishes the no-icons shape and revisits per-file icons referenced by
-absolute URL, which keeps the document near 9 MiB raw and still gives the
-Discover page its artwork.
+arrives in one request inside the reader's 15-second budget, and 6.92 MiB of
+gzip is comfortably inside it.
+
+**Decided 2026-11-12: no size work.** The document is published as the
+mapping produces it — every optional field written, icons inlined — at
+**18.76 MiB raw and 6.92 MiB of gzip**. Splitting the icons into their own
+files and dropping the repeated `homepage` stay on the table as later work if
+the size ever matters; neither is worth blocking the artifact on.
 
 ### 4.1 It is one more file in the artifact that already exists
 
@@ -200,10 +204,15 @@ stable name that each build overwrites, exactly as `index.json` already does.
 
 That is safe on the reader's side: a fetched document is reused for
 `cacheTtlMs`, which defaults to **ten minutes**, and the catalog is rebuilt
-daily. The cost is on the npm transport: its tarball is gzipped, so the
-no-icons index adds **2.3 to 2.4 MiB** (§4) to today's 11.9 MiB package.
-Whether it ships on both transports or Pages only is §8's fourth decision;
-the repository's standing rule is both.
+daily. **Decided 2026-11-12: both transports.** The index rides the same
+pointer the other three sidecars do, so it reaches Pages and the npm package
+by the existing rule rather than by an exception, and no transport has to
+know a second URL.
+
+The cost is on the npm side: its tarball is gzipped, so an 18.76 MiB document
+with icons inlined adds **6.92 MiB** (§4) to the 11.9 MiB `2026.1112.0`
+package, taking it to roughly 18.8 MiB. That is the accepted price of not
+splitting the icons.
 
 ## 5. What the format gives us that the shelf does not
 
@@ -244,11 +253,11 @@ the repository's standing rule is both.
 
 ## 7. What a first cut would publish
 
-Without §3.1, today's data already yields **17,983 plugins in 10.1 MiB** with
-no icons, accepted by the harness's own validator. That is a working,
-honest artifact that leaves out 7,900 github entries rather than inventing a
-version for them — the same posture this repository takes everywhere else:
-an absent fact costs the fact and never the listing.
+Without §3.1, today's data already yields **17,983 plugins in 18.76 MiB raw
+(6.92 MiB gzipped)**, icons inlined, accepted by the harness's own validator.
+That is a working, honest artifact that leaves out 7,900 github entries
+rather than inventing a version for them — the same posture this repository
+takes everywhere else: an absent fact costs the fact and never the listing.
 
 Adding §3.1 lifts the ceiling to **24,832** — 17,983 + 6,849. It is 6,849 and
 not 7,900 because 1,051 of those entries are held out by something else as
@@ -257,24 +266,32 @@ npm entry already owns).
 
 ## 8. Decisions for a human
 
+**Open.**
+
 1. **Spend the re-read?** §3.1 costs one full re-read of every carried
    repository under `DECLARATIONS_RULE` 6. It is the difference between 66%
    of the catalog (17,983 of 27,111) and 92% of it (24,832).
-2. **Icons now or later?** 2.39 MiB of gzip without them, 6.92 MiB with.
-   Per-file icons are a third option that needs the sidecar split.
-3. **Tag-resolved entries?** §3.3 is 450 entries and one extra fact at
+2. **Tag-resolved entries?** §3.3 is 450 entries and one extra fact at
    harvest time.
-4. **Both transports or Pages only?** §4.1 adds 2.3 to 2.4 MiB to the
-   `dsh-plugin-shop-catalog` package. The repository's standing rule is that a
-   data file reaches both or neither; exempting this one is a deliberate
-   exception, not a default.
+
+**Decided 2026-11-12.**
+
+3. **Both transports.** §4.1. The index rides the same pointer as the other
+   sidecars, and the package grows by about 6.9 MiB gzipped.
+4. **No size work.** §4. Every optional field is written and the icons are
+   inlined, at 18.76 MiB raw and 6.92 MiB gzipped. Splitting the icons and
+   dropping the repeated `homepage` remain available as later work.
 
 ## 9. What changes once this is accepted
 
 - A spec amendment to `2026-08-18-dsh-plugin-shop-design.md` for the sixth
   file in `v1/`, its stable name, and the pointer entry that carries it to
   both transports (§4.1).
-- A plan entry in `2026-08-18-remaining-work.md`.
+- A generator in `registry/scripts/` that reads the same emitted artifacts
+  the shop reads and writes the format-1 document, validated by
+  `parseMarketIndex` in its own test rather than by a fixture written from
+  the same assumptions.
+- A plan entry in `2026-08-18-remaining-work.md` (item 14).
 - If §3.1 is taken: the `github-client.ts` pairing, `repo-state.ts`'s parse
   rule, the tier/emit path, and `DECLARATIONS_RULE` 6, with the tests that
   pin the pairing (`pipeline.test.ts` asserts exactly which entries carry it)

@@ -238,14 +238,15 @@ These block a real launch, not the code.
     `@deepseek-ai/dsh-plugin-market`, the host reader behind the Discover
     page and the `plugin_market` tool. Mapping the published catalog onto
     format 1 and running it through that validator gives **17,983 plugins,
-    2.39 MiB gzipped** with today's data; the harness accepts it. Three decisions
-    wait: a `DECLARATIONS_RULE` 6 re-read so a github entry keeps its
-    manifest version without a declaration (**+6,849 entries**), whether
-    icons are inlined (6.92 MiB gzipped) or published per file, and whether
-    the 450 tag-pinned entries resolve to commits at harvest. A fourth asks
-    whether the file reaches the npm package too.
+    6.92 MiB gzipped** with today's data; the harness accepts it. Decided
+    2026-11-12: **both transports** (Pages and the catalog package, which
+    grows by about 6.9 MiB) and **no size work** (icons stay inlined, every
+    optional field written). Two decisions wait: a `DECLARATIONS_RULE` 6
+    re-read so a github entry keeps its manifest version without a
+    declaration (**+6,849 entries**), and whether the 450 tag-pinned entries
+    resolve to commits at harvest.
     [2026-11-12-market-index-format-1.md](../design/2026-11-12-market-index-format-1.md).
-    Open: the three decisions in its §8.
+    Open: the two questions in its §8.
 
 ## P1 — the Host half (done 2026-08-25)
 
