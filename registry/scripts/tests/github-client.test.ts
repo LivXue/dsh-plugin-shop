@@ -901,8 +901,7 @@ describe('fetchRepoCandidate', () => {
     // keeps an array out of `manifestVersion`, where the next parse of
     // repo-state.json would refuse it and stop the build.
     ['a version that is an array', { version: ['1.0.0'] }],
-    ['a valid version but no harness peer', { version: '1.0.0', peerDependencies: { react: '*' } }],
-  ])('records neither field with %s, since neither alone forms a verdict', async (_label, fragment) => {
+  ])('records neither field with %s, since there is no usable version', async (_label, fragment) => {
     // Dropped, never rejected: the entry lists exactly as it would with no
     // harness peer at all, and is still stamped, so the absence reads as
     // "declares none usable" rather than "not yet read".
@@ -915,6 +914,21 @@ describe('fetchRepoCandidate', () => {
     expect(candidate).not.toHaveProperty('dshPeers')
     expect(candidate).not.toHaveProperty('manifestVersion')
     expect(candidate?.declarationsRule).toBe(DECLARATIONS_RULE)
+  })
+
+  it('records the version with no declaration when the manifest has no harness peer', async () => {
+    // The shape rule 6 exists for (design 2026-11-12-market-index-format-1
+    // §3.1): dsh's plugin-market index format needs an exact SemVer on every
+    // github entry, and most manifests declare neither peers nor engines.
+    const candidate = await candidateFromManifest({
+      name: 'dsh-plain', version: '1.4.2', dsh: { bundle: { patch: './cordis.patch.yml' } },
+      peerDependencies: { react: '*' },
+    })
+    expect(candidate).toMatchObject({ manifestVersion: '1.4.2', declarationsRule: DECLARATIONS_RULE })
+    expect(candidate).not.toHaveProperty('dshPeers')
+    expect(candidate).not.toHaveProperty('engines')
+    // The ordinary peer list is a different field and is still read.
+    expect(candidate?.peers).toEqual(['react'])
   })
 
   it.each([
@@ -2070,13 +2084,16 @@ describe('release-tarball rescue probe', () => {
       })
     })
 
-    it('drops HEAD\'s harness peers and version when the tarball declares no harness peer', async () => {
+    it('drops HEAD\'s harness peers but keeps the tarball\'s version when the tarball declares no harness peer', async () => {
       // Removed, not left at HEAD's values: the entry installs the tarball, and
       // a refusal judged on HEAD's peers would name a version it never installs.
+      // The version is recorded either way from rule 6 on (design
+      // 2026-11-12-market-index-format-1 §3.1): it is a fact about the entry,
+      // not a part of the declaration.
       const candidate = await rescuedWith(packedTarball('dsh-repo-plugin'), peeredHead)
       expect(candidate).toBeDefined()
       expect(candidate).not.toHaveProperty('dshPeers')
-      expect(candidate).not.toHaveProperty('manifestVersion')
+      expect(candidate?.manifestVersion).toBe('1.0.0')
       expect(candidate?.declarationsRule).toBe(DECLARATIONS_RULE)
     })
 
@@ -3407,7 +3424,10 @@ describe('harvestRepos', () => {
         if (recorded === undefined) throw new Error('fixture has no candidate')
         const { compatibility: _head, ...rest } = recorded
         expect(result.nextState['r/rescued']?.candidates).toEqual([
-          { ...rest, peers: ['peer-b'], declarationsRule: DECLARATIONS_RULE },
+          // The version comes from the asset too, and rides alone now: the
+          // tarball declares no harness peer (design
+          // 2026-11-12-market-index-format-1 §3.1).
+          { ...rest, peers: ['peer-b'], manifestVersion: '1.0.0', declarationsRule: DECLARATIONS_RULE },
         ])
         expect(result.rereadUpdated).toBe(1)
       })
@@ -4852,7 +4872,10 @@ describe('subpackage probe', () => {
     if (!result.ok) throw new Error(`fixture monorepo was not projected: ${result.detail}`)
     expect(result.candidates.map(c => [c.subdir, c.dshPeers, c.manifestVersion, c.declarationsRule])).toEqual([
       ['packages/peered', { '@deepseek-ai/dsh-tools': '^0.1.7-0' }, '0.3.0', DECLARATIONS_RULE],
-      ['packages/unpeered', undefined, undefined, DECLARATIONS_RULE],
+      // The version is recorded now even with no harness peer: it is the
+      // subpackage's own manifest version, never the root's (design
+      // 2026-11-12-market-index-format-1 §3.1).
+      ['packages/unpeered', undefined, '0.4.0', DECLARATIONS_RULE],
     ])
   })
 

@@ -1306,32 +1306,25 @@ function writeDeclarations(
   const dshPeers = dshPeersOf(declarations)
   const engines = enginesDshOf(declarations)
   const { version } = declarations
-  // The version rides with EITHER declaration, not only the peers: dsh's rule
-  // needs the installed manifest's `name@version` to name an exemption
-  // whenever it refuses, and an entry that declares `engines.dsh` alone is
-  // refused the same way (design 2026-11-02-market-borrowings §1). Writing it
-  // only beside `dshPeers` left exactly that entry unjudgeable — `ownManifest`
-  // answers null for a github entry with no version — which is the defect this
-  // field exists to close, still live on this channel.
+  // The manifest's own version is recorded for EVERY entry that has one, not
+  // only beside a declaration (design 2026-11-12-market-index-format-1 §3.1):
+  // dsh's plugin-market index format requires an exact SemVer on every listed
+  // version, and a github entry's catalog `version` is its commit, so the
+  // manifest's version is the only SemVer such an entry has. Recording it
+  // unconditionally costs one field and nothing else.
   const usableVersion = typeof version === 'string' && version.trim() !== '' && version.length <= VERSION_MAX_LENGTH
-  if ((dshPeers !== undefined || engines !== undefined) && usableVersion) {
-    if (dshPeers !== undefined) candidate.dshPeers = dshPeers
-    else delete candidate.dshPeers
-    // `engines` belongs INSIDE the pairing, not beside it: written on its own
-    // it lands on a candidate whose version was just dropped, which is the
-    // shape the parse refuses as "declarations and manifestVersion recorded
-    // apart" — a manifest with no `version` (PerryLink/dsh-certification,
-    // 2026-11-04) stopped the next build from starting. A declaration with no
-    // version cannot name an exemption, so it is dropped with the version,
-    // exactly as `dshPeers` is.
-    if (engines !== undefined) candidate.engines = engines
-    else delete candidate.engines
-    candidate.manifestVersion = version
-  } else {
-    delete candidate.dshPeers
-    delete candidate.engines
-    delete candidate.manifestVersion
-  }
+  if (usableVersion) candidate.manifestVersion = version
+  else delete candidate.manifestVersion
+  // A DECLARATION still rides with the version, because dsh names an
+  // exemption `name@version` and a declaration without a version cannot name
+  // one. `engines` written beside a dropped version was the shape the parse
+  // refused as "declarations and manifestVersion recorded apart" — a manifest
+  // with no `version` (PerryLink/dsh-certification, 2026-11-04) stopped the
+  // next build from starting — so both declarations stay inside that pairing.
+  if (dshPeers !== undefined && usableVersion) candidate.dshPeers = dshPeers
+  else delete candidate.dshPeers
+  if (engines !== undefined && usableVersion) candidate.engines = engines
+  else delete candidate.engines
   // The three prepurchase facts (design 2026-11-02-market-borrowings §1–§2).
   // Removed, never left stale, when this manifest declares none: absent beside
   // the current stamp means "declares none", and keeping the previous
