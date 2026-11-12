@@ -68,11 +68,17 @@ import type { RepoCandidate, StoredIconRead } from './types.ts'
  * 5 (2026-11-04): `installScripts` as well (design
  * 2026-11-04-borrowings-round-4 §2); every listable carried candidate stamped
  * 4 is re-read once to gain it, and until it is, it carries none.
+ * 6 (2026-11-12): `manifestVersion` on every candidate whose manifest has one,
+ * not only beside a declaration, so a github entry carries the exact SemVer
+ * dsh's plugin-market index format requires of every listed version (design
+ * 2026-11-12-market-index-format-1 §3.1). Every carried candidate stamped
+ * below 6 is re-read once; without it, 7,900 listed github entries have no
+ * version at all.
  * `engines` is the one that changes a verdict rather than a label: dsh 0.2.1
  * reads it in place of the peers, so a stale candidate would keep predicting
  * a refusal from the half dsh does not read.
  */
-export const DECLARATIONS_RULE = 5
+export const DECLARATIONS_RULE = 6
 
 /** One repository's recorded state. Exactly one of the outcome fields is
  * present: candidates for a usable fetch, or a failure reason. */
@@ -308,14 +314,14 @@ function checkCarriedDeclarations(repo: string, candidate: unknown): RepoCandida
   if (manifestVersion !== undefined && (typeof manifestVersion !== 'string' || manifestVersion.trim() === '')) {
     throw new Error(`repo-state.json: ${repo} has a candidate with a malformed manifestVersion`)
   }
-  // `manifestVersion` rides with EITHER declaration since rule 4: an
-  // engines-only manifest has no peers to write, and dsh still needs the
-  // installed version to name an exemption. The old pairing rule refused that
-  // shape, which made the first rule-4 build write records the next build's
-  // parse would throw on — the build would not start. What remains true is
-  // that a version is written whenever a declaration is, and never alone.
-  if (((dshPeers !== undefined || engines !== undefined)) !== (manifestVersion !== undefined)) {
-    throw new Error(`repo-state.json: ${repo} has a candidate with declarations and manifestVersion recorded apart`)
+  // A declaration still rides with a version: dsh names an exemption
+  // `name@version`, so a declaration with no version cannot name one. The
+  // reverse — a version with no declaration — is expected from rule 6 on
+  // (design 2026-11-12-market-index-format-1 §3.1): a plugin's manifest
+  // version is a fact worth recording whether or not it declares anything,
+  // and dsh's plugin-market index format needs it for every github entry.
+  if ((dshPeers !== undefined || engines !== undefined) && manifestVersion === undefined) {
+    throw new Error(`repo-state.json: ${repo} has a candidate with a declaration but no manifestVersion`)
   }
   if (icon !== undefined && !isIconRecord(icon)) {
     throw new Error(`repo-state.json: ${repo} has a candidate with a malformed icon record`)

@@ -367,6 +367,15 @@ describe('assignRepoTier', () => {
     // The catalog version stays the pinned commit: the manifest version is
     // a separate key, never a replacement for the pin.
     expect(entry.version).toBe(commit)
+    // A version with no declaration is the shape rule 6 writes for a manifest
+    // that declares neither peers nor engines (design
+    // 2026-11-12-market-index-format-1 §3.1): it rides alone.
+    const alone = repoAccepted('dsh-repo-plugin')
+    alone.repo.manifestVersion = '0.5.0'
+    const aloneEntry = assignRepoTier(alone, config)
+    expect(aloneEntry.manifestVersion).toBe('0.5.0')
+    expect('dshPeers' in aloneEntry).toBe(false)
+    expect(aloneEntry.version).toBe(commit)
     const plain = assignRepoTier(repoAccepted('dsh-repo-plugin'), config)
     expect('dshPeers' in plain).toBe(false)
     expect('manifestVersion' in plain).toBe(false)

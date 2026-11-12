@@ -882,9 +882,11 @@ describe('a carried declarations record is checked on the way in', () => {
   })
 
   it.each([
-    ['dshPeers without manifestVersion', { dshPeers: { '@deepseek-ai/dsh': '*' } }, 'declarations and manifestVersion recorded apart'],
-    ['manifestVersion without a declaration', { manifestVersion: '1.0.0' }, 'declarations and manifestVersion recorded apart'],
-    ['engines without manifestVersion', { engines: '^1.0.0' }, 'declarations and manifestVersion recorded apart'],
+    ['dshPeers without manifestVersion', { dshPeers: { '@deepseek-ai/dsh': '*' } }, 'a declaration but no manifestVersion'],
+    ['engines without manifestVersion', { engines: '^1.0.0' }, 'a declaration but no manifestVersion'],
+    // The reverse is a shape rule 6 writes on purpose: a version is worth
+    // recording whether or not the manifest declares anything (design
+    // 2026-11-12-market-index-format-1 §3.1). It is asserted below, not here.
     ['a dshPeers key outside the harness scope', { dshPeers: { react: '*' }, manifestVersion: '1.0.0' }, 'a malformed dshPeers record'],
     ['an empty dshPeers', { dshPeers: {}, manifestVersion: '1.0.0' }, 'a malformed dshPeers record'],
     ['a dshPeers that is an array', { dshPeers: ['@deepseek-ai/dsh'], manifestVersion: '1.0.0' }, 'a malformed dshPeers record'],
@@ -899,6 +901,13 @@ describe('a carried declarations record is checked on the way in', () => {
     // this build never writes is a malformed registry file, like a malformed
     // `peers` or `compatibility`.
     expect(() => parseRepoState(rowWith(extra))).toThrow(`a/one has a candidate with ${message}`)
+  })
+
+  it('parses a manifestVersion with no declaration, the shape rule 6 writes', () => {
+    const parsed = parseRepoState(rowWith({ manifestVersion: '1.0.0' }))['a/one']?.candidates[0]
+    expect(parsed?.manifestVersion).toBe('1.0.0')
+    expect(parsed).not.toHaveProperty('dshPeers')
+    expect(parsed).not.toHaveProperty('engines')
   })
 
   describe('the prepurchase facts (design 2026-11-02-market-borrowings §1–§2)', () => {
