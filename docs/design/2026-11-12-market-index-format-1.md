@@ -160,6 +160,35 @@ The first cut should publish without icons (§7) and revisit with per-file
 icons referenced by absolute URL, which keeps the document at 9.8 MiB and
 still gives the Discover page its artwork.
 
+### 4.1 It is one more file in the artifact that already exists
+
+The catalog is already published as its own artifact, on two transports, and
+this change does not add a third:
+
+| | |
+|---|---|
+| GitHub Pages | `https://LivXue.github.io/dsh-plugin-shop/v1/` — `index.json` plus the sidecars it names, and the browser-only `badge.json` and `report.md` |
+| npm | `dsh-plugin-shop-catalog`, the same machine-readable files under `v1/` (11.4 MiB on the wire for the 2026-11-12 build) |
+
+Both lists are derived from the pointer: `dataFileNames` in
+`pages-artifacts.ts` reads the emitted `index.json`, `pagesArtifactNames` adds
+the browser-only files to it, and `npmArtifactNames` takes the same list
+unchanged. A data file the pointer names reaches both transports; one it does
+not name reaches neither. The format-1 document is a sixth entry in that list.
+
+**It cannot be a content-addressed sidecar like the other three.** The reader
+takes one URL, fetches one document and validates it; it does not follow a
+pointer. A `market.<sha>.json` name would change every build, and a reader's
+configured source cannot follow a name that changes — so the file sits at a
+stable name that each build overwrites, exactly as `index.json` already does.
+
+That is safe on the reader's side: a fetched document is reused for
+`cacheTtlMs`, which defaults to **ten minutes**, and the catalog is rebuilt
+daily. The cost is on the npm transport — 9.8 MiB of JSON compresses like the
+rest of the catalog does, so roughly **+2.8 MiB** against today's 11.4 MiB
+package. Whether the index ships on both transports or Pages only is
+§8's fourth decision; the repository's standing rule is both.
+
 ## 5. What the format gives us that the shelf does not
 
 - **A second surface for the same catalog.** Discover and the agent tool read
@@ -219,11 +248,16 @@ npm entry already owns).
    a third option that needs the sidecar split.
 3. **Tag-resolved entries?** §3.3 is 443 entries and one extra fact at
    harvest time.
+4. **Both transports or Pages only?** §4.1 adds roughly 2.8 MiB to the
+   `dsh-plugin-shop-catalog` package. The repository's standing rule is that a
+   data file reaches both or neither; exempting this one is a deliberate
+   exception, not a default.
 
 ## 9. What changes once this is accepted
 
-- A spec amendment to `2026-08-18-dsh-plugin-shop-design.md` for a second
-  published artifact and its path beside `v1/`.
+- A spec amendment to `2026-08-18-dsh-plugin-shop-design.md` for the sixth
+  file in `v1/`, its stable name, and the pointer entry that carries it to
+  both transports (§4.1).
 - A plan entry in `2026-08-18-remaining-work.md`.
 - If §3.1 is taken: the `github-client.ts` pairing, `repo-state.ts`'s parse
   rule, the tier/emit path, and `DECLARATIONS_RULE` 6, with the tests that
