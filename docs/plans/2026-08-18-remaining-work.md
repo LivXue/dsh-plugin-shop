@@ -221,6 +221,17 @@ These block a real launch, not the code.
     platforms.
     [2026-11-06-dsh-022-profile-templates.md](../design/2026-11-06-dsh-022-profile-templates.md).
     No open item.
+13. **dsh 0.2.2-rc.2 — 2026-11-12.** dsh 0.2.2-rc.2 is npm's `next` tag
+    (published 2026-11-12); `latest` is still 0.2.2-rc.1, so what a reader
+    installs has not moved. Measured against both installs side by side, it is
+    the same harness to this shop: `PROFILE_TEMPLATES` identical, and
+    `dsh-app-boot` / `dsh-official-bundles` / `dsh-home-paths` export the same
+    names. `dsh-plugin-manager` only adds `pinnedGitOrigin` and three
+    git-update methods, with nothing removed or renamed. The full e2e passes
+    against it (12/12, `DSH_SHOP_EXPECT_DSH` set), and the CI matrix's 0.2.2
+    leg now runs rc.2.
+    [2026-11-12-dsh-022-rc2.md](../design/2026-11-12-dsh-022-rc2.md).
+    No open item.
 
 ## P1 — the Host half (done 2026-08-25)
 
