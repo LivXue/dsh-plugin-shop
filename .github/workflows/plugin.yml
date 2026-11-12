@@ -45,8 +45,12 @@ jobs:
     #
     # The `dsh` axis, added 2026-09-27, is that pin. Each version is a
     # harness the e2e was RUN against before it was listed here, and each leg
-    # installs exactly its own entry. 0.2.2-rc.1 has been npm's `latest` since
-    # 2026-11-04, and its `next` too; 0.2.1-rc.5 held both from 2026-10-30,
+    # installs exactly its own entry. A leg is a harness BEHAVIOUR, not every
+    # patch of it: 0.2.2-rc.2 (npm's `next` since 2026-11-12) took the place
+    # of 0.2.2-rc.1 (`latest` since 2026-11-04) because the two are the same
+    # harness to this shop — the same exports, the same profile table, and
+    # rc.2 only adds `pinnedGitOrigin` and three git-update methods (design
+    # 2026-11-12-dsh-022-rc2.md). 0.2.1-rc.5 held both tags from 2026-10-30,
     # 0.2.0-rc.2 from 2026-09-29. 0.1.5-rc.3, `latest` before that, is the
     # only leg whose fresh installs still use the CLI. 0.1.7-rc.2, 0.2.0-rc.2
     # and 0.2.1-rc.5 run the half of the suite 0.1.5 never reaches (the
@@ -63,7 +67,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        dsh: ['0.1.5-rc.3', '0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-rc.5', '0.2.2-rc.1']
+        dsh: ['0.1.5-rc.3', '0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-rc.5', '0.2.2-rc.2']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
