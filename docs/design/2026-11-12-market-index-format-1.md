@@ -51,16 +51,16 @@ things the shop has and no other public index uses: see §5.
 
 ## 2. The measurement
 
-The published catalog — `schemaVersion` 5, **26,351** listed entries, read
-2026-11-12 from the same `v1/` artifacts the shop reads — was mapped onto
-format 1 and then handed to the harness's own `parseMarketIndex`, resolved
-against an index URL.
+The published catalog — `schemaVersion` 5, **27,111** listed entries, the
+build stamped `builtAt 2026-11-12T09:37:02.761Z` — was mapped onto format 1
+and then handed to the harness's own `parseMarketIndex`, resolved against an
+index URL.
 
 Result, for the version of the mapping this document describes:
 
 ```
 VALIDATOR: accepted
-  plugins kept: 17,389
+  plugins kept: 17,983
 ```
 
 Nothing below is an estimate: every count in §3 is a property of that catalog,
@@ -68,7 +68,7 @@ recomputed by that mapping on the day this document was written.
 
 ## 3. What does not fit, and why
 
-### 3.1 A github entry's manifest version is kept only beside a declaration — 7,769
+### 3.1 A github entry's manifest version is kept only beside a declaration — 7,900
 
 This is the one that decides whether the artifact can be published at all,
 and it is not a gap in the data.
@@ -90,7 +90,7 @@ if ((dshPeers !== undefined || engines !== undefined) && usableVersion) {
 That pairing is correct for what the field was added for — naming the
 `name@version` in the exemption command dsh asks a refused plugin to run. It
 is wrong for format 1, where every version needs an exact SemVer and a git
-source carries the commit instead: **7,769 listed github entries carry no
+source carries the commit instead: **7,900 listed github entries carry no
 version at all**, because their manifests declare neither peers nor engines.
 
 Two consequences worth stating plainly:
@@ -107,22 +107,22 @@ For scale: among the 21,777 candidates already stamped with the current rule,
 **10,897 carry no `manifestVersion`**, so the absence is the rule rather than
 a half-finished backfill.
 
-### 3.2 The same name is listed twice — 741
+### 3.2 The same name is listed twice — 768
 
 The catalog lists a bundle from npm and, separately, from its own repository.
 Format 1 requires names unique within an index. The rule is already ours: npm
 wins over its own owner's repository (`2026-10-19-npm-shadow-by-owner.md`),
 and the validator rejects a repeat outright, so the mapping applies it first:
-18,130 expressible entries become the 17,389 that validate.
+18,751 expressible entries become the 17,983 that validate.
 
-### 3.3 A git source pinned to a tag rather than a commit — 443
+### 3.3 A git source pinned to a tag rather than a commit — 450
 
 The release-rescued entries store the release tag (`v0.2.1`) in `version` and
 carry a prebuilt `tarball`. Format 1's git source takes a commit and nothing
 else. Resolving the tag to its commit at harvest would let them in; until
 that, they stay on the shelf and out of the index.
 
-### 3.4 Repository URLs that are not http(s) — 37
+### 3.4 Repository URLs that are not http(s) — 39
 
 `ssh://git@…`, `git@…` and `github://` forms. Both `homepage` and
 `repository` are optional, so these entries keep their place and lose the
@@ -135,30 +135,46 @@ All github-sourced, all shaped like a scoped package with an upper-case owner
 git install spec, but it still has to be a valid npm name. These stay on the
 shelf.
 
-### 3.6 One four-part version — 1
+### 3.6 Versions that are not SemVer — 2
 
-`0.8.7.1` is not a SemVer. One entry, excluded until its manifest is fixed.
+`0.8.7.1` and one other four-part version. Two entries, excluded until their
+manifests are fixed.
 
-## 4. Icons are the size question
+## 4. Size: raw, on the wire, and by shape
 
-Measured on the same document:
+Measured on the same document with `zlib` — gzip at level 9, brotli at
+quality 11:
 
-| | |
-|---|---|
-| with every icon inlined as its `data:` URL | **17.9 MiB** |
-| with no icons | **9.8 MiB** |
+| shape | raw | gzip | brotli |
+|---|---|---|---|
+| full, every icon inlined | 18.76 MiB | 6.92 MiB | 5.25 MiB |
+| full, no icons | 10.14 MiB | **2.39 MiB** | **1.61 MiB** |
+| no icons, `homepage` dropped where it only repeats `repository.url`, empty `keywords`/`labels` omitted | 8.88 MiB | **2.28 MiB** | **1.53 MiB** |
+| name, description and category only | 6.61 MiB | 1.87 MiB | 1.27 MiB |
+| the format's own minimum, no description | 3.86 MiB | 0.49 MiB | 0.39 MiB |
 
-Our 6,317 published icons are already `data:` URLs in a content-addressed
-sidecar, and **none exceeds the 32 KiB inline limit** — so inlining is legal,
-it is just expensive. Format 1 is one document per source URL and has no
-sharding, so the whole index arrives in one request inside the reader's
-15-second budget. For reference, the published `plugins.json` is 26.2 MiB and
-was fetched here in 1.3 s; that is a measurement of one network, not a
-promise about every reader's.
+All five validate. **The cost that matters is the compressed column.** GitHub
+Pages and jsDelivr serve with `Content-Encoding`, and the reader's `fetch`
+asks for gzip and brotli and decompresses transparently, so a reader pays one
+and a half to two and a half MiB for the no-icons shapes, not ten.
 
-The first cut should publish without icons (§7) and revisit with per-file
-icons referenced by absolute URL, which keeps the document at 9.8 MiB and
-still gives the Discover page its artwork.
+The size question is almost entirely the icons: inlining them adds **4.5 MiB
+of gzip**, more than every other field in the document combined. Our 6,317
+published icons are already `data:` URLs in a content-addressed sidecar and
+**none exceeds the 32 KiB inline limit**, so inlining is legal — it is just
+the most expensive thing the format lets us write.
+
+Trimming is real but small once compressed. Dropping the `homepage` that only
+repeats `repository.url`, and omitting empty `keywords` and `labels` instead
+of writing `[]`, saves 1.26 MiB raw and 0.11 MiB of gzip: a repeated URL
+compresses to almost nothing. Both are worth doing because they cost nothing,
+and neither should be counted on for the budget.
+
+Format 1 is one document per source URL with no sharding, so the whole index
+arrives in one request inside the reader's 15-second budget. A first cut
+publishes the no-icons shape and revisits per-file icons referenced by
+absolute URL, which keeps the document near 9 MiB raw and still gives the
+Discover page its artwork.
 
 ### 4.1 It is one more file in the artifact that already exists
 
@@ -168,7 +184,7 @@ this change does not add a third:
 | | |
 |---|---|
 | GitHub Pages | `https://LivXue.github.io/dsh-plugin-shop/v1/` — `index.json` plus the sidecars it names, and the browser-only `badge.json` and `report.md` |
-| npm | `dsh-plugin-shop-catalog`, the same machine-readable files under `v1/` (11.4 MiB on the wire for the 2026-11-12 build) |
+| npm | `dsh-plugin-shop-catalog`, the same machine-readable files under `v1/` (11.9 MiB, the `2026.1112.0` tarball) |
 
 Both lists are derived from the pointer: `dataFileNames` in
 `pages-artifacts.ts` reads the emitted `index.json`, `pagesArtifactNames` adds
@@ -184,10 +200,10 @@ stable name that each build overwrites, exactly as `index.json` already does.
 
 That is safe on the reader's side: a fetched document is reused for
 `cacheTtlMs`, which defaults to **ten minutes**, and the catalog is rebuilt
-daily. The cost is on the npm transport — 9.8 MiB of JSON compresses like the
-rest of the catalog does, so roughly **+2.8 MiB** against today's 11.4 MiB
-package. Whether the index ships on both transports or Pages only is
-§8's fourth decision; the repository's standing rule is both.
+daily. The cost is on the npm transport: its tarball is gzipped, so the
+no-icons index adds **2.3 to 2.4 MiB** (§4) to today's 11.9 MiB package.
+Whether it ships on both transports or Pages only is §8's fourth decision;
+the repository's standing rule is both.
 
 ## 5. What the format gives us that the shelf does not
 
@@ -206,8 +222,8 @@ package. Whether the index ships on both transports or Pages only is
   A screenshot carousel that a competing market built by hand arrives here
   for listed plugins by construction.
 - **Our github channel is the deep end of the format.** That same public
-  index lists **0 git-sourced plugins** out of 5,437; ours would be 5,404 of
-  17,389. The `git` source variant, and its `path` for a monorepo package, is
+  index lists **0 git-sourced plugins** out of 5,437; ours would be 5,478 of
+  17,983. The `git` source variant, and its `path` for a monorepo package, is
   exercised here far beyond anywhere else.
 
 ## 6. What this does not do
@@ -228,14 +244,14 @@ package. Whether the index ships on both transports or Pages only is
 
 ## 7. What a first cut would publish
 
-Without §3.1, today's data already yields **17,389 plugins in 9.8 MiB** with
+Without §3.1, today's data already yields **17,983 plugins in 10.1 MiB** with
 no icons, accepted by the harness's own validator. That is a working,
-honest artifact that leaves out 7,769 github entries rather than inventing a
+honest artifact that leaves out 7,900 github entries rather than inventing a
 version for them — the same posture this repository takes everywhere else:
 an absent fact costs the fact and never the listing.
 
-Adding §3.1 lifts the ceiling to **24,127** — 17,389 + 6,738. It is 6,738 and
-not 7,769 because 1,031 of those entries are held out by something else as
+Adding §3.1 lifts the ceiling to **24,832** — 17,983 + 6,849. It is 6,849 and
+not 7,900 because 1,051 of those entries are held out by something else as
 well (a tag instead of a commit, a name the npm grammar refuses, or a name an
 npm entry already owns).
 
@@ -243,12 +259,12 @@ npm entry already owns).
 
 1. **Spend the re-read?** §3.1 costs one full re-read of every carried
    repository under `DECLARATIONS_RULE` 6. It is the difference between 66%
-   of the catalog (17,389 of 26,351) and 92% of it (24,127).
-2. **Icons now or later?** 9.8 MiB without, 17.9 MiB with. Per-file icons are
-   a third option that needs the sidecar split.
-3. **Tag-resolved entries?** §3.3 is 443 entries and one extra fact at
+   of the catalog (17,983 of 27,111) and 92% of it (24,832).
+2. **Icons now or later?** 2.39 MiB of gzip without them, 6.92 MiB with.
+   Per-file icons are a third option that needs the sidecar split.
+3. **Tag-resolved entries?** §3.3 is 450 entries and one extra fact at
    harvest time.
-4. **Both transports or Pages only?** §4.1 adds roughly 2.8 MiB to the
+4. **Both transports or Pages only?** §4.1 adds 2.3 to 2.4 MiB to the
    `dsh-plugin-shop-catalog` package. The repository's standing rule is that a
    data file reaches both or neither; exempting this one is a deliberate
    exception, not a default.
