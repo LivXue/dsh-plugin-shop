@@ -74,6 +74,11 @@
   by: llm
   reason: "Judged a dsh plugin market from: ChatCode CLI Plugin Market — browse, search, and one-click install community plugins. · ChatCode CLI 可视化插件市场：逛一逛，点一下，装好。"
 
+- name: "@chengze/dsh-plugins-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: DeepSeek Harness plugin market index (format 1) and the monorepo that generates it"
+
 - name: "@cyber-moshen/dsh-plugin-market"
   market: true
   by: human
@@ -164,6 +169,16 @@
   by: llm
   reason: "Judged a dsh plugin market from: Adds the deepseekbase plugin market index to DeepSeek Harness: 4,367 DSH plugins with real sandbox install verdicts. Installs the Discover tab and points it at the index, so no manual configuration is needed."
 
+- name: "@local/dsh-skill-market"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: dsh plugin: browse, search and install SkillHub skills inside DeepSeek Harness (local build of montersy123/dsh-skill-market)"
+
+- name: "@local/dsh-skillhub-market"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: Skillhub skill market for DeepSeek Harness — search, filter, download and manage Skillhub skills."
+
 - name: "@lovstudio/dsh-plugin-marketplace"
   market: true
   by: human
@@ -203,6 +218,11 @@
   market: true
   by: human
   reason: "dsh Web GUI 社区插件市场：浏览 awesome-dsh-plugin.com 插件目录，一键安装/卸载到 profile。Community plugin market for the DeepSeek Harness (dsh) web GUI: browse, install and"
+
+- name: "@skillpie/dsh-market"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: SkillPie marketplace for DeepSeek Harness: search and install agent skills from the sidebar."
 
 - name: "@springbrand/dsh-plugin-marketplace"
   market: true
@@ -343,6 +363,11 @@
   market: true
   by: llm
   reason: "Judged a dsh plugin market from: TranESS 企业插件市场：员工把自建插件发布到企业 npm 仓库，市场按企业身份显示上传人姓名，同事可直接下载安装。"
+
+- name: "dsh-featured-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Curated plugin market for DeepSeek Harness: daily heat leaderboard, bilingual notes, side-by-side comparison, directional compatibility advice, README summaries and a local maintainer dashboard for stars, downloads and feedback."
 
 - name: "dsh-game-market"
   market: false
@@ -509,6 +534,11 @@
   by: human
   reason: "Harness Plugin Store Optimized: a customized fork of dsh-plugin-hub — configurable plugin download directory, bundle-layer conflict detection, automat"
 
+- name: "dsh-plugin-store-zb"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Plugin store for DeepSeek Harness: discover, search, inspect, install, update, and uninstall DSH plugins from a sidebar page."
+
 - name: "dsh-pluginmall"
   market: false
   by: llm
@@ -553,6 +583,11 @@
   market: false
   by: human
   reason: "Installs SKILLS from GitHub into ~/.dsh/skills, not plugins."
+
+- name: "dsh-skill-mcp-market"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: DSH 技能市场与 MCP 连接器市场：浏览实时技能源，一键安装 SKILL.md 技能与 MCP 连接器，装完即刻可用、无需重启。SKILL & MCP marketplace for DeepSeek Harness — browse live sources, install skills and MCP connectors, effective immediately."
 
 - name: "dsh-skill-store"
   market: false
