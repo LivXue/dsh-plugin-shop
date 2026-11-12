@@ -253,34 +253,36 @@ splitting the icons.
 
 ## 7. What a first cut would publish
 
-Without §3.1, today's data already yields **17,983 plugins in 18.76 MiB raw
-(6.92 MiB gzipped)**, icons inlined, accepted by the harness's own validator.
-That is a working, honest artifact that leaves out 7,900 github entries
-rather than inventing a version for them — the same posture this repository
-takes everywhere else: an absent fact costs the fact and never the listing.
+With §3.1 taken (decided 2026-11-12), the artifact carries **24,832 plugins**
+in 18.76 MiB raw (6.92 MiB gzipped), icons inlined, accepted by the
+harness's own validator. That is 17,983 entries that qualify today plus 6,849
+that only lack a recorded version; the remaining 1,051 of the 7,900 are held
+out by something else as well (a tag instead of a commit, a name the npm
+grammar refuses, or a name an npm entry already owns).
 
-Adding §3.1 lifts the ceiling to **24,832** — 17,983 + 6,849. It is 6,849 and
-not 7,900 because 1,051 of those entries are held out by something else as
-well (a tag instead of a commit, a name the npm grammar refuses, or a name an
-npm entry already owns).
+Until the re-read completes, the published index carries the 17,983 the
+current catalog can express. An entry the catalog has no version for stays
+out rather than getting an invented one — the same posture this repository
+takes everywhere else: an absent fact costs the fact and never the listing.
 
 ## 8. Decisions for a human
 
 **Open.**
 
-1. **Spend the re-read?** §3.1 costs one full re-read of every carried
-   repository under `DECLARATIONS_RULE` 6. It is the difference between 66%
-   of the catalog (17,983 of 27,111) and 92% of it (24,832).
-2. **Tag-resolved entries?** §3.3 is 450 entries and one extra fact at
+1. **Tag-resolved entries?** §3.3 is 450 entries and one extra fact at
    harvest time.
 
 **Decided 2026-11-12.**
 
-3. **Both transports.** §4.1. The index rides the same pointer as the other
+2. **Both transports.** §4.1. The index rides the same pointer as the other
    sidecars, and the package grows by about 6.9 MiB gzipped.
-4. **No size work.** §4. Every optional field is written and the icons are
+3. **No size work.** §4. Every optional field is written and the icons are
    inlined, at 18.76 MiB raw and 6.92 MiB gzipped. Splitting the icons and
    dropping the repeated `homepage` remain available as later work.
+4. **Spend the re-read.** §3.1. A github entry's manifest version is recorded
+   whenever the manifest has one, independent of any declaration, and
+   `DECLARATIONS_RULE` goes to 6 so every carried repository is re-read once.
+   Coverage goes from 17,983 entries to 24,832.
 
 ## 9. What changes once this is accepted
 
@@ -292,8 +294,12 @@ npm entry already owns).
   `parseMarketIndex` in its own test rather than by a fixture written from
   the same assumptions.
 - A plan entry in `2026-08-18-remaining-work.md` (item 14).
-- If §3.1 is taken: the `github-client.ts` pairing, `repo-state.ts`'s parse
-  rule, the tier/emit path, and `DECLARATIONS_RULE` 6, with the tests that
-  pin the pairing (`pipeline.test.ts` asserts exactly which entries carry it)
-  amended in the same change.
+- §3.1 (decided): `github-client.ts` records `manifestVersion` whenever the
+  manifest has one, and keeps `dshPeers`/`engines` paired with it only because
+  a declaration without a version cannot name an exemption; `repo-state.ts`'s
+  parse rule keeps that weaker invariant instead of refusing a version with
+  no declaration; `DECLARATIONS_RULE` goes to 6. The tests that pin the old
+  pairing (`pipeline.test.ts` asserts exactly which entries carry it,
+  `github-client.test.ts` and `tier.test.ts` each hold one side of it) are
+  amended in the same change, not silently.
 
