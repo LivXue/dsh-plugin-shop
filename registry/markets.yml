@@ -374,6 +374,11 @@
   by: llm
   reason: "Judged NOT a dsh plugin market from: A game marketplace and runtime for DeepSeek Harness."
 
+- name: "dsh-game-store"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: A game store for DeepSeek Harness: browse the catalog, read about a game, install, play, update and uninstall"
+
 - name: "dsh-local-market"
   market: true
   by: llm
@@ -543,6 +548,11 @@
   market: false
   by: llm
   reason: "Judged NOT a dsh plugin market from: An empty plugin scaffold for the DeepSeek Harness (DSH) ecosystem. It installs and loads without doing anything — a clean starting point for your own plugin."
+
+- name: "dsh-pluginmarket-plus"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: Plugin market enhancements for DeepSeek Harness: cache the market index JSON on local disk with a local mirror for the Discover page, and check or batch-update installed plugins with progress, cancellation and version exemptions."
 
 - name: "dsh-plugins-market"
   market: true
