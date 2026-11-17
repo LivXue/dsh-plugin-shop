@@ -584,6 +584,11 @@
   by: human
   reason: "DSH STORE — third-party plugin marketplace and guarded lifecycle manager for DeepSeek Harness."
 
+- name: "dsh-schema-store"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: Schema Store DSH plugin: personal structured records with Agent tools, L1/L2 UI, write guardrails, audit/version/recovery, attachment/reference fields, export-first data reset and settings"
+
 - name: "dsh-shop"
   market: false
   by: llm
