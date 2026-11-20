@@ -83,7 +83,7 @@ jobs:
     # 10. Neither cap is the constant, though: a budget check cannot interrupt
     # an in-flight request, so each overruns by one request deadline. Classify
     # is 15 + 10 = 25 per call and it makes two, so 50; stars is 10 + 0.5. The
-    # optional data can therefore take ~60 of these 180 minutes, not ~40. What
+    # optional data can therefore take ~60 of these 300 minutes, not ~40. What
     # that leaves no longer holds the harvest with room by arithmetic: the
     # classify step now carries the npm harvest as well, and the owner comment
     # above measures the whole job past two hours before either bounded phase
@@ -107,17 +107,24 @@ jobs:
     # download's own 300s deadline puts it near 7.5 minutes (it is one attempt,
     # not four: see TARBALL_REQUEST_TIMEOUT_MS). At REPO_CONCURRENCY = 4
     # against a 2000 budget a total GitHub stall drains only ~320 repositories
-    # inside 180 minutes --
+    # inside 300 minutes --
     # and MAX_THROWN_FRACTION, which would otherwise stop the build loudly, is
     # evaluated only once the queue has drained, so it is unreachable in that
     # state. Under a pool-wide stall the run still dies here with no report, no
-    # state commit and no catalog. This caps the wasted runner time at three
+    # state commit and no catalog. This caps the wasted runner time at five
     # hours instead of six; it does not turn that outcome into a reported one.
+    #
+    # Raised from 180 to 300 on 2026-11-21. The harvest had grown to sit right
+    # against the old bound: #420 and #421 published at 171 and 169 minutes, and
+    # #422, #423 and #424 were then cancelled at exactly 180, so no snapshot,
+    # state commit or catalog was produced for 2026-11-18 through 11-20 while
+    # the daily schedule kept firing. 300 keeps the cap below the six-hour
+    # job ceiling and leaves the next few months of growth inside it.
     # An in-harvest budget, of the kind classify and stars now carry, is what
     # that would take. The declarations re-read now has one
     # (DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT); the full-fetch queue this
     # paragraph describes still does not.
-    timeout-minutes: 180
+    timeout-minutes: 300
     permissions:
       # read, not write. This job installs dependencies, calls a plaintext LLM
       # gateway and fetches thousands of third-party manifests; the ambient
@@ -179,7 +186,7 @@ jobs:
         # empty string, `bash -e` sees only the successful `echo`, and the epoch
         # is written: both steps would then start nothing, every run.
         env:
-          JOB_TIMEOUT_MINUTES: 180
+          JOB_TIMEOUT_MINUTES: 300
           RESERVE_MINUTES: 3
         run: |
           now=$(date +%s)
