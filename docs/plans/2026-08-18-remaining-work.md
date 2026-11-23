@@ -231,6 +231,16 @@ These block a real launch, not the code.
     against it (12/12, `DSH_SHOP_EXPECT_DSH` set), and the CI matrix's 0.2.2
     leg now runs rc.2.
     [2026-11-12-dsh-022-rc2.md](../design/2026-11-12-dsh-022-rc2.md).
+    **2026-11-23: the 0.2.2 leg now runs rc.5.** dsh 0.2.2-rc.5 is npm's
+    `latest` and `next` since 2026-11-18. 326 of the 337 packages in the
+    installed tree moved from rc.2, but the surfaces the shop reads did not:
+    `dsh-app-boot` 57 names, `dsh-official-bundles` 12 (with the same five
+    `PROFILE_TEMPLATES` keys), `dsh-home-paths` 16 and `dsh-plugin-manager`
+    6, and `PluginManager` keeps the same 40 members. The rc.3–rc.5 notes
+    touch no surface the shop reads. The full suite is green against rc.5:
+    57 files / 2028 tests, 0 skipped, including 12/12 e2e and 3/3
+    real-install with `DSH_SHOP_EXPECT_DSH` set.
+    [2026-11-23-dsh-022-rc5.md](../design/2026-11-23-dsh-022-rc5.md).
     No open item.
 14. **A second artifact in dsh's own market-index format — proposed
     2026-11-12, not built.** dsh ships `@deepseek-ai/dsh-plugin-market-index`
