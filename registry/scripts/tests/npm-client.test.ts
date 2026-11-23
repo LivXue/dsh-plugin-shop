@@ -2697,8 +2697,8 @@ describe('searchByKeywords', () => {
     it('accepts the recovery floor and rejects a single name below it', async () => {
       // 45/50 = 90%; 44/50 < 90%. The tail is deliberately SMALL: it has to
       // leave the rate as the only thing deciding, and a 150-name tail at the
-      // floor leaves 15 missing, which MAX_UNREACHABLE_RESIDUAL now refuses
-      // on its own. Both residuals here (5 and 6) are inside that cap.
+      // floor leaves 15 missing, which the 2026-11-23 stopgap of 60 absorbs.
+      // Both residuals here (5 and 6) are inside that cap too.
       await expect(searchByKeywords(pastWindow(5300, 45))).resolves.toHaveLength(5295)
       const run = searchByKeywords(pastWindow(5300, 44))
       await expect(run).rejects.toThrow(/under the 0\.9 floor/)
@@ -2720,27 +2720,26 @@ describe('searchByKeywords', () => {
         .rejects.toThrow(/recovered 0 of 157/)
     })
 
-    it('refuses the fifteen-name partition gap at the live tail size', async () => {
+    it('publishes the fifteen-name partition gap the 2026-11-23 stopgap absorbs', async () => {
       // THE case the cap was sized for, as behaviour rather than as a bound
       // on a constant. 157 out of reach, cells recover 142 -- the shape
       // PARTITION_KEYWORDS took the day after it was documented as complete.
       // The rate floor passes it (142/157 = 0.9045, above 0.9), so the cap
-      // is the only bound that refuses it, and the message names the tail.
+      // alone decides.
       //
-      // RESTORED 2026-10-06. The 2026-09-18 raise to 20, and the 60 of the
-      // 2026-10-03 stopgap after it, published this gap in silence, and this
-      // test asserted that they did so that undoing it would be deliberate.
-      // It is: the change feed now harvests the residue no cell reaches by
-      // rank -- the first `main` run with it read both keywords whole -- so
-      // the cap is back under the gap it exists to refuse.
+      // SURRENDERED 2026-11-23. The cap is 60, above the gap it was built to
+      // refuse, so this gap now publishes. Recorded as behaviour so that
+      // lowering the cap again has to flip this test deliberately, as the
+      // 2026-09-18 and 2026-10-03 stopgaps did before the change feed
+      // restored it. The measured reason is in MAX_UNREACHABLE_RESIDUAL's
+      // comment: a `keywords:dsh-plugin` tail of 11,646 names was 31 short on
+      // 2026-11-23 at a 99.7% recovery rate, and the 14 cap refused two
+      // consecutive builds.
       //
-      // The cap is interpolated, not spelled: the sibling bound test admits
-      // any value in [9, 15), and at 12 this gap is still correctly refused,
-      // so a literal would redden this test for a reason it does not assert.
-      const run = searchByKeywords(pastWindow(5407, 142))
-      await expect(run)
-        .rejects.toThrow(new RegExp(`a tail shortfall of 15, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`))
-      await expect(run).rejects.toBeInstanceOf(CoverageCheckError)
+      // The cap is interpolated, not spelled: a future value below 15 flips
+      // this back to rejecting this gap without editing the fixture.
+      await expect(searchByKeywords(pastWindow(5407, 142)))
+        .resolves.toHaveLength(SEARCH_WINDOW + 142)
       // The family event it must still absorb is `publishes when the
       // partition recovers nearly all of what is out of reach`, which runs
       // the same tail and additionally asserts the shortfall record.
@@ -2792,17 +2791,17 @@ describe('searchByKeywords', () => {
       // An earlier 25 sat outside the upper bound, on the reasoning that the
       // family needed 20-plus of headroom — it needed 9.
       expect(MAX_UNREACHABLE_RESIDUAL).toBeGreaterThanOrEqual(6 + MAX_SEARCH_SHORTFALL)
-      // THE UPPER BOUND, RESTORED 2026-10-06. It was abandoned on 2026-09-18
-      // (20), to publish while publisher pinning accumulated a pinned set,
-      // and the 2026-10-03 stopgap (60) took the cap further from any
-      // measured magnitude; while it was gone this line pinned the exact
-      // value, so that a raise had to edit the line that said what was lost.
-      // The change feed now reaches new packages by publication time, which
-      // is the residue no cell reaches by rank, and the first `main` run with
-      // it read both keywords whole, so the cap is back inside the bracket
-      // and the bracket is what is asserted. A raise past 14 now fails here,
-      // against the gap it would absorb.
-      expect(MAX_UNREACHABLE_RESIDUAL).toBeLessThan(15)
+      // THE UPPER BOUND, ABANDONED AGAIN 2026-11-23. It was restored to 14
+      // on 2026-10-06 after the change feed's first `main` run read both
+      // keywords whole, and that held for seven weeks. It no longer does:
+      // `keywords:dsh-plugin` measured an 11,646-name tail with 31 missing
+      // on 2026-11-23 at a 99.7% recovery rate, and 14 refused two
+      // consecutive builds. While the cap is outside the bracket this line
+      // pins the exact value, so a raise has to edit the line that says what
+      // it surrendered -- the shape the 2026-09-18 and 2026-10-03 stopgaps
+      // used. Lowering it back under 15 restores the bracket assertion, and
+      // the prose guard below flips with it.
+      expect(MAX_UNREACHABLE_RESIDUAL).toBe(60)
     })
 
     it('keeps the prose copies of the cap in step with the constant', () => {
@@ -2826,12 +2825,13 @@ describe('searchByKeywords', () => {
       // losing the magnitudes that bound it is how 25 passed review once.
       for (const [name, doc] of [['CLAUDE.md', claude], ['the spec', spec]] as const) {
         expect(doc, `${name} lost the bracket floor`).toMatch(new RegExp(`at least \\*{0,2}${6 + MAX_SEARCH_SHORTFALL}\\b`))
-        // The ceiling is back in the CODE (2026-10-06), and `under 15`
+        // The ceiling is abandoned again (2026-11-23), and `under 15`
         // proves nothing on its own: both docs kept it as history all the
-        // while the ceiling was abandoned. While it was gone this pinned the
-        // SURRENDER -- that a fifteen-name gap was absorbed in silence. What
-        // a reader has to learn now is that it is refused again.
-        expect(doc, `${name} does not say the 15-name gap is refused again`).toMatch(/refuses (a|that) \*{0,2}15-name/)
+        // while the ceiling was in force. While the stopgap is outside it,
+        // what a reader has to learn is the SURRENDER -- that a fifteen-name
+        // gap is absorbed again, which is the measurement this raise cost.
+        // Lowering the cap back under 15 flips this back to `refuses`.
+        expect(doc, `${name} does not say the 15-name gap is absorbed`).toMatch(/absorbs (a|that) \*{0,2}15-name/)
       }
     })
 
@@ -2840,22 +2840,24 @@ describe('searchByKeywords', () => {
       // it — so above this crossover every rate violation is already a cap
       // violation and the rate decides nothing but which message prints.
       const crossover = MAX_UNREACHABLE_RESIDUAL / (1 - MIN_UNREACHABLE_RECOVERY)
-      // The tail from which the FIFTEEN-name partition gap first clears the
-      // floor, derived rather than dated: a 0.9 floor permits a tenth of the
-      // tail, so 150. `Math.round` and not `Math.ceil` — `1 - 0.9` is
-      // 0.09999999999999998, which puts the quotient a hair above 150 and
-      // would make a ceiling answer 151.
-      const gap = 15
+      // The smallest gap the cap refuses, and the tail from which it first
+      // clears the floor, both derived rather than dated: at 60 the gap is
+      // 61, and a 0.9 floor permits a tenth of the tail, so 610.
+      // `Math.round` and not `Math.ceil` — `1 - 0.9` is 0.09999999999999998,
+      // which puts the quotient a hair above 610 and would make a ceiling
+      // answer 611.
+      const gap = MAX_UNREACHABLE_RESIDUAL + 1
       const clearsFloorFrom = Math.round(gap / (1 - MIN_UNREACHABLE_RECOVERY))
-      expect(clearsFloorFrom).toBe(150)
+      expect(clearsFloorFrom).toBe(610)
       // THE DIVISION OF LABOUR: that tail is past the crossover, so by the
       // time a gap this size can satisfy the rate, the rate was already
       // inert and the cap is the only bound left holding it. Asserted as a
-      // relation and not as `crossover === 140`, which would pin the cap to
-      // exactly 14; the relation holds across all of [9, 15). It inverted
-      // on 2026-09-18, when the cap rose above the gap itself and left a
-      // band of tails where NEITHER bound refused a fifteen-name gap, and
-      // it holds again since the cap came back down on 2026-10-06.
+      // relation and not as `crossover === 600`; the relation holds for any
+      // cap the bracket allows and for the stopgap outside it. It inverted
+      // on 2026-09-18, when the cap rose above the measured gap and left a
+      // band of tails where NEITHER bound refused one, and it holds again
+      // since the 2026-11-23 stopgap — at 60 the cap refuses 61, not the
+      // measured 15, and 61 still only clears the rate floor past 610.
       expect(clearsFloorFrom).toBeGreaterThan(crossover)
       // Stated as behaviour too: at a live tail the gap clears the rate
       // floor and only the cap refuses it. `deepseek-harness` measured 1,921
@@ -2869,8 +2871,8 @@ describe('searchByKeywords', () => {
       // `missing / tail < 1 - floor` disagrees at EVERY exact-90% tail:
       // `1 - 0.9` is strictly below a tenth, so it reports a refusal where
       // searchByKeywords accepts. Which bound then refuses the gap is the
-      // sibling test's `< 15`; the behaviour is `refuses the fifteen-name
-      // partition gap at the live tail size`.
+      // sibling test's exact-value pin; the behaviour is `publishes the
+      // fifteen-name partition gap the 2026-11-23 stopgap absorbs`.
       expect((clearsFloorFrom - gap) / clearsFloorFrom).not.toBeLessThan(MIN_UNREACHABLE_RECOVERY)
     })
 

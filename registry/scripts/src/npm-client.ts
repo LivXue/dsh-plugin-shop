@@ -89,8 +89,8 @@ export const MAX_SEARCH_SHORTFALL = 3
  * the API's own ceiling leaves a small residual with the rate high. Note the
  * strictness DECAYS as the tail grows — a 0.9 floor permits 10% of it — so
  * above a tail of {@link MAX_UNREACHABLE_RESIDUAL} / (1 - this floor) names
- * (derived, not restated: 140 at the cap of 14, and 600 at the 2026-10-03
- * stopgap of 60) every rate violation already violates
+ * (derived, not restated: 600 at the cap of 60, and 140 at the 14 it
+ * replaced) every rate violation already violates
  * that cap and the rate decides
  * nothing but which message prints. The keyword this was written for is
  * ALREADY past that crossover — {@link PARTITION_KEYWORDS} carries the
@@ -296,8 +296,40 @@ export const MIN_UNREACHABLE_RECOVERY = 0.9
  * publishing short. The cursor holds, and the next run reads both days. A
  * family landing after the feed's read and before the search is still
  * search's alone that run, as every new package was before the feed.
+ *
+ * RAISED TO 60 ON 2026-11-23, THE FOURTH RAISE, ANOTHER STOPGAP THE
+ * MAINTAINER TOOK BY NAME. The 14 restored on 2026-10-06 no longer holds the
+ * tail's own drift, and the change feed is not failing: it read both keywords
+ * every run and supplied 2,727 `dsh-plugin` carriers on 11-23. Measured off
+ * the daily builds and one PR dry run:
+ *
+ *   11-15  enumerated 15220 of 15242   tail  9992  missing 22   RED
+ *   11-16  enumerated 15434 of 15438   tail 10188  missing  4
+ *   11-17  enumerated 15700 of 15708   tail 10458  missing  8
+ *   11-22  enumerated 16749 of 16772   tail 11522  missing 23   RED
+ *   11-23  enumerated 16865 of 16896   tail 11646  missing 31   RED
+ *
+ * The total grows ~124 names a day and the missing count ~8 a day, so the
+ * cap refuses two consecutive readings. This is the drift
+ * {@link MIN_UNREACHABLE_RECOVERY} cannot catch at this tail: 11,615 of
+ * 11,646 is 99.7%, far above the 90% floor, and the cap alone decides. The
+ * 31 are names the feed does not carry -- last published before the feed's
+ * bootstrap, or a search index still counting a name the feed has withdrawn
+ * -- so rank-independent reach over the old tail is what closes them; the
+ * publisher axis recovered 454 of the 11,646 with 125 pinned and 637 rotated
+ * probes on 11-23.
+ *
+ * WHAT 60 COSTS: up to 60 names per keyword may be published short, reported
+ * as a count and not as names; a listed package that sinks out of reach is
+ * delisted among them. The measured residue today is 31.
+ *
+ * WHAT IT IS FOR: the same exit as 2026-10-03 -- an axis that reaches the
+ * residue without depending on rank, measured against a catalog that
+ * publishes. The publisher axis is the built candidate; its recovery is
+ * measured above and in {@link PUBLISHER_PROBE_BUDGET_DEFAULT}'s comment.
+ * Issue #38 stays open beside this.
  */
-export const MAX_UNREACHABLE_RESIDUAL = 14
+export const MAX_UNREACHABLE_RESIDUAL = 60
 
 /** One keyword that enumerated fewer names than its own total promised. */
 export interface KeywordShortfall {
