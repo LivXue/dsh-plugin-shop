@@ -121,8 +121,15 @@ windows served what they counted, and every build failed on it. So a window
 still short after the re-probe is paged a second time. If both pagings serve
 the same repositories, the gap is the index's, not the paging's, and it is
 tolerated while the run's total of such gaps stays within
-`MAX_SEARCH_PHANTOMS` (3, the npm half's `MAX_SEARCH_SHORTFALL` figure);
-the build report's GitHub line names each window and its gap. Two pagings
+`MAX_SEARCH_PHANTOMS` (6 since 2026-11-23, raised from 3 as a stopgap; 3
+was the npm half's `MAX_SEARCH_SHORTFALL` figure);
+the build report's GitHub line names each window and its gap. **Amended
+2026-11-23: raised from 3 to 6.** A run counted four confirmed index gaps
+over about 140 windows, where the 2026-11-17 build counted two, and stopped;
+the per-run budget does not scale with the window count as the two topics
+grow. Six stays far below the magnitude of a systematic index failure, which
+the bound still catches, and the constant's comment records the live
+re-measurement and what each tolerated gap costs. Two pagings
 that disagree are churn and still throw, as does a run past the bound. A
 repository the search does not serve is not harvested either way: one the
 state still records publishes `repo-gone`, and is fetched again whenever the

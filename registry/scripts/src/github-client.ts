@@ -753,8 +753,23 @@ export async function partitionTopic(
  * it says: a repository the search does not serve is not harvested, so one
  * the state still records publishes `repo-gone` and is dropped, and is
  * fetched again whenever the search serves it again.
+ *
+ * RAISED TO 6 ON 2026-11-23, A DATED STOPGAP. The budget is per RUN, and the
+ * run's window count grows with the two topics, so independent index gaps
+ * accumulate: the 2026-11-17 build counted 2, and on 2026-11-23 a PR dry run
+ * counted 4 and stopped in the GitHub half, past 3. The one window the error
+ * named was re-measured live the same hour: `topic:deepseek-harness stars:0
+ * created:2026-09-01..2026-09-17` answered 864 and served 863 distinct
+ * repositories over nine pages, with no duplicate, so the gap is the index's
+ * and not the paging's. Four isolated gaps over ~140 windows is not the
+ * systematic failure this bound exists to catch -- one that stops serving a
+ * whole class of query would cross it by orders of magnitude, not by one.
+ * What 6 costs is per repository exactly what 3 did: one the state records
+ * publishes `repo-gone` and is fetched again when the search serves it.
+ * Lower it again once the window count or the index settles, and re-derive
+ * the budget from a measured run rather than from this stopgap.
  */
-export const MAX_SEARCH_PHANTOMS = 3
+export const MAX_SEARCH_PHANTOMS = 6
 
 /** One window the index counted larger than two pagings of it served. */
 export interface SearchPhantom {
