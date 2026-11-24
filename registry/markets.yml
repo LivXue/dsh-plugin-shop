@@ -379,6 +379,11 @@
   by: llm
   reason: "Judged NOT a dsh plugin market from: A game store for DeepSeek Harness: browse the catalog, read about a game, install, play, update and uninstall"
 
+- name: "dsh-invest-market"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: DSH 插件:行情页(全球资产、A 股指数、涨跌家数、成交额、分时、排行、板块热点与资讯) | DSH plugin: a market page (global assets, A-share indices, breadth, turnover, intraday, movers, sectors and news)."
+
 - name: "dsh-local-market"
   market: true
   by: llm
@@ -399,6 +404,11 @@
   by: human
   reason: "DSH 插件市场增强版：dsh-market 基座 + dsh-store 的 npm 权威源/质量验证/GitHub 热度/代理注入/回退安装（MIT，融合 dsh-market 与 dsh-store）"
 
+- name: "dsh-market-pro"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: DSH 插件市场Pro：面向 Agent 的 AI 原生插件市场，内置统一 /market-pro 技能与插件/技能/MCP 三大工具，一站式管理插件、精选技能、MCP 服务器、一键批量更新与安全审查。"
+
 - name: "dsh-marketplace"
   market: true
   by: llm
@@ -413,6 +423,11 @@
   market: true
   by: llm
   reason: "Judged a dsh plugin market from: MCP Marketplace toolkit for dsh - Model Context Protocol server directory. Name reserved; first release in development."
+
+- name: "dsh-memory-store"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: 本地 SQLite 记忆库：四路召回、软删、会话采集与可选注入（DSH 插件）"
 
 - name: "dsh-mini-store"
   market: false
@@ -453,6 +468,11 @@
   market: true
   by: human
   reason: "A community plugin marketplace for DeepSeek Harness, built to the official plugin spec — browse, search and install 4000+ human-curated community plug"
+
+- name: "dsh-plugin-bi-market"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: BI dashboard & report template market for DSH."
 
 - name: "dsh-plugin-dbgraph-store"
   market: false
