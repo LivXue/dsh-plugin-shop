@@ -679,6 +679,11 @@
   by: human
   reason: "统一插件市场（Unified Plugin Market for DeepSeek Harness）：聚合精选目录（awesome-dsh-plugin.com）+ GitHub dsh-plugin 生态 + npm registry 三源；对 DSH Desktop（EAC）特化（web-des"
 
+- name: "dsh-vyra-plugin-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: 左侧栏与插件页里的插件市场：Veyra、dsh.so、dshmarket.com、DSH Open Market、DSH Go Market 多源聚合与跨源搜索，苹果式卡片，展示 star 与 npm 下载量，并批量安装、更新、卸载、启用或停用；附带 Agent 可用的 vyra-market CLI。"
+
 - name: "dsh-webui-market-plugin-plus"
   market: true
   by: human
